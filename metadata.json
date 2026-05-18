@@ -1,0 +1,8 @@
+{
+  "name": "Dearlog",
+  "description": "어르신의 인생 이야기를 기록하고 가족과 나누는 모바일 자서전 앱",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

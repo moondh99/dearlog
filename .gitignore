@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Build/test output
+build/
+dist/
+coverage/
+.vite/
+
+# Generated demo artifacts
+artifacts/
+
+# Local editor, OS, and agent state
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+.claude/
+.kiro/
+NEXT_AGENT_PROMPT.md
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.temp

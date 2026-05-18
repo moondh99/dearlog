@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand */
+  --color-primary:          #7A3143;
+  --color-primary-light:    #9B4358;
+  --color-primary-pale:     #F6E3E8;
+
+  /* Surface */
+  --color-bg:               #F7F4EF;
+  --color-surface:          #FFFFFF;
+  --color-surface-alt:      #EFE9E1;
+  --color-border:           #E1D8CD;
+  --color-border-strong:    #C9BAAD;
+
+  /* Text */
+  --color-text:             #292321;
+  --color-text-muted:       #6C625E;
+  --color-text-subtle:      #9A908B;
+
+  /* Semantic */
+  --color-secondary:        #557A68;
+  --color-secondary-pale:   #E6F0EA;
+  --color-success:          #15803D;
+  --color-error:            #B91C1C;
+
+  /* Font */
+  --font-sans: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum";
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  background: var(--color-bg);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 18%, white);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  letter-spacing: 0;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+*:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  outline-offset: 3px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D2C7BB;
+  border: 3px solid var(--color-bg);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
