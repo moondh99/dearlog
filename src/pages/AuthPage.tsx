@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, CheckCircle2, ShieldCheck, Smartphone } from 'lucide-react';
 import { useStore } from '../store';
-import { registerLocalPhoneAccount, updateLocalUserRole } from '../lib/local-server';
+import { registerLocalPhoneAccount } from '../lib/local-server';
 
 function isKoreanPhoneNumber(value: string) {
   return /^01[016789][-\s]?\d{3,4}[-\s]?\d{4}$/.test(value.trim());
@@ -20,52 +20,6 @@ export default function AuthPage() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const handleDevLogin = async (role: 'senior' | 'guardian') => {
-    setIsSubmitting(true);
-    try {
-      const defaultPhone = '01012345678';
-      const { user } = await registerLocalPhoneAccount(defaultPhone);
-      startPhoneAuth(defaultPhone);
-      
-      const store = useStore.getState();
-      store.seedDemoData();
-      
-      if (role === 'senior') {
-        await updateLocalUserRole(user.id, 'senior');
-        store.selectRole('senior');
-        store.saveSeniorProfile({
-          name: '김영자',
-          birthDecade: '1950년대',
-          preferredName: '어르신'
-        });
-        navigate('/parent');
-      } else {
-        await updateLocalUserRole(user.id, 'guardian');
-        store.selectRole('guardian');
-        store.saveGuardianProfile({
-          name: '김민수',
-          relationship: '자녀',
-          preferredName: '보호자'
-        });
-        navigate('/child');
-      }
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : '데모 로그인 실패');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const autoRole = params.get('auto');
-    if (autoRole === 'senior') {
-      handleDevLogin('senior');
-    } else if (autoRole === 'guardian') {
-      handleDevLogin('guardian');
-    }
-  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -128,75 +82,49 @@ export default function AuthPage() {
         <section className="flex items-center justify-center p-6 sm:p-9 lg:p-14">
           <div className="w-full max-w-md">
             <div className="mb-8">
-              <p className="text-[12px] font-black uppercase tracking-[0.22em] text-text-subtle">Sign in</p>
-              <h2 className="mt-2 text-[27px] font-black tracking-tight text-text">시연을 시작합니다</h2>
+              <p className="text-[12px] font-black uppercase tracking-[0.22em] text-text-subtle">Sign in / Sign up</p>
+              <h2 className="mt-2 text-[27px] font-black tracking-tight text-text">시작하기</h2>
               <p className="mt-3 text-[15px] font-medium leading-relaxed text-text-muted">
-                휴대폰 번호 하나로 계정을 만들고, 역할을 선택한 뒤 실제 사용자 테스트를 시작합니다.
+                휴대폰 번호 하나로 회원가입 및 로그인을 간편하게 완료합니다.
               </p>
             </div>
 
             <div className="mb-6 flex items-start gap-3 rounded-[22px] border border-border/70 bg-surface-alt/72 p-4 shadow-sm">
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
               <p className="text-[14px] font-semibold leading-relaxed text-text-muted">
-                SMS 인증은 진행하지 않습니다. 입력한 번호는 로컬 DB에 계정 식별용으로 저장됩니다.
+                입력하신 휴대폰 번호는 로그인 시 본인 확인 및 시니어/가디언 계정 연결에 안전하게 사용됩니다.
               </p>
             </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <label className="block">
-              <span className="mb-2 block text-[14px] font-black text-text">휴대폰 번호</span>
-              <div className="relative">
-                <Smartphone className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
-                <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(event) => {
-                    setPhoneNumber(event.target.value);
-                    setError('');
-                  }}
-                  placeholder="010 1234 5678"
-                  aria-invalid={Boolean(error)}
-                  className="w-full rounded-[20px] border border-border/80 bg-surface-alt/70 py-4 pl-12 pr-4 text-[18px] font-bold text-text outline-none shadow-sm transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:bg-surface focus:ring-4 focus:ring-primary/10"
-                />
-              </div>
-            </label>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <label className="block">
+                <span className="mb-2 block text-[14px] font-black text-text">휴대폰 번호</span>
+                <div className="relative">
+                  <Smartphone className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-text-subtle" aria-hidden="true" />
+                  <input
+                    type="tel"
+                    value={phoneNumber}
+                    onChange={(event) => {
+                      setPhoneNumber(event.target.value);
+                      setError('');
+                    }}
+                    placeholder="010 1234 5678"
+                    aria-invalid={Boolean(error)}
+                    className="w-full rounded-[20px] border border-border/80 bg-surface-alt/70 py-4 pl-12 pr-4 text-[18px] font-bold text-text outline-none shadow-sm transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:bg-surface focus:ring-4 focus:ring-primary/10"
+                  />
+                </div>
+              </label>
 
-            {error && <p className="text-[14px] font-bold text-error">{error}</p>}
+              {error && <p className="text-[14px] font-bold text-error">{error}</p>}
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full rounded-[20px] bg-primary px-5 py-4 text-[17px] font-black text-primary-pale shadow-[0_14px_34px_rgba(92,52,32,0.18)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.01] hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/15"
-            >
-              {isSubmitting ? '저장 중...' : '휴대폰 번호로 시작'}
-            </button>
-          </form>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleDevLogin('senior')}
-              className="rounded-[16px] border border-border/80 bg-surface-alt/50 py-3 text-[14px] font-black text-text shadow-sm hover:bg-surface-alt transition-all disabled:opacity-50"
-            >
-              데모 로그인 (부모님)
-            </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={() => handleDevLogin('guardian')}
-              className="rounded-[16px] border border-border/80 bg-surface-alt/50 py-3 text-[14px] font-black text-text shadow-sm hover:bg-surface-alt transition-all disabled:opacity-50"
-            >
-              데모 로그인 (자녀)
-            </button>
-          </div>
-
-            <div className="mt-7 rounded-[22px] border border-border/70 bg-surface-alt/70 p-4.5 shadow-sm">
-              <p className="text-[12px] font-black uppercase tracking-[0.16em] text-text-subtle">Demo hint</p>
-              <p className="mt-1.5 text-[14px] font-semibold leading-relaxed text-text-muted">
-                발표 시에는 로그인 후 설정의 발표 데모 탭에서 사전 데이터를 불러오면 됩니다.
-              </p>
-            </div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full rounded-[20px] bg-primary px-5 py-4 text-[17px] font-black text-primary-pale shadow-[0_14px_34px_rgba(92,52,32,0.18)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.01] hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/15"
+              >
+                {isSubmitting ? '저장 중...' : '휴대폰 번호로 시작'}
+              </button>
+            </form>
           </div>
         </section>
       </div>
