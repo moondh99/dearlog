@@ -41,10 +41,10 @@ export default function JourneyRail() {
   });
 
   return (
-    <section className="shrink-0 rounded-[28px] border border-border bg-surface/95 p-3 shadow-[0_18px_48px_rgba(23,35,33,0.07)]" aria-label="사용자 여정">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+    <section className="premium-panel shrink-0 rounded-[28px] p-3.5" aria-label="사용자 여정">
+      <div className="flex flex-col gap-3.5 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-center justify-between gap-3 px-1 xl:hidden">
-          <p className="text-[12px] font-black uppercase tracking-[0.16em] text-text-subtle">Journey</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-text-subtle">Journey</p>
           <p className="truncate text-[13px] font-black text-primary">{journey.nextAction.label}</p>
         </div>
         <nav className="flex gap-2 overflow-x-auto pb-1 xl:pb-0" aria-label="사용자 여정 단계">
@@ -56,11 +56,11 @@ export default function JourneyRail() {
               onMouseEnter={() => routePreloads[stage.route]?.()}
               onFocus={() => routePreloads[stage.route]?.()}
               className={cx(
-                'inline-flex shrink-0 items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-[13px] font-black transition-all',
-                stage.status === 'active' && 'border-primary bg-primary text-white shadow-[0_10px_24px_rgba(122,49,67,0.22)]',
-                stage.status === 'done' && 'border-primary/15 bg-primary-pale text-primary',
-                stage.status === 'ready' && 'border-border bg-surface-alt text-text-muted hover:border-primary/25 hover:text-text',
-                stage.status === 'locked' && 'border-border bg-surface text-text-subtle'
+                'inline-flex shrink-0 items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-[13px] font-black transition-all duration-300 ease-out hover:-translate-y-0.5',
+                stage.status === 'active' && 'border-primary bg-primary text-white shadow-[0_12px_28px_rgba(15,23,42,0.18)]',
+                stage.status === 'done' && 'border-border/70 bg-white text-primary shadow-sm',
+                stage.status === 'ready' && 'border-border/70 bg-surface-alt/70 text-text-muted hover:border-primary/20 hover:bg-white hover:text-text',
+                stage.status === 'locked' && 'border-border/60 bg-white/50 text-text-subtle'
               )}
             >
               <span
@@ -68,8 +68,8 @@ export default function JourneyRail() {
                   'inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px]',
                   stage.status === 'active' && 'bg-white/20 text-white',
                   stage.status === 'done' && 'bg-primary text-white',
-                  stage.status === 'ready' && 'bg-border/60 text-text-muted',
-                  stage.status === 'locked' && 'bg-border/40 text-text-subtle'
+                  stage.status === 'ready' && 'bg-white text-text-muted ring-1 ring-border/70',
+                  stage.status === 'locked' && 'bg-border/35 text-text-subtle'
                 )}
               >
                 <StageIcon status={stage.status} />
@@ -85,7 +85,7 @@ export default function JourneyRail() {
           aria-label={`다음 단계 ${journey.nextAction.label}`}
           onMouseEnter={() => routePreloads[journey.nextAction.route]?.()}
           onFocus={() => routePreloads[journey.nextAction.route]?.()}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-primary/15 bg-primary-pale px-4 py-2.5 text-[13px] font-black text-primary transition-colors hover:bg-primary/10 xl:min-w-[220px]"
+          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-border/70 bg-white/80 px-4 py-2.5 text-[13px] font-black text-primary shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-primary/20 hover:bg-white xl:min-w-[220px]"
         >
           다음 단계
           <span>{journey.nextAction.label}</span>

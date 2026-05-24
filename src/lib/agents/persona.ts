@@ -1,10 +1,11 @@
 /**
- * Persona Agent (Digital Twin) v2
+ * Persona Agent (Digital Twin) v3
  *
  * Generates responses as the senior user's digital persona, using RAG-retrieved
  * memories for context and applying the tone calibrator speech profile.
  *
- * v2 enhancements:
+ * v3 enhancements:
+ * - Hybrid RAG context: Vector similarity + Knowledge Graph 1-hop relationships
  * - Question classification (사실확인형, 시기회상형, 가치관탐색형, 인물관련형)
  * - Memory search with time/person/emotion filters (intersection semantics)
  * - Evidence badges (근거 배지) with every response
@@ -19,8 +20,10 @@ import type {
   QuestionCategory,
   EvidenceBadge,
   DigitalTwinResponse,
+  SearchResult,
 } from '../types';
 import { ragIndex } from '../rag/index';
+import { KnowledgeGraph, buildHybridContext } from '../rag/graph-rag';
 import { applyProfile, getProfileStatus } from './tone-calibrator';
 import { useStore } from '../../store';
 import { canAccessV2, getEffectiveConsentSettings } from '../consent/manager';
@@ -231,6 +234,58 @@ export function buildDigitalTwinResponse(
   };
 }
 
+// ─── Knowledge Graph Builder ─────────────────────────────────────────────────
+
+/**
+ * Builds a KnowledgeGraph from stored memories by extracting
+ * people and places from memory tags and creating relationship edges.
+ */
+export function buildGraphFromMemories(memories: Memory[]): KnowledgeGraph {
+  const graph = new KnowledgeGraph();
+
+  for (const memory of memories) {
+    // Add person nodes
+    for (const person of memory.tags.people) {
+      if (person.trim()) {
+        graph.addNode({ id: person.trim(), type: 'person' });
+      }
+    }
+
+    // Add place nodes
+    for (const place of memory.tags.places) {
+      if (place.trim()) {
+        graph.addNode({ id: place.trim(), type: 'place' });
+      }
+    }
+
+    // Create person-to-person co-occurrence edges (appeared in same memory)
+    const people = memory.tags.people.filter(p => p.trim());
+    for (let i = 0; i < people.length; i++) {
+      for (let j = i + 1; j < people.length; j++) {
+        graph.addEdge({
+          source: people[i].trim(),
+          target: people[j].trim(),
+          type: '함께 등장',
+        });
+      }
+    }
+
+    // Create person-to-place edges
+    const places = memory.tags.places.filter(p => p.trim());
+    for (const person of people) {
+      for (const place of places) {
+        graph.addEdge({
+          source: person.trim(),
+          target: place.trim(),
+          type: '관련 장소',
+        });
+      }
+    }
+  }
+
+  return graph;
+}
+
 // ─── Existing Functionality (preserved) ──────────────────────────────────────
 
 /**
@@ -285,7 +340,16 @@ export async function generatePersonaResponse(
       return buildDigitalTwinResponse('', [], message);
     }
 
-    // Step 5: Build persona system prompt with relevant memories as context
+    // Step 5: Build hybrid RAG context (Vector + Knowledge Graph)
+    const vectorResults: SearchResult[] = searchResults.map((r) => ({
+      memoryId: r.memoryId,
+      score: r.score,
+      text: relevantMemories.find((m) => m.id === r.memoryId)?.publishVersion ?? r.text,
+    }));
+
+    const graph = buildGraphFromMemories(memories);
+    const hybridContext = buildHybridContext(message, vectorResults, graph);
+
     const memoriesContext = relevantMemories
       .map(
         (m) =>
@@ -296,7 +360,7 @@ export async function generatePersonaResponse(
     const systemInstruction = `
 당신은 이 기억들의 주인공인 70대 어르신입니다.
 따뜻하고 연륜이 묻어나는 말투로 대답하세요. (예: ~했지, ~란다, ~허허)
-사용자(가족이나 후손)의 질문에 대답할 때, 제공된 '나의 기억들'을 바탕으로 대답하세요.
+사용자(가족이나 후손)의 질문에 대답할 때, 제공된 '나의 기억들'과 '관계 정보'를 바탕으로 대답하세요.
 기억을 인용할 때는 자연스럽게 이야기하되, 응답 끝에 인용한 기억의 ID를 [출처: 기억 ID] 형식으로 반드시 적어주세요.
 기억에 없는 내용을 물어보면 "그건 잘 기억이 안 나는구나"라고 솔직하게 말씀하세요.
 반드시 제공된 기억에 근거해서만 답변하세요. 기억에 없는 내용을 창작하지 마세요.
@@ -305,6 +369,9 @@ export async function generatePersonaResponse(
 
 나의 기억들:
 ${memoriesContext}
+
+관계 정보 (하이브리드 RAG 컨텍스트):
+${hybridContext}
 `;
 
     // Step 6: Call GPT-4o-mini to generate the response

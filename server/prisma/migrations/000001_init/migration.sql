@@ -1,0 +1,3 @@
+-- Reference migration for the local SQLite schema.
+-- The runnable local setup uses `npm run db:migrate`, which executes server/prisma/init.ts
+-- so it works even when Prisma migrate's schema engine is unavailable in a local desktop path.

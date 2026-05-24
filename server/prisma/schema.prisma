@@ -1,0 +1,235 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String                  @id @default(uuid())
+  name                 String
+  phoneNumber          String?                 @unique
+  role                 String
+  birthDecade          String?
+  preferredName        String?
+  seniorName           String?
+  seniorBirthDecade    String?
+  seniorPreferredName  String?
+  guardianName         String?
+  guardianRelationship String?
+  guardianPreferredName String?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  seniorLinks          GuardianSeniorLink[]    @relation("GuardianLinks")
+  guardianLinks        GuardianSeniorLink[]    @relation("SeniorLinks")
+  createdQuestions     Question[]              @relation("QuestionCreator")
+  seniorSchedules      InterviewSchedule[]     @relation("SeniorSchedules")
+  guardianSchedules    InterviewSchedule[]     @relation("GuardianSchedules")
+  interviewSessions    InterviewSession[]
+  interviewRecords     InterviewRecord[]
+  freeSpeechRecords    FreeSpeechRecord[]
+  photos               Photo[]
+  pushSubscriptions    PushSubscription[]
+  notifications        Notification[]          @relation("NotificationRecipient")
+  relatedNotifications Notification[]          @relation("NotificationRelatedUser")
+  coverDesigns         CoverDesign[]
+  publicationRequests  PublicationRequest[]    @relation("PublicationSenior")
+  requestedPublications PublicationRequest[]   @relation("PublicationRequester")
+  legacyVault          LegacyVault?
+}
+
+model GuardianSeniorLink {
+  id         String   @id @default(uuid())
+  guardianId String
+  seniorId   String
+  createdAt  DateTime @default(now())
+  guardian   User     @relation("GuardianLinks", fields: [guardianId], references: [id], onDelete: Cascade)
+  senior     User     @relation("SeniorLinks", fields: [seniorId], references: [id], onDelete: Cascade)
+
+  @@unique([guardianId, seniorId])
+}
+
+model Chapter {
+  id             String            @id
+  order          Int               @unique
+  title          String
+  slug           String            @unique
+  minAnswerCount Int               @default(15)
+  questions      Question[]
+  sessions       InterviewSession[]
+  records        InterviewRecord[]
+  freeSpeech     FreeSpeechRecord[]
+}
+
+model Question {
+  id          String            @id @default(uuid())
+  category    String
+  text        String
+  chapterId   String?
+  photoId     String?
+  createdById String?
+  status      String            @default("pending")
+  createdAt   DateTime          @default(now())
+  answeredAt  DateTime?
+  answerRecordId String?
+  chapter     Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  photo       Photo?            @relation(fields: [photoId], references: [id], onDelete: SetNull)
+  createdBy   User?             @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  records     InterviewRecord[]
+  sessions    InterviewSession[]
+}
+
+model Photo {
+  id           String     @id @default(uuid())
+  userId       String
+  fileKey      String
+  fileName     String
+  mimeType     String
+  metadataJson String     @default("{}")
+  analysisJson String     @default("{}")
+  uploadedAt   DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions    Question[]
+}
+
+model InterviewSchedule {
+  id          String   @id @default(uuid())
+  seniorId    String
+  guardianId  String
+  scheduledAt DateTime
+  timezone    String   @default("Asia/Seoul")
+  status      String   @default("scheduled")
+  callSid     String?
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  senior      User     @relation("SeniorSchedules", fields: [seniorId], references: [id], onDelete: Cascade)
+  guardian    User     @relation("GuardianSchedules", fields: [guardianId], references: [id], onDelete: Cascade)
+}
+
+model InterviewSession {
+  id                String            @id @default(uuid())
+  seniorId          String
+  chapterId         String
+  mode              String
+  status            String            @default("active")
+  currentQuestionId String?
+  startedAt         DateTime          @default(now())
+  endedAt           DateTime?
+  pausedAt          DateTime?
+  senior            User              @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  chapter           Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  currentQuestion   Question?         @relation(fields: [currentQuestionId], references: [id], onDelete: SetNull)
+  records           InterviewRecord[]
+  freeSpeech        FreeSpeechRecord[]
+}
+
+model InterviewRecord {
+  id             String            @id @default(uuid())
+  userId         String
+  chapterId      String
+  questionId     String?
+  sessionId      String?
+  audioFileKey   String
+  transcriptText String
+  recordedAt     DateTime          @default(now())
+  source         String            @default("app")
+  mode           String            @default("photo")
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter        Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  question       Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  session        InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+}
+
+model FreeSpeechRecord {
+  id             String            @id @default(uuid())
+  userId         String
+  chapterId      String
+  sessionId      String?
+  audioFileKey   String
+  transcriptText String
+  recordedAt     DateTime          @default(now())
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter        Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  session        InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@map("free_speech_db")
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id            String    @id @default(uuid())
+  userId        String
+  relatedUserId String?
+  type          String
+  title         String
+  body          String
+  metadataJson  String?
+  status        String    @default("unread")
+  createdAt     DateTime  @default(now())
+  readAt        DateTime?
+  user          User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  relatedUser   User?     @relation("NotificationRelatedUser", fields: [relatedUserId], references: [id], onDelete: SetNull)
+}
+
+model CoverDesign {
+  id           String    @id @default(uuid())
+  userId       String
+  palette      String
+  template     String
+  font         String
+  analysisJson String    @default("{}")
+  confirmedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationRequests PublicationRequest[]
+}
+
+model PublicationRequest {
+  id            String      @id @default(uuid())
+  userId        String
+  requestedById String
+  coverDesignId String?
+  format        String      @default("A5")
+  status        String      @default("requested")
+  pdfFileKey    String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  user          User        @relation("PublicationSenior", fields: [userId], references: [id], onDelete: Cascade)
+  requestedBy   User        @relation("PublicationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  coverDesign   CoverDesign? @relation(fields: [coverDesignId], references: [id], onDelete: SetNull)
+}
+
+model LegacyVault {
+  id                       String   @id @default(uuid())
+  seniorId                 String   @unique
+  isVaultSetup             Boolean  @default(false)
+  encryptedMemories        String?  // 암호화된 비공개 기억 백업 JSON
+  encryptedAutobiography   String?  // 암호화된 자서전 백업 JSON
+  serverShare              String?  // JSON string representing Share B
+  institutionShare         String?  // JSON string representing Share C
+  
+  isDeceased               Boolean  @default(false)
+  deathVerificationStatus  String   @default("alive") // "alive", "pending_verification", "released"
+  serverShareReleased      Boolean  @default(false)
+  institutionShareReleased Boolean  @default(false)
+  
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  
+  senior                   User     @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+}
+

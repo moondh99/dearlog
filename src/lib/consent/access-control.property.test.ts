@@ -20,7 +20,7 @@ describe('Property 8: Access Control Enforcement', () => {
 
   const accessTierArb: fc.Arbitrary<AccessTier> = fc.constantFrom('본인만', '지정 가족', '전체 가족');
 
-  const userRoleArb: fc.Arbitrary<UserRole> = fc.constantFrom('senior', 'family');
+  const userRoleArb: fc.Arbitrary<UserRole> = fc.constantFrom('senior', 'guardian');
 
   const userIdArb: fc.Arbitrary<string> = fc.uuid();
 

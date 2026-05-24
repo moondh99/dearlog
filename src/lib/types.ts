@@ -108,7 +108,7 @@ export type AccessTier = '본인만' | '지정 가족' | '전체 가족';
 
 export type PosthumousPolicy = 'full_release' | 'maintain_current' | 'delete_all';
 
-export type UserRole = 'senior' | 'family';
+export type UserRole = 'senior' | 'guardian';
 
 export type AccessTierV2 = 'NO_ACCESS' | 'SUMMARY' | 'FULL_READ' | 'FULL_ACCESS';
 

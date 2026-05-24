@@ -83,11 +83,11 @@ export default function ConsentControls({
 
   return (
     <div
-      className="space-y-4 p-4 rounded-2xl border border-border bg-surface-alt"
+      className="space-y-4 rounded-2xl border border-border/70 bg-white/76 p-4 shadow-sm"
       aria-label={`기억 항목 ${memoryId} 동의 설정`}
       role="group"
     >
-      <div className="rounded-2xl border border-secondary/20 bg-secondary-pale/60 px-4 py-3">
+      <div className="rounded-2xl border border-secondary/20 bg-secondary-pale/60 px-4 py-3 shadow-sm">
         <p className="text-[13px] font-black text-secondary">공개 범위와 활용 동의는 따로 정합니다</p>
         <p className="mt-1 text-[12px] font-semibold text-text-muted leading-relaxed">
           접근 권한은 이 기억을 읽을 수 있는 사람을, 세부 동의는 자서전·분신·사후 공개 같은 사용처를 정합니다.
@@ -138,10 +138,10 @@ export default function ConsentControls({
                 aria-checked={isSelected}
                 aria-label={config.description}
                 onClick={() => handleAccessTierChange(tier)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] font-semibold border transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary/30 ${
+                className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-[13px] font-semibold transition-all duration-300 ease-out hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-primary/10 ${
                   isSelected
                     ? 'bg-primary-pale border-primary/30 text-primary'
-                    : 'bg-surface border-border text-text-muted hover:bg-surface-alt'
+                    : 'bg-white/80 border-border/70 text-text-muted hover:bg-white'
                 }`}
               >
                 <Icon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -183,7 +183,7 @@ export default function ConsentControls({
               id={`family-input-${memoryId}`}
               type="text"
               placeholder="가족 ID 입력"
-              className="flex-1 px-3 py-2 text-[13px] border border-border rounded-xl bg-surface focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary text-text placeholder:text-text-subtle transition-all"
+              className="flex-1 rounded-xl border border-border/80 bg-white/78 px-3 py-2 text-[13px] text-text shadow-sm transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:outline-none focus:ring-4 focus:ring-primary/10"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const input = e.currentTarget;
@@ -205,7 +205,7 @@ export default function ConsentControls({
                   input.value = '';
                 }
               }}
-              className="px-3 py-2 text-[13px] font-semibold bg-primary text-white rounded-xl hover:bg-primary-light focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary/40 shadow-sm transition-colors"
+              className="rounded-xl bg-primary px-3 py-2 text-[13px] font-semibold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/10"
               aria-label="가족 구성원 추가"
             >
               추가
@@ -214,7 +214,7 @@ export default function ConsentControls({
         </div>
       )}
 
-      <fieldset className="pt-3 border-t border-border">
+      <fieldset className="border-t border-border/70 pt-3">
         <legend className="text-[13px] font-semibold text-text-muted mb-2">세부 동의</legend>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {consentCategories.map((category) => {
@@ -225,10 +225,10 @@ export default function ConsentControls({
                 type="button"
                 onClick={() => handleCategoryToggle(category)}
                 aria-pressed={isGranted}
-                className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${
+                className={`flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5 text-left shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 ${
                   isGranted
                     ? 'bg-secondary-pale border-secondary/25 text-secondary'
-                    : 'bg-surface border-border text-text-muted'
+                    : 'bg-white/78 border-border/70 text-text-muted'
                 }`}
               >
                 <span>

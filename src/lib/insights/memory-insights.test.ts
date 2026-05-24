@@ -3,14 +3,17 @@ import type { CalendarEvent, FamilyQuestion, Memory, StoredPhoto } from '../type
 import {
   buildContradictionCards,
   buildMemoryMapPoints,
+  buildEngagementLoop,
   buildPhotoAlbumItems,
   buildShortAnswerNudge,
   buildTimelineGroups,
+  buildWeeklyFamilyQuizzes,
   computeServiceMetrics,
   createChapterReviewComment,
   estimateInterviewProgress,
   getArchiveTabCounts,
   getFamilyQuestionStats,
+  getMemoryScopeCategories,
   getSensitiveProtectionSuggestions,
   getLifeStage,
   shouldNudgeForShortAnswer,
@@ -89,6 +92,19 @@ describe('memory insights helpers', () => {
     expect(progress.find((item) => item.category === '장소')?.covered).toBe(true);
   });
 
+  it('defines the visible memory recording scope', () => {
+    const categories = getMemoryScopeCategories();
+    expect(categories.map((category) => category.label)).toEqual([
+      '어린시절과 학창시절',
+      '가족과 관계',
+      '일과 생계',
+      '전환점과 감정',
+      '가치관과 남길 말',
+      '사진 속 생활사',
+    ]);
+    expect(categories.every((category) => category.sampleQuestion.length > 0)).toBe(true);
+  });
+
   it('nudges short answers only', () => {
     expect(shouldNudgeForShortAnswer('네')).toBe(true);
     expect(buildShortAnswerNudge('네').length).toBeGreaterThan(0);
@@ -107,6 +123,45 @@ describe('memory insights helpers', () => {
     const photos: StoredPhoto[] = [{ id: 'p1', url: 'blob:x', uploadedAt: '2024-01-01', analysis: null, linkedMemoryIds: ['m1'] }];
     const items = buildPhotoAlbumItems(photos, [memory({ id: 'm1', topic: '사진 속 기억' })]);
     expect(items[0].linkedMemoryTopics).toEqual(['사진 속 기억']);
+  });
+
+  it('builds weekly family quizzes from memory tags', () => {
+    const quizzes = buildWeeklyFamilyQuizzes([
+      memory({ id: 'm1', topic: '첫 월급', tags: { people: ['어머니'], places: ['서울'], emotions: ['자부심'], timePeriod: '1970년대' } }),
+      memory({ id: 'm2', topic: '시장 산책', tags: { people: ['아버지'], places: ['부산'], emotions: ['감사'], timePeriod: '1960년대' } }),
+    ]);
+
+    expect(quizzes[0]).toMatchObject({
+      sourceMemoryId: 'm1',
+      sourceTopic: '첫 월급',
+      answerIndex: 0,
+    });
+    expect(quizzes[0].options).toContain('어머니');
+    expect(quizzes[0].options).toHaveLength(3);
+  });
+
+  it('builds a weekly engagement loop from quizzes, questions, and calendar events', () => {
+    const event: CalendarEvent = {
+      id: 'event-1',
+      title: '손녀 생일',
+      eventType: '생일',
+      date: '2026-05-22',
+      relatedPeople: ['손녀'],
+      description: '가족 모임',
+    };
+    const loops = buildEngagementLoop({
+      memories: [memory({ id: 'm1', topic: '첫 월급', tags: { people: ['어머니'], places: ['서울'], emotions: ['자부심'], timePeriod: '1970년대' } })],
+      familyQuestions: [
+        { id: 'q1', questionText: '첫 월급은 어디에 쓰셨나요?', submittedBy: 'u', anonymous: false, priority: 'high', status: 'pending', createdAt: '2026-05-18T00:00:00.000Z', answeredAt: null, answerMemoryId: null },
+      ],
+      calendarEvents: [event],
+      now: new Date('2026-05-19T00:00:00.000Z'),
+    });
+
+    expect(loops.map((loop) => loop.type)).toEqual(['quiz', 'family_question', 'calendar']);
+    expect(loops[0].title).toBe('이번 주 가족 퀴즈 보내기');
+    expect(loops[1].cadence).toBe('우선 질문');
+    expect(loops[2].cadence).toBe('D-3');
   });
 
   it('computes service metrics', () => {

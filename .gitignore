@@ -17,6 +17,13 @@ coverage/
 # Generated demo artifacts
 artifacts/
 
+# Local Dearlog server data
+server/data/*.db
+server/data/*.db-*
+server/storage/audio/*
+server/storage/photos/*
+server/storage/pdfs/*
+
 # Local editor, OS, and agent state
 .DS_Store
 **/.DS_Store

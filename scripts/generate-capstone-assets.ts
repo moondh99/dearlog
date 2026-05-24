@@ -20,6 +20,13 @@ globalThis.fetch = async (input: RequestInfo | URL) => {
       headers: { 'content-type': 'font/ttf' },
     });
   }
+  if (url.startsWith('/demo-photos/')) {
+    const image = await readFile(join(rootDir, 'public', url));
+    return new Response(image, {
+      status: 200,
+      headers: { 'content-type': 'image/png' },
+    });
+  }
   return originalFetch(input);
 };
 

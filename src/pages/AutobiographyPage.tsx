@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, FileDown, Loader2, AlertCircle } from 'lucide-react';
+import { BookOpen, FileDown, Loader2, AlertCircle, CheckCircle2, PackageCheck, Printer } from 'lucide-react';
 import { useStore } from '../store';
 import { AUTOBIOGRAPHY_STYLE_LABELS, generateAllChaptersV2, toPDFReadyAutobiography } from '../lib/agents/ghostwriter';
 import ChapterPreview from '../components/ChapterPreview';
@@ -9,6 +9,28 @@ import { canAccessV2, getEffectiveConsentSettings } from '../lib/consent/manager
 import { createChapterReviewComment } from '../lib/insights/memory-insights';
 import { buildDemoAutobiography } from '../lib/demo/capstone-demo-data';
 import type { Autobiography, AutobiographyStyle } from '../lib/types';
+
+const PRINT_PRODUCTION_STEPS = [
+  '기억 수집',
+  '가족 검수',
+  '문장별 출처 확인',
+  'PDF 교정본 확인',
+  '실물 책 주문 준비',
+];
+
+const PRINT_BOOK_SPECS = [
+  ['판형', 'A5 세로형'],
+  ['본문', '가족 검수본 + 출처 확인'],
+  ['사진', '대표 사진과 촬영 시기'],
+  ['제본', '무선 제본 기준'],
+];
+
+const PRINT_REVIEW_STATES = [
+  ['문장 출처', '문장별 원문 확인'],
+  ['가족 검수', '코멘트 반영 가능'],
+  ['사진 자료', '대표 사진 포함'],
+  ['인쇄 상태', 'A5 교정본 준비'],
+];
 
 /**
  * AutobiographyPage allows users to generate a full autobiography from
@@ -135,14 +157,65 @@ export default function AutobiographyPage() {
             <h1 className="text-[30px] font-black tracking-tight text-text">자서전</h1>
           </div>
         </div>
-        <div className="rounded-full border border-border bg-surface px-4 py-2 text-[13px] font-black text-text-muted shadow-sm">
+        <div className="rounded-full border border-border/70 bg-surface px-4 py-2 text-[13px] font-black text-text-muted shadow-sm backdrop-blur">
           공개 기억 {nonPrivateMemories.length}개 · 사진 {photos.length}장
         </div>
       </div>
 
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+        <div className="premium-panel rounded-[28px] p-5">
+          <div className="flex items-center gap-2">
+            <Printer className="h-5 w-5 text-primary" aria-hidden="true" />
+            <h2 className="text-[18px] font-black text-text">실물 책 제작 흐름</h2>
+          </div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-5">
+            {PRINT_PRODUCTION_STEPS.map((step, index) => {
+              const isReady = index <= (autobiography ? 3 : hasEnoughMemories ? 1 : 0);
+              return (
+                <div
+                  key={step}
+                  className={`rounded-2xl border px-3 py-3 shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 ${
+                    isReady
+                      ? 'border-primary/20 bg-primary-pale text-primary'
+                      : 'border-border/70 bg-surface text-text-subtle'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-black">{index + 1}</span>
+                    {isReady && <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                  </div>
+                  <p className="mt-2 text-[13px] font-black leading-snug">{step}</p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-[13px] font-semibold leading-relaxed text-text-muted">
+            현재 프로토타입은 PDF 교정본까지 생성합니다. 실제 서비스에서는 교정본 승인 후 인쇄 제휴사 주문과 배송 상태 추적이 이어집니다.
+          </p>
+        </div>
+
+        <div className="premium-panel-soft rounded-[28px] p-5">
+          <div className="flex items-center gap-2">
+            <PackageCheck className="h-5 w-5 text-primary" aria-hidden="true" />
+            <h2 className="text-[18px] font-black text-text">책 사양 예시</h2>
+          </div>
+          <div className="mt-4 space-y-2">
+            {PRINT_BOOK_SPECS.map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-surface px-4 py-3 shadow-sm">
+                <span className="text-[12px] font-black text-text-subtle">{label}</span>
+                <span className="text-right text-[14px] font-black text-primary">{value}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 text-[12px] font-semibold leading-relaxed text-text-muted">
+            결제와 배송은 아직 시연 범위 밖이며, 인쇄용 PDF가 주문 전 최종 교정본 역할을 합니다.
+          </p>
+        </div>
+      </section>
+
       {/* Minimum memory notice */}
       {!hasEnoughMemories && (
-        <div className="rounded-[28px] border border-primary/20 bg-primary-pale p-6">
+        <div className="premium-panel-soft rounded-[28px] p-6">
           <div className="flex items-start gap-3">
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
             <div>
@@ -155,13 +228,13 @@ export default function AutobiographyPage() {
           <div className="mt-5 flex flex-wrap gap-3">
             <Link
               to="/"
-              className="inline-flex items-center justify-center rounded-2xl bg-primary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-colors hover:bg-primary-light"
+              className="inline-flex items-center justify-center rounded-2xl bg-primary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light"
             >
               기억 기록하기
             </Link>
             <Link
               to="/review"
-              className="inline-flex items-center justify-center rounded-2xl border border-primary/30 bg-surface px-5 py-3 text-[15px] font-bold text-primary transition-colors hover:bg-white"
+              className="inline-flex items-center justify-center rounded-2xl border border-primary/30 bg-surface px-5 py-3 text-[15px] font-bold text-primary shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt"
             >
               공개 범위 확인하기
             </Link>
@@ -170,13 +243,13 @@ export default function AutobiographyPage() {
       )}
 
       {!autobiography && (
-        <section className="grid overflow-hidden rounded-[34px] border border-border bg-surface shadow-[0_22px_64px_rgba(41,35,33,0.1)] lg:grid-cols-[1fr_390px]">
-          <div className="bg-[#2A2027] p-7 text-white sm:p-9">
-            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-white/45">A5 editorial proof</p>
+        <section className="premium-panel grid overflow-hidden rounded-[34px] lg:grid-cols-[1fr_390px]">
+          <div className="bg-primary p-7 text-primary-pale sm:p-9">
+            <p className="text-[12px] font-black uppercase tracking-[0.2em] text-primary-pale/50">A5 editorial proof</p>
             <h2 className="mt-4 max-w-xl text-[32px] font-black leading-tight tracking-tight">
               기억 카드를 한 권의 인쇄 자서전으로 편집합니다.
             </h2>
-            <p className="mt-4 max-w-xl text-[16px] font-semibold leading-relaxed text-white/65">
+            <p className="mt-4 max-w-xl text-[16px] font-semibold leading-relaxed text-primary-pale/75">
               공개 가능한 기억, 가족 검수 코멘트, 사진 메타데이터를 묶어 표지와 목차가 있는 PDF 결과물을 만듭니다.
             </p>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
@@ -185,9 +258,9 @@ export default function AutobiographyPage() {
                 ['사진 자료', photos.length],
                 ['PDF 형식', 'A5'],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-[20px] border border-white/10 bg-white/8 p-4">
-                  <p className="text-[12px] font-bold text-white/50">{label}</p>
-                  <p className="mt-2 text-[26px] font-black text-white">{value}</p>
+                <div key={label} className="rounded-[20px] border border-primary-pale/15 bg-primary-pale/[0.07] p-4 shadow-sm backdrop-blur">
+                  <p className="text-[12px] font-bold text-primary-pale/60">{label}</p>
+                  <p className="mt-2 text-[26px] font-black text-primary-pale">{value}</p>
                 </div>
               ))}
             </div>
@@ -199,7 +272,7 @@ export default function AutobiographyPage() {
               <select
                 value={selectedStyle}
                 onChange={(event) => setSelectedStyle(event.target.value as AutobiographyStyle)}
-                className="min-w-[220px] rounded-[20px] border border-border bg-surface-alt px-4 py-3 text-[16px] font-bold text-text outline-none focus:ring-2 focus:ring-primary/25"
+                className="min-w-[220px] rounded-[20px] border border-border/80 bg-surface px-4 py-3 text-[16px] font-bold text-text shadow-sm outline-none transition-all duration-300 ease-out focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
               >
                 {(Object.entries(AUTOBIOGRAPHY_STYLE_LABELS) as Array<[AutobiographyStyle, string]>).map(([style, label]) => (
                   <option key={style} value={style}>{label}</option>
@@ -215,7 +288,7 @@ export default function AutobiographyPage() {
               type="button"
               onClick={handleGenerate}
               disabled={!hasEnoughMemories || isGenerating}
-              className="flex items-center justify-center gap-2.5 rounded-[20px] bg-primary px-8 py-4 text-[17px] font-black text-white shadow-[0_16px_34px_rgba(122,49,67,0.22)] transition-all hover:bg-primary-light focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center justify-center gap-2.5 rounded-[20px] bg-primary px-8 py-4 text-[17px] font-black text-white shadow-[0_14px_32px_rgba(15,23,42,0.16)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="자서전 생성"
             >
               {isGenerating ? (
@@ -234,7 +307,7 @@ export default function AutobiographyPage() {
               <button
                 type="button"
                 onClick={handleLoadDemoAutobiography}
-                className="flex items-center justify-center gap-2.5 rounded-[20px] border border-primary/20 bg-primary-pale px-6 py-3 text-[16px] font-black text-primary transition-all hover:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                className="flex items-center justify-center gap-2.5 rounded-[20px] border border-primary/20 bg-primary-pale px-6 py-3 text-[16px] font-black text-primary shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary/10 focus:outline-none focus:ring-4 focus:ring-primary/10"
               >
                 <BookOpen className="w-5 h-5" aria-hidden="true" />
                 사전 자서전 불러오기
@@ -266,6 +339,18 @@ export default function AutobiographyPage() {
       {/* Autobiography content */}
       {autobiography && !isGenerating && (
         <div className="space-y-8">
+          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="출판 전 점검">
+            {PRINT_REVIEW_STATES.map(([label, value]) => (
+              <div key={label} className="rounded-[22px] border border-border bg-surface px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.045)]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[12px] font-black text-text-subtle">{label}</span>
+                  <CheckCircle2 className="h-4 w-4 text-primary" aria-hidden="true" />
+                </div>
+                <p className="mt-2 text-[15px] font-black text-text">{value}</p>
+              </div>
+            ))}
+          </section>
+
           {/* Title + actions */}
           <div className="flex items-center justify-between flex-wrap gap-4 pb-6 border-b border-border">
             <h2 className="text-[22px] font-black text-text">{autobiography.title}</h2>
@@ -342,6 +427,7 @@ export default function AutobiographyPage() {
               <div key={chapter.chapterId} className="space-y-3">
                 <ChapterPreview
                   narrative={chapter}
+                  sourceMemories={memories}
                   onEdit={(newBody) => handleChapterEdit(chapter.chapterId, newBody)}
                 />
                 <div className="rounded-2xl bg-surface-alt border border-border p-4">

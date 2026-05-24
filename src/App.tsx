@@ -9,6 +9,8 @@ import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import { pageLoaders } from './routes/pageLoaders';
 import { useStore } from './store';
+import { isGuardianRole } from './lib/roles';
+import BottomNav from './components/BottomNav';
 
 const AuthPage = lazy(pageLoaders.auth);
 const VerifyPage = lazy(pageLoaders.verify);
@@ -19,6 +21,19 @@ const PersonaPage = lazy(pageLoaders.persona);
 const ReviewPage = lazy(pageLoaders.review);
 const AutobiographyPage = lazy(pageLoaders.autobiography);
 const SettingsPage = lazy(pageLoaders.settings);
+
+// New mobile-optimized screens
+const SplashScreen = lazy(() => import('./pages/SplashScreen'));
+const IntroScreen = lazy(() => import('./pages/IntroScreen'));
+const SelectModeScreen = lazy(() => import('./pages/SelectModeScreen'));
+const ParentHomeScreen = lazy(() => import('./pages/ParentHomeScreen'));
+const ParentProgressScreen = lazy(() => import('./pages/ParentProgressScreen'));
+const ParentTranscriptScreen = lazy(() => import('./pages/ParentTranscriptScreen'));
+const ChildHomeScreen = lazy(() => import('./pages/ChildHomeScreen'));
+const ChildQuestionsScreen = lazy(() => import('./pages/ChildQuestionsScreen'));
+const ChildPhotosScreen = lazy(() => import('./pages/ChildPhotosScreen'));
+const ChildProgressScreen = lazy(() => import('./pages/ChildProgressScreen'));
+const ChildChaptersScreen = lazy(() => import('./pages/ChildChaptersScreen'));
 
 export function RouteLoading() {
   return (
@@ -41,7 +56,9 @@ function LazyRoute({ children }: { children: ReactNode }) {
 }
 
 function getOnboardingRoute(role: string | null) {
-  return role === 'senior' ? '/onboarding/senior-profile' : '/onboarding/role';
+  if (role === 'senior') return '/onboarding/senior-profile';
+  if (role === 'guardian') return '/onboarding/guardian-profile';
+  return '/select-mode';
 }
 
 function RequireAuth() {
@@ -49,11 +66,20 @@ function RequireAuth() {
   const auth = useStore((state) => state.auth);
 
   if (!auth.isAuthenticated) {
-    return <Navigate to="/auth" replace state={{ from: location.pathname }} />;
+    return <Navigate to="/splash" replace state={{ from: location.pathname }} />;
   }
 
   if (!auth.onboardingCompleted) {
     return <Navigate to={getOnboardingRoute(auth.role)} replace />;
+  }
+
+  // Prevent cross-role access to mobile routes
+  if (auth.role === 'senior' && location.pathname.startsWith('/child')) {
+    return <Navigate to="/parent" replace />;
+  }
+
+  if (auth.role === 'guardian' && location.pathname.startsWith('/parent')) {
+    return <Navigate to="/child" replace />;
   }
 
   return <Outlet />;
@@ -63,7 +89,9 @@ function PublicOnly() {
   const auth = useStore((state) => state.auth);
 
   if (auth.isAuthenticated && auth.onboardingCompleted) {
-    return <Navigate to={auth.role === 'family' ? '/review' : '/'} replace />;
+    if (auth.role === 'senior') return <Navigate to="/parent" replace />;
+    if (auth.role === 'guardian') return <Navigate to="/child" replace />;
+    return <Navigate to="/select-mode" replace />;
   }
 
   if (auth.isAuthenticated) {
@@ -81,28 +109,75 @@ function RequireVerified() {
   }
 
   if (auth.onboardingCompleted) {
-    return <Navigate to={auth.role === 'family' ? '/review' : '/'} replace />;
+    if (auth.role === 'senior') return <Navigate to="/parent" replace />;
+    if (auth.role === 'guardian') return <Navigate to="/child" replace />;
+    return <Navigate to="/select-mode" replace />;
   }
 
   return <Outlet />;
+}
+
+function RootRedirect() {
+  const auth = useStore((state) => state.auth);
+
+  if (!auth.isAuthenticated) {
+    return <Navigate to="/splash" replace />;
+  }
+
+  if (!auth.role) {
+    return <Navigate to="/select-mode" replace />;
+  }
+
+  return <Navigate to={auth.role === 'guardian' ? '/child' : '/parent'} replace />;
+}
+
+function ParentInterviewWrapper() {
+  return (
+    <div className="flex flex-col min-h-screen bg-[#F8F3EA]">
+      <div className="flex-1 pb-24">
+        <LazyRoute>
+          <InterviewPage />
+        </LazyRoute>
+      </div>
+      <BottomNav />
+    </div>
+  );
 }
 
 export function AppRoutes() {
   return (
     <Routes>
       <Route element={<PublicOnly />}>
+        <Route path="/splash" element={<LazyRoute><SplashScreen /></LazyRoute>} />
+        <Route path="/intro" element={<LazyRoute><IntroScreen /></LazyRoute>} />
         <Route path="/auth" element={<LazyRoute><AuthPage /></LazyRoute>} />
         <Route path="/auth/verify" element={<LazyRoute><VerifyPage /></LazyRoute>} />
       </Route>
 
       <Route element={<RequireVerified />}>
-        <Route path="/onboarding/role" element={<LazyRoute><OnboardingPage /></LazyRoute>} />
+        <Route path="/select-mode" element={<LazyRoute><SelectModeScreen /></LazyRoute>} />
+        <Route path="/onboarding/role" element={<Navigate to="/select-mode" replace />} />
         <Route path="/onboarding/senior-profile" element={<LazyRoute><OnboardingPage /></LazyRoute>} />
+        <Route path="/onboarding/guardian-profile" element={<LazyRoute><OnboardingPage /></LazyRoute>} />
       </Route>
 
       <Route element={<RequireAuth />}>
+        {/* Parent / Senior routes */}
+        <Route path="/parent" element={<LazyRoute><ParentHomeScreen /></LazyRoute>} />
+        <Route path="/parent/interview" element={<ParentInterviewWrapper />} />
+        <Route path="/parent/progress" element={<LazyRoute><ParentProgressScreen /></LazyRoute>} />
+        <Route path="/parent/transcript" element={<LazyRoute><ParentTranscriptScreen /></LazyRoute>} />
+
+        {/* Child / Guardian routes */}
+        <Route path="/child" element={<LazyRoute><ChildHomeScreen /></LazyRoute>} />
+        <Route path="/child/questions" element={<LazyRoute><ChildQuestionsScreen /></LazyRoute>} />
+        <Route path="/child/photos" element={<LazyRoute><ChildPhotosScreen /></LazyRoute>} />
+        <Route path="/child/progress" element={<LazyRoute><ChildProgressScreen /></LazyRoute>} />
+        <Route path="/child/chapters" element={<LazyRoute><ChildChaptersScreen /></LazyRoute>} />
+
+        {/* Existing layout-wrapped routes */}
         <Route path="/" element={<Layout />}>
-          <Route index element={<LazyRoute><InterviewPage /></LazyRoute>} />
+          <Route index element={<RootRedirect />} />
           <Route path="archive" element={<LazyRoute><ArchivePage /></LazyRoute>} />
           <Route path="persona" element={<LazyRoute><PersonaPage /></LazyRoute>} />
           <Route path="review" element={<LazyRoute><ReviewPage /></LazyRoute>} />

@@ -1,16 +1,22 @@
 import { useState, useCallback } from 'react';
 import { BookOpen, Edit3, Check, X } from 'lucide-react';
-import type { ChapterNarrative, Citation } from '../lib/types';
+import type { ChapterNarrative, Citation, Memory } from '../lib/types';
+import SourceEvidencePanel from './SourceEvidencePanel';
 
 export interface ChapterPreviewProps {
   key?: string | number;
   narrative: ChapterNarrative;
+  sourceMemories?: Memory[];
   onEdit: (newBody: string) => void;
 }
 
-export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProps) {
+export default function ChapterPreview({ narrative, sourceMemories = [], onEdit }: ChapterPreviewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(narrative.body);
+  const [selectedSourceMemoryId, setSelectedSourceMemoryId] = useState<string | null>(null);
+  const selectedSourceMemory = selectedSourceMemoryId
+    ? sourceMemories.find((memory) => memory.id === selectedSourceMemoryId) ?? null
+    : null;
 
   const handleStartEdit = () => {
     setEditText(narrative.body);
@@ -45,14 +51,16 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
           {citations && citations.length > 0 && (
             <sup className="inline-flex gap-0.5 ml-0.5">
               {citations.map((c, i) => (
-                <span
+                <button
+                  type="button"
                   key={`${c.memoryId}-${i}`}
-                  className="text-[11px] text-secondary font-semibold cursor-help"
+                  onClick={() => setSelectedSourceMemoryId(c.memoryId)}
+                  className="text-[11px] text-secondary font-semibold cursor-pointer rounded px-0.5 hover:bg-secondary-pale focus:outline-none focus:ring-1 focus:ring-secondary/30"
                   title={`출처: ${c.memoryId}`}
-                  aria-label={`출처 기억 ${c.memoryId}`}
+                  aria-label={`출처 기억 ${c.memoryId} 원문 확인`}
                 >
                   [{c.memoryId.slice(-4)}]
-                </span>
+                </button>
               ))}
             </sup>
           )}
@@ -64,7 +72,7 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
 
   return (
     <article
-      className="space-y-5 p-7 rounded-[28px] border border-border bg-surface shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
+      className="premium-panel space-y-5 rounded-[28px] p-7"
       aria-label={`챕터: ${narrative.title}`}
     >
       {/* Chapter Header */}
@@ -77,7 +85,7 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
           <button
             type="button"
             onClick={handleStartEdit}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-text-muted bg-surface-alt border border-border rounded-xl hover:bg-border/40 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-primary/30 transition-colors"
+            className="flex items-center gap-1.5 rounded-xl border border-border/70 bg-white/78 px-3 py-1.5 text-[13px] font-semibold text-text-muted shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-4 focus:ring-primary/10"
             aria-label="본문 편집"
           >
             <Edit3 className="w-3.5 h-3.5" aria-hidden="true" />
@@ -92,14 +100,14 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
           <textarea
             value={editText}
             onChange={(e) => setEditText(e.target.value)}
-            className="w-full min-h-[200px] p-5 text-[16px] leading-relaxed text-text border border-border rounded-2xl resize-y focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary transition-all"
+            className="min-h-[200px] w-full resize-y rounded-2xl border border-border/80 bg-white/78 p-5 text-[16px] leading-relaxed text-text shadow-sm transition-all duration-300 ease-out focus:border-primary/40 focus:outline-none focus:ring-4 focus:ring-primary/10"
             aria-label="챕터 본문 편집"
           />
           <div className="flex gap-2 justify-end">
             <button
               type="button"
               onClick={handleCancelEdit}
-              className="flex items-center gap-1.5 px-4 py-2 text-[13px] font-semibold text-text-muted bg-surface-alt border border-border rounded-xl hover:bg-border/40 focus:outline-none transition-colors"
+              className="flex items-center gap-1.5 rounded-xl border border-border/70 bg-white/78 px-4 py-2 text-[13px] font-semibold text-text-muted shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-white focus:outline-none"
               aria-label="편집 취소"
             >
               <X className="w-3.5 h-3.5" aria-hidden="true" />
@@ -108,7 +116,7 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
             <button
               type="button"
               onClick={handleSaveEdit}
-              className="flex items-center gap-1.5 px-4 py-2 text-[13px] font-semibold text-white bg-primary rounded-xl hover:bg-primary-light focus:outline-none transition-colors shadow-sm"
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-[13px] font-semibold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light focus:outline-none"
               aria-label="편집 저장"
             >
               <Check className="w-3.5 h-3.5" aria-hidden="true" />
@@ -137,12 +145,26 @@ export default function ChapterPreview({ narrative, onEdit }: ChapterPreviewProp
             <ul className="mt-2 space-y-1 pl-4" aria-label="출처 목록">
               {[...new Set(narrative.citations.map((c) => c.memoryId))].map((memoryId) => (
                 <li key={memoryId} className="text-[12px] text-text-subtle">
-                  기억 ID: {memoryId}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSourceMemoryId(memoryId)}
+                    className="rounded px-1 font-semibold text-secondary hover:bg-secondary-pale focus:outline-none focus:ring-1 focus:ring-secondary/30"
+                  >
+                    기억 ID: {memoryId}
+                  </button>
                 </li>
               ))}
             </ul>
           </details>
         </footer>
+      )}
+
+      {!isEditing && selectedSourceMemory && (
+        <SourceEvidencePanel
+          memory={selectedSourceMemory}
+          label="자서전 문장 출처"
+          onClose={() => setSelectedSourceMemoryId(null)}
+        />
       )}
     </article>
   );

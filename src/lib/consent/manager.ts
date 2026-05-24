@@ -18,6 +18,7 @@ import type {
 } from '../types';
 
 export type { AccessTierV2, ConsentCategoryV2, ConsentSettingsV2 };
+type ConsentUserRole = UserRole | 'family';
 
 /**
  * Ordered access tiers from least to most permissive.
@@ -48,7 +49,7 @@ const SENSITIVE_EMOTIONS = ['슬픔', '분노', '후회', '트라우마'];
  */
 export function getAccessTier(
   consentSettings: ConsentSettingsV2,
-  userRole: UserRole
+  userRole: ConsentUserRole
 ): AccessTierV2 {
   // Senior users always have full access
   if (userRole === 'senior') {
@@ -84,7 +85,7 @@ export function getAccessTier(
 export function canAccessV2(
   memory: Memory,
   consentSettings: ConsentSettingsV2,
-  userRole: UserRole,
+  userRole: ConsentUserRole,
   accessType: ConsentCategoryV2
 ): boolean {
   // Senior users always have access
@@ -187,7 +188,7 @@ export function updateConsentV2(
 export function filterAccessibleMemoriesV2(
   memories: Memory[],
   consentSettingsMap: Map<string, ConsentSettingsV2>,
-  userRole: UserRole,
+  userRole: ConsentUserRole,
   accessType: ConsentCategoryV2
 ): Memory[] {
   return memories.filter((memory) => {
@@ -233,10 +234,10 @@ export interface ConsentManager {
   getConsent(memoryId: string): ConsentStatus;
   setAccessTier(memoryId: string, tier: AccessTier): void;
   setDesignatedFamily(memoryId: string, familyIds: string[]): void;
-  canAccess(memoryId: string, userId: string, userRole: UserRole): boolean;
+  canAccess(memoryId: string, userId: string, userRole: ConsentUserRole): boolean;
   setPosthumousPolicy(policy: PosthumousPolicy): void;
   getPosthumousPolicy(): PosthumousPolicy;
-  filterAccessibleMemories(memories: Memory[], userId: string, userRole: UserRole): Memory[];
+  filterAccessibleMemories(memories: Memory[], userId: string, userRole: ConsentUserRole): Memory[];
 }
 
 /**
@@ -297,7 +298,7 @@ export function createConsentManager(): ConsentManager {
     useStore.getState().updateMemoryConsent(memoryId, updatedConsent);
   }
 
-  function canAccess(memoryId: string, userId: string, userRole: UserRole): boolean {
+  function canAccess(memoryId: string, userId: string, userRole: ConsentUserRole): boolean {
     const memory = getMemory(memoryId);
     if (!memory) return false;
 
@@ -317,7 +318,7 @@ export function createConsentManager(): ConsentManager {
 
       case '전체 가족':
         // Senior owner + any family user
-        return userRole === 'family';
+        return userRole === 'family' || userRole === 'guardian';
 
       default:
         return false;
@@ -335,7 +336,7 @@ export function createConsentManager(): ConsentManager {
   function filterAccessibleMemories(
     memories: Memory[],
     userId: string,
-    userRole: UserRole
+    userRole: ConsentUserRole
   ): Memory[] {
     return memories.filter((memory) => {
       // Only include memories with granted consent

@@ -126,7 +126,7 @@ export default function ArchivePage() {
         </p>
         <Link
           to="/"
-          className="mt-7 inline-flex items-center justify-center rounded-2xl bg-primary px-6 py-3.5 text-[16px] font-black text-white shadow-[0_16px_34px_rgba(122,49,67,0.22)] transition-colors hover:bg-primary-light"
+          className="mt-7 inline-flex items-center justify-center rounded-2xl bg-primary px-6 py-3.5 text-[16px] font-black text-white shadow-[0_14px_32px_rgba(15,23,42,0.16)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light"
         >
           첫 기억 기록하기
         </Link>
@@ -136,12 +136,12 @@ export default function ArchivePage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <section className="overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_22px_60px_rgba(41,35,33,0.1)]">
+      <section className="premium-panel overflow-hidden rounded-[32px]">
         <div className="grid lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="bg-[#2A2027] p-6 text-white sm:p-8">
-            <p className="text-[12px] font-black uppercase tracking-[0.18em] text-white/50">Memory archive</p>
-            <h1 className="mt-3 text-[30px] font-black leading-tight sm:text-[36px]">추억 보관함</h1>
-            <p className="mt-3 max-w-2xl text-[16px] font-semibold leading-relaxed text-white/65">
+          <div className="bg-primary p-6 text-primary-pale sm:p-8">
+            <p className="text-[12px] font-black uppercase tracking-[0.18em] text-primary-pale/50">Memory archive</p>
+            <h1 className="mt-3 text-[30px] font-black leading-tight sm:text-[36px] text-primary-pale">추억 보관함</h1>
+            <p className="mt-3 max-w-2xl text-[16px] font-semibold leading-relaxed text-primary-pale/65">
               인터뷰로 수집된 기억을 태그, 사진, 메타데이터, 가족 검수 상태까지 한 번에 확인합니다.
             </p>
             <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -151,24 +151,24 @@ export default function ArchivePage() {
                 ['검색', metrics.indexedMemoryCount],
                 ['일정', metrics.upcomingEventCount],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-[20px] border border-white/10 bg-white/8 px-4 py-3">
-                  <p className="text-[11px] font-black text-white/45">{label}</p>
-                  <p className="mt-1 text-[24px] font-black text-white">{value}</p>
+                <div key={label} className="rounded-[20px] border border-primary-light/20 bg-primary-light/30 px-4 py-3 shadow-sm backdrop-blur">
+                  <p className="text-[11px] font-black text-primary-pale/45">{label}</p>
+                  <p className="mt-1 text-[24px] font-black text-primary-pale">{value}</p>
                 </div>
               ))}
             </div>
           </div>
-          <div className="flex flex-col justify-between gap-6 bg-primary-pale p-6 sm:p-8">
+          <div className="flex flex-col justify-between gap-6 bg-surface-alt/76 p-6 backdrop-blur sm:p-8">
             <div>
               <p className="text-[12px] font-black uppercase tracking-[0.16em] text-primary">검수 상태</p>
               <h2 className="mt-2 text-[22px] font-black text-text">출판 가능한 기억을 고르는 단계입니다</h2>
-              <p className="mt-3 text-[15px] font-bold leading-relaxed text-primary">
+              <p className="mt-3 text-[15px] font-semibold leading-relaxed text-text-muted">
                 GPS/민감 감정/공개 범위는 가족 공개 전 반드시 확인하도록 표시됩니다.
               </p>
             </div>
             <Link
               to="/review"
-              className="inline-flex items-center justify-center rounded-2xl bg-primary px-5 py-3 text-[15px] font-black text-white shadow-[0_14px_28px_rgba(122,49,67,0.2)] transition-colors hover:bg-primary-light"
+              className="inline-flex items-center justify-center rounded-2xl bg-primary px-5 py-3 text-[15px] font-black text-primary-pale shadow-[0_14px_28px_rgba(92,52,32,0.16)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light"
             >
               가족 검수로 이동
             </Link>
@@ -176,7 +176,7 @@ export default function ArchivePage() {
         </div>
       </section>
 
-      <div className="flex gap-2 overflow-x-auto rounded-[24px] border border-border bg-surface p-2 shadow-sm" role="tablist" aria-label="추억 보관함 보기">
+      <div className="flex gap-2 overflow-x-auto rounded-[24px] border border-border/70 bg-surface-alt/72 p-2 shadow-sm backdrop-blur" role="tablist" aria-label="추억 보관함 보기">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -185,10 +185,10 @@ export default function ArchivePage() {
             aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
-              'shrink-0 rounded-[16px] border px-4 py-2.5 text-[14px] font-black transition-colors',
+              'shrink-0 rounded-[16px] border px-4 py-2.5 text-[14px] font-black transition-all duration-300 ease-out',
               activeTab === tab.id
-                ? 'bg-primary text-white border-primary shadow-sm'
-                : 'bg-transparent border-transparent text-text-muted hover:bg-surface-alt'
+                ? 'bg-primary text-primary-pale border-primary shadow-sm'
+                : 'bg-transparent border-transparent text-text-muted hover:-translate-y-0.5 hover:bg-surface'
             )}
           >
             {tab.label}
@@ -204,7 +204,7 @@ export default function ArchivePage() {
           ['태그 DB', tagDatabase.tags.length],
           ['사진 연결', `${metrics.linkedPhotoCount}/${metrics.photoCount}`],
         ].map(([label, value]) => (
-          <div key={label} className="rounded-[24px] bg-surface border border-border p-5 shadow-[0_14px_38px_rgba(41,35,33,0.06)]">
+          <div key={label} className="premium-panel-soft rounded-[24px] p-5 transition-all duration-300 ease-out hover:-translate-y-0.5">
             <p className="text-[12px] font-bold text-text-subtle uppercase tracking-wide">{label}</p>
             <p className="text-[28px] font-black text-text mt-1">{value}</p>
           </div>
@@ -213,7 +213,7 @@ export default function ArchivePage() {
 
       {activeTab === 'summary' && (
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="rounded-[24px] bg-surface border border-border p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+          <div className="premium-panel rounded-[24px] p-5">
             <div className="flex items-center gap-2 mb-4">
               <Tags className="w-5 h-5 text-primary" aria-hidden="true" />
               <h3 className="text-[18px] font-black text-text">태그 DB</h3>
@@ -227,7 +227,7 @@ export default function ArchivePage() {
               ))}
             </div>
           </div>
-          <div className="rounded-[24px] bg-surface border border-border p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
+          <div className="premium-panel rounded-[24px] p-5">
             <div className="flex items-center gap-2 mb-4">
               <Camera className="w-5 h-5 text-secondary" aria-hidden="true" />
               <h3 className="text-[18px] font-black text-text">사진 메타데이터 활용</h3>

@@ -13,7 +13,6 @@ interface ErrorBoundaryState {
 
 export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   declare props: Readonly<ErrorBoundaryProps>;
-  declare setState: (state: Partial<ErrorBoundaryState>) => void;
 
   state: ErrorBoundaryState = {
     error: null,

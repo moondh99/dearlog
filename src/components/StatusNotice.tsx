@@ -11,9 +11,9 @@ interface StatusNoticeProps {
 }
 
 const toneClass: Record<StatusNoticeTone, string> = {
-  success: 'bg-green-50 border-green-200 text-green-800',
-  error: 'bg-red-50 border-red-200 text-red-800',
-  info: 'bg-secondary-pale border-secondary/25 text-secondary',
+  success: 'bg-white/86 border-emerald-200/70 text-emerald-800 shadow-sm',
+  error: 'bg-white/86 border-red-200/70 text-red-800 shadow-sm',
+  info: 'bg-white/86 border-border/80 text-text-muted shadow-sm',
 };
 
 const icons = {
@@ -29,18 +29,18 @@ export default function StatusNotice({ tone, title, message, onDismiss }: Status
     <div
       role={tone === 'error' ? 'alert' : 'status'}
       aria-live={tone === 'error' ? 'assertive' : 'polite'}
-      className={cn('flex items-start gap-3 rounded-2xl border px-4 py-3', toneClass[tone])}
+      className={cn('flex items-start gap-3 rounded-2xl border px-4.5 py-3.5 backdrop-blur', toneClass[tone])}
     >
       <Icon className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-black">{title}</p>
-        {message && <p className="text-[13px] font-semibold opacity-85 mt-0.5">{message}</p>}
+        <p className="text-[14px] font-black text-text">{title}</p>
+        {message && <p className="mt-1 text-[13px] font-medium leading-relaxed opacity-85">{message}</p>}
       </div>
       {onDismiss && (
         <button
           type="button"
           onClick={onDismiss}
-          className="p-1 rounded-lg hover:bg-white/50 transition-colors"
+          className="rounded-lg p-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt"
           aria-label="상태 메시지 닫기"
         >
           <X className="w-4 h-4" aria-hidden="true" />

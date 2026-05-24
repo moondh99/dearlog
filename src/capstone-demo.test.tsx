@@ -30,11 +30,11 @@ describe('capstone demo mode', () => {
 
     const state = useStore.getState();
     expect(state.demo).toMatchObject({ enabled: true, offlineMode: true });
-    expect(state.memories.filter((memory) => memory.id.startsWith('demo_'))).toHaveLength(6);
-    expect(state.photos.photos.filter((photo) => photo.id.startsWith('demo_'))).toHaveLength(4);
-    expect(state.familyQuestions.questions.filter((question) => question.id.startsWith('demo_'))).toHaveLength(3);
-    expect(state.autobiography.narratives.filter((chapter) => chapter.chapterId.startsWith('demo_'))).toHaveLength(6);
-    expect(state.ragIndex.entries.filter((entry) => entry.memoryId.startsWith('demo_'))).toHaveLength(6);
+    expect(state.memories.filter((memory) => memory.id.startsWith('demo_'))).toHaveLength(24);
+    expect(state.photos.photos.filter((photo) => photo.id.startsWith('demo_'))).toHaveLength(17);
+    expect(state.familyQuestions.questions.filter((question) => question.id.startsWith('demo_'))).toHaveLength(8);
+    expect(state.autobiography.narratives.filter((chapter) => chapter.chapterId.startsWith('demo_'))).toHaveLength(24);
+    expect(state.ragIndex.entries.filter((entry) => entry.memoryId.startsWith('demo_'))).toHaveLength(24);
 
     useStore.getState().clearDemoData();
     const cleared = useStore.getState();

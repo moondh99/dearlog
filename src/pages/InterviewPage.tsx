@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Send, Loader2, ImageUp } from 'lucide-react';
+import { BellRing, CheckCircle2, Inbox, Mic, PhoneCall, Square, Send, Loader2, ImageUp } from 'lucide-react';
 import { useStore } from '../store';
 import { cn } from '../components/Layout';
 import { createSilenceDetector, SilenceDetector } from '../lib/interview/silence-detector';
@@ -8,7 +8,21 @@ import StatusNotice, { type StatusNoticeTone } from '../components/StatusNotice'
 import { handleInterviewMessage, injectFamilyQuestion, processEndOfSession, processPhotoUpload } from '../lib/agents/router';
 import { getNextQuestion, isInjectionAppropriate, markAnswered, notifyQuestioner } from '../lib/agents/family-question-queue';
 import { linkMemoryToPhoto } from '../lib/agents/photo-recall';
-import { buildShortAnswerNudge, estimateInterviewProgress, shouldNudgeForShortAnswer } from '../lib/insights/memory-insights';
+import { buildShortAnswerNudge, estimateInterviewProgress, getMemoryScopeCategories, shouldNudgeForShortAnswer } from '../lib/insights/memory-insights';
+import {
+  acceptLocalInterviewSession,
+  createLocalInterviewSession,
+  endLocalInterviewSession,
+  fetchLocalNotifications,
+  fetchLocalProgress,
+  fetchLocalVapidPublicKey,
+  markLocalNotificationRead,
+  pauseLocalInterviewSession,
+  registerLocalPushSubscription,
+  saveLocalInterviewRecord,
+  uploadLocalAudio,
+  type LocalNotification,
+} from '../lib/local-server';
 import type { ChatMessage, SessionContext, SilenceState, EmotionClassification, Memory, PhotoAnalysisResult } from '../lib/types';
 
 // Web Speech API types
@@ -32,6 +46,7 @@ const DEFAULT_SILENCE_STATE: SilenceState = {
 };
 
 const OPENING_MEMORY_CURSOR_KEY = 'dearlog-opening-memory-cursor';
+const MEMORY_SCOPE_CATEGORIES = getMemoryScopeCategories();
 
 type PhotoPreviewState = {
   url: string;
@@ -40,12 +55,48 @@ type PhotoPreviewState = {
   analysis: PhotoAnalysisResult | null;
 };
 
+function formatNotificationTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 function buildAnalysisTags(analysis: PhotoAnalysisResult): string[] {
   return [
     ...analysis.people.map((person) => `인물: ${person}`),
     ...analysis.places.map((place) => `장소: ${place}`),
     ...analysis.objects.map((object) => `사물: ${object}`),
   ].slice(0, 6);
+}
+
+function buildPhotoVisualCue(analysis: PhotoAnalysisResult): string {
+  const clues = [
+    analysis.estimatedEra && analysis.estimatedEra !== '알 수 없음' ? `시기: ${analysis.estimatedEra}` : null,
+    analysis.places[0] ? `장소: ${analysis.places[0]}` : null,
+    analysis.people[0] ? `인물: ${analysis.people[0]}` : null,
+    analysis.objects[0] ? `사물: ${analysis.objects[0]}` : null,
+  ].filter((clue): clue is string => Boolean(clue));
+
+  return clues.length > 0
+    ? clues.join(' · ')
+    : '사진 속 장면을 단서로 회상을 시작합니다';
+}
+
+function buildPhotoInterviewPrompt(analysis: PhotoAnalysisResult, questions: string[]): string {
+  const photoIntro = analysis.description
+    ? `사진을 살펴보니 ${analysis.description}`
+    : '사진을 함께 보며 떠오르는 기억을 여쭤보고 싶습니다.';
+  const visualCue = buildPhotoVisualCue(analysis);
+  const questionText = questions.length > 0
+    ? questions.map((question, index) => `${index + 1}. ${question}`).join('\n')
+    : '1. 이 사진을 보시면 가장 먼저 어떤 기억이 떠오르시나요?';
+
+  return `${photoIntro}\n\n사진 단서: ${visualCue}\n\n이 장면을 보며 먼저 여쭤볼 질문입니다.\n${questionText}`;
 }
 
 function buildContextualOpening(memories: Memory[]): string | null {
@@ -102,6 +153,16 @@ export default function InterviewPage() {
   const [isSupported, setIsSupported] = useState(true);
   const [activeFamilyQuestionId, setActiveFamilyQuestionId] = useState<string | null>(null);
   const [activePhotoId, setActivePhotoId] = useState<string | null>(null);
+  const [localSessionId, setLocalSessionId] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<'idle' | 'registering' | 'ready' | 'error'>('idle');
+  const [notifications, setNotifications] = useState<LocalNotification[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [notificationStatus, setNotificationStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [serverProgress, setServerProgress] = useState<{
+    character: string;
+    totalRecords: number;
+    progress: Array<{ count: number; complete: boolean; chapter: { title: string; minAnswerCount: number } }>;
+  } | null>(null);
   const [photoPreview, setPhotoPreview] = useState<PhotoPreviewState | null>(null);
   const [silenceState, setSilenceState] = useState<SilenceState>(DEFAULT_SILENCE_STATE);
   const [notice, setNotice] = useState<{ tone: StatusNoticeTone; title: string; message?: string } | null>(null);
@@ -112,6 +173,11 @@ export default function InterviewPage() {
   });
 
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const currentAudioBlobRef = useRef<Blob | null>(null);
+  const stopRecordingResolverRef = useRef<((blob: Blob | null) => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceDetectorRef = useRef<SilenceDetector>(createSilenceDetector());
   const silenceIntervalRef = useRef<number | null>(null);
@@ -119,6 +185,26 @@ export default function InterviewPage() {
   const updateMemoryPrivacy = useStore(state => state.updateMemoryPrivacy);
   const speechProfile = useStore(state => state.speechProfile.profile);
   const interviewProgress = estimateInterviewProgress(messages);
+
+  const refreshServerProgress = async () => {
+    try {
+      setServerProgress(await fetchLocalProgress());
+    } catch {
+      // 로컬 서버가 꺼져 있어도 시니어 인터뷰 화면은 기존 방식으로 계속 사용할 수 있습니다.
+    }
+  };
+
+  const refreshNotifications = async () => {
+    try {
+      setNotificationStatus('loading');
+      const result = await fetchLocalNotifications('senior');
+      setNotifications(result.notifications);
+      setUnreadNotificationCount(result.unreadCount);
+      setNotificationStatus('idle');
+    } catch {
+      setNotificationStatus('error');
+    }
+  };
 
   // Keep sessionContext in sync with speechProfile from store
   useEffect(() => {
@@ -146,6 +232,35 @@ export default function InterviewPage() {
       setIsTyping(false);
     };
     initChat();
+
+    // Web Push 알림을 눌러 들어온 경우 ringing 세션을 앱 내 음성 인터뷰로 수락합니다.
+    const incomingCallSessionId = new URLSearchParams(window.location.search).get('callSessionId');
+    const sessionPromise = incomingCallSessionId
+      ? acceptLocalInterviewSession(incomingCallSessionId)
+      : createLocalInterviewSession('childhood');
+
+    sessionPromise
+      .then((result) => {
+        setLocalSessionId(result.session.id);
+        if (incomingCallSessionId) {
+          setNotice({
+            tone: 'success',
+            title: '앱 인터뷰 전화를 받았습니다',
+            message: '마이크 버튼을 누르고 편하게 말씀해 주세요. 음성 원본과 원문은 로컬 서버에 저장됩니다.',
+          });
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      })
+      .catch(() => {
+        // 로컬 서버가 꺼져 있어도 기존 프론트 프로토타입 인터뷰는 계속 동작합니다.
+      });
+    void refreshServerProgress();
+    void refreshNotifications();
+
+    // 브라우저 푸시를 놓쳐도 앱을 열어둔 시니어가 새 알림을 확인할 수 있도록 주기적으로 가져옵니다.
+    const notificationInterval = window.setInterval(() => {
+      void refreshNotifications();
+    }, 15_000);
 
     // Setup Speech Recognition
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -190,7 +305,11 @@ export default function InterviewPage() {
       };
 
       recognition.onend = () => {
-        setIsRecording(false);
+        // Chrome SpeechRecognition은 사용자가 녹음을 멈추기 전에도 onend를 낼 수 있습니다.
+        // MediaRecorder가 아직 살아 있으면 원본 오디오 저장을 위해 녹음 상태를 유지합니다.
+        if (mediaRecorderRef.current?.state !== 'recording') {
+          setIsRecording(false);
+        }
       };
 
       recognitionRef.current = recognition;
@@ -203,7 +322,9 @@ export default function InterviewPage() {
       if (silenceIntervalRef.current !== null) {
         clearInterval(silenceIntervalRef.current);
       }
+      clearInterval(notificationInterval);
       silenceDetectorRef.current.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -259,7 +380,7 @@ export default function InterviewPage() {
     return previewUrl;
   };
 
-  const toggleRecording = () => {
+  const startVoiceCapture = async () => {
     if (!isSupported) {
       setNotice({
         tone: 'error',
@@ -270,22 +391,131 @@ export default function InterviewPage() {
     }
 
     try {
-      if (isRecording) {
-        recognitionRef.current?.stop();
-        silenceDetectorRef.current.stop();
-        stopSilencePolling();
-        setIsRecording(false);
-      } else {
-        setNotice(null);
-        setTranscript('');
-        recognitionRef.current?.start();
-        silenceDetectorRef.current.start();
-        startSilencePolling();
-        setIsRecording(true);
+      setNotice(null);
+      setTranscript('');
+      currentAudioBlobRef.current = null;
+      audioChunksRef.current = [];
+
+      if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+        const recorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+        recorder.onstop = () => {
+          const blob = audioChunksRef.current.length > 0
+            ? new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+            : null;
+          currentAudioBlobRef.current = blob;
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+          stopRecordingResolverRef.current?.(blob);
+          stopRecordingResolverRef.current = null;
+        };
+        recorder.start();
       }
+
+      recognitionRef.current?.start();
+      silenceDetectorRef.current.start();
+      startSilencePolling();
+      setIsRecording(true);
     } catch (error) {
       console.error('Recording toggle error:', error);
       setIsRecording(false);
+      setNotice({
+        tone: 'error',
+        title: '마이크를 시작하지 못했습니다',
+        message: '브라우저 마이크 권한을 허용한 뒤 다시 눌러 주세요.',
+      });
+    }
+  };
+
+  const stopVoiceCapture = async (): Promise<Blob | null> => {
+    recognitionRef.current?.stop();
+    silenceDetectorRef.current.stop();
+    stopSilencePolling();
+    setIsRecording(false);
+
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+      return currentAudioBlobRef.current;
+    }
+
+    return new Promise((resolve) => {
+      stopRecordingResolverRef.current = resolve;
+      recorder.stop();
+    });
+  };
+
+  const toggleRecording = () => {
+    if (isRecording || mediaRecorderRef.current?.state === 'recording') {
+      void stopVoiceCapture();
+      return;
+    }
+    void startVoiceCapture();
+  };
+
+  const handleRegisterSeniorPush = async () => {
+    try {
+      setPushStatus('registering');
+      const { publicKey } = await fetchLocalVapidPublicKey();
+      await registerLocalPushSubscription(publicKey, 'senior');
+      setPushStatus('ready');
+      setNotice({
+        tone: 'success',
+        title: '앱 연락 알림이 켜졌습니다',
+        message: '보호자가 인터뷰를 시작하면 이 기기로 알림이 옵니다.',
+      });
+    } catch (error) {
+      setPushStatus('error');
+      setNotice({
+        tone: 'error',
+        title: '앱 연락 알림을 켜지 못했습니다',
+        message: error instanceof Error ? error.message : 'VAPID 키와 브라우저 알림 권한을 확인해 주세요.',
+      });
+    }
+  };
+
+  const handleNotificationAction = async (notification: LocalNotification) => {
+    try {
+      await markLocalNotificationRead(notification.id, 'senior');
+      setNotifications((current) =>
+        current.map((item) =>
+          item.id === notification.id
+            ? { ...item, status: 'read', readAt: new Date().toISOString() }
+            : item
+        )
+      );
+      setUnreadNotificationCount((count) => Math.max(0, count - (notification.status === 'unread' ? 1 : 0)));
+
+      if (notification.type === 'app_interview_call' && notification.metadata.sessionId) {
+        const result = await acceptLocalInterviewSession(notification.metadata.sessionId);
+        setLocalSessionId(result.session.id);
+        setNotice({
+          tone: 'success',
+          title: '가족의 인터뷰 연락을 받았습니다',
+          message: '마이크 버튼을 누르고 지금 떠오르는 이야기를 들려주세요.',
+        });
+        return;
+      }
+
+      setNotice({
+        tone: 'info',
+        title: notification.title,
+        message: notification.body,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        title: '알림을 처리하지 못했습니다',
+        message: error instanceof Error ? error.message : '잠시 뒤 다시 눌러 주세요.',
+      });
+    } finally {
+      void refreshNotifications();
     }
   };
 
@@ -299,6 +529,35 @@ export default function InterviewPage() {
     setMessages(newHistory);
     setTranscript('');
     setIsTyping(true);
+
+    const recordedBlob = mediaRecorderRef.current?.state === 'recording' || isRecording
+      ? await stopVoiceCapture()
+      : currentAudioBlobRef.current;
+
+    // 앱 내 음성 인터뷰는 원본 오디오 파일과 STT 원문을 모두 로컬 서버에 저장합니다.
+    const audioUploadPromise = recordedBlob
+      ? uploadLocalAudio(recordedBlob, `dearlog-${Date.now()}.webm`).then((result) => result.fileKey)
+      : Promise.resolve('audio/browser-speech-placeholder.txt');
+
+    audioUploadPromise
+      .then((audioFileKey) => saveLocalInterviewRecord({
+        chapterId: 'childhood',
+        sessionId: localSessionId,
+        transcriptText: userMsg.text,
+        mode: activePhotoId ? 'photo' : 'app_call',
+        audioFileKey,
+      }))
+      .then(() => {
+        currentAudioBlobRef.current = null;
+        return refreshServerProgress();
+      })
+      .catch(() => {
+        setNotice({
+          tone: 'info',
+          title: '로컬 서버 저장은 대기 중입니다',
+          message: '인터뷰 화면은 계속 사용할 수 있습니다. 서버를 켠 뒤 다음 답변부터 DB에 저장됩니다.',
+        });
+      });
 
     // Reset silence detector on send
     silenceDetectorRef.current.reset();
@@ -364,6 +623,9 @@ export default function InterviewPage() {
         linkMemoryToPhoto(activePhotoId, result.memory.id);
         setActivePhotoId(null);
       }
+      if (localSessionId) {
+        await endLocalInterviewSession(localSessionId).catch(() => undefined);
+      }
       clearPhotoPreview();
 
       const skippedAgents = result.errors
@@ -428,18 +690,11 @@ export default function InterviewPage() {
           : prev
       ));
 
-      const photoIntro = result.analysis.description
-        ? `사진을 살펴보니 ${result.analysis.description}`
-        : '사진을 함께 보며 떠오르는 기억을 여쭤보고 싶습니다.';
-      const questionText = result.interviewQuestions.length > 0
-        ? result.interviewQuestions.map((question, index) => `${index + 1}. ${question}`).join('\n')
-        : '이 사진을 보시면 가장 먼저 어떤 기억이 떠오르시나요?';
-
       setMessages((prev) => [
         ...prev,
         {
           role: 'model',
-          text: `${photoIntro}\n\n${questionText}`,
+          text: buildPhotoInterviewPrompt(result.analysis, result.interviewQuestions),
         },
       ]);
       setNotice({
@@ -497,19 +752,33 @@ export default function InterviewPage() {
     handleEndSession();
   };
 
+  const handleHardshipPause = async () => {
+    if (localSessionId) {
+      await pauseLocalInterviewSession(localSessionId).catch(() => undefined);
+    }
+    await stopVoiceCapture().catch(() => null);
+    setNotice({
+      tone: 'info',
+      title: '잠시 쉬어가도 괜찮습니다',
+      message: '지금까지의 진행 상황을 저장했고, 다음에 이어서 말씀하실 수 있습니다.',
+    });
+  };
+
+  const latestUnreadNotification = notifications.find((item) => item.status === 'unread') ?? notifications[0] ?? null;
+
   return (
     <div
       data-testid="interview-shell"
-      className="grid min-h-0 h-full w-full max-w-6xl mx-auto gap-5 overflow-hidden lg:grid-cols-[minmax(0,1fr)_310px]"
+      className="mx-auto grid h-full min-h-0 w-full max-w-6xl gap-6 overflow-hidden lg:grid-cols-[minmax(0,1fr)_310px]"
     >
-      <section className="flex min-h-0 flex-col overflow-hidden rounded-[32px] border border-border bg-surface shadow-[0_22px_60px_rgba(41,35,33,0.1)]">
-        <div className="shrink-0 border-b border-border bg-[#2A2027] px-5 py-5 text-white md:px-7">
+      <section className="premium-panel flex min-h-0 flex-col overflow-hidden rounded-[32px]">
+        <div className="shrink-0 border-b border-primary-light/20 bg-primary px-6 py-6 text-primary-pale md:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-[12px] font-black uppercase tracking-[0.18em] text-white/50">Memory interview</p>
+              <p className="text-[12px] font-black uppercase tracking-[0.18em] text-primary-pale/50">Memory interview</p>
               <h1 className="mt-2 text-[26px] font-black leading-tight md:text-[30px]">말씀 나누기</h1>
-              <p className="mt-2 max-w-xl text-[15px] font-semibold leading-relaxed text-white/65">
-                음성, 텍스트, 사진을 함께 받아 오늘의 회상을 기억 카드로 정리합니다.
+              <p className="mt-2 max-w-xl text-[15px] font-semibold leading-relaxed text-primary-pale/75">
+                자녀가 준비한 사진의 인물·장소·시기 단서를 보며, 부모님은 말씀하기·사진 보기·그만하기만으로 회상을 남깁니다.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 md:min-w-[300px]">
@@ -518,9 +787,9 @@ export default function InterviewPage() {
                 ['사진', activePhotoId ? 1 : 0],
                 ['진행', `${interviewProgress.filter((item) => item.covered).length}/${interviewProgress.length}`],
               ].map(([label, value]) => (
-                <div key={label} className="rounded-[18px] border border-white/10 bg-white/8 px-3 py-2">
-                  <p className="text-[11px] font-black text-white/48">{label}</p>
-                  <p className="mt-1 text-[19px] font-black text-white">{value}</p>
+                <div key={label} className="rounded-[18px] border border-white/15 bg-white/10 px-3 py-2">
+                  <p className="text-[11px] font-black text-primary-pale/60">{label}</p>
+                  <p className="mt-1 text-[19px] font-black text-primary-pale">{value}</p>
                 </div>
               ))}
             </div>
@@ -546,8 +815,8 @@ export default function InterviewPage() {
               className={cn(
                 "px-5 py-4 md:px-6 md:py-5 leading-relaxed rounded-2xl",
                 msg.role === 'user'
-                  ? "bg-primary text-white text-[17px] md:text-[19px] font-medium"
-                  : "bg-surface-alt border border-border text-text text-[18px] md:text-[21px] font-bold"
+                  ? "bg-primary text-primary-pale text-[17px] md:text-[19px] font-medium shadow-[0_12px_30px_rgba(92,52,32,0.12)]"
+                  : "border border-border bg-surface text-text text-[18px] md:text-[21px] font-bold shadow-sm"
               )}
             >
               {msg.text}
@@ -558,7 +827,7 @@ export default function InterviewPage() {
         {photoPreview && (
           <div data-testid="photo-preview-card" className="mr-auto max-w-[92%] md:max-w-[82%]">
             <span className="text-[13px] text-text-subtle mb-1.5 px-1 font-semibold block">사진 회상</span>
-            <div className="overflow-hidden rounded-2xl bg-surface-alt border border-border">
+            <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
               <img
                 src={photoPreview.url}
                 alt={`${photoPreview.fileName} 미리보기`}
@@ -579,6 +848,12 @@ export default function InterviewPage() {
 
                 {photoPreview.status === 'ready' && photoPreview.analysis && (
                   <div className="space-y-2">
+                    <div className="rounded-2xl border border-border/70 bg-surface-alt/80 px-4 py-3">
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-text-subtle">AI 인터뷰어가 읽은 사진 단서</p>
+                      <p className="mt-1 text-[14px] font-black text-text">
+                        {buildPhotoVisualCue(photoPreview.analysis)}
+                      </p>
+                    </div>
                     <p className="text-[15px] md:text-[16px] font-semibold text-text-muted leading-relaxed">
                       {photoPreview.analysis.description || '사진에서 떠오르는 장면을 바탕으로 질문을 준비했습니다.'}
                     </p>
@@ -610,7 +885,7 @@ export default function InterviewPage() {
         {isTyping && (
           <div className="mr-auto max-w-[82%]">
             <span className="text-[13px] text-text-subtle mb-1.5 px-1 font-semibold block">Dearlog</span>
-            <div className="px-6 py-5 rounded-2xl bg-surface-alt border border-border flex items-center gap-3">
+            <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-6 py-5 shadow-sm">
               <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
               <span className="text-[18px] text-text-muted font-semibold">말씀을 듣고 있어요...</span>
             </div>
@@ -632,7 +907,7 @@ export default function InterviewPage() {
         {/* Input area */}
         <div
           data-testid="interview-input-panel"
-          className="shrink-0 border-t border-border bg-surface px-4 py-4 md:px-6"
+          className="shrink-0 border-t border-border bg-surface/90 px-5 py-5 backdrop-blur md:px-7"
         >
         <div className="flex flex-col gap-3">
           {notice && (
@@ -644,16 +919,107 @@ export default function InterviewPage() {
             />
           )}
 
+          <div className="rounded-2xl border border-primary/15 bg-primary-pale/90 px-4 py-3 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-pale text-primary">
+                  <Inbox className="h-5 w-5" aria-hidden="true" />
+                  {unreadNotificationCount > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-error px-1 text-[11px] font-black text-white">
+                      {unreadNotificationCount}
+                    </span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[13px] font-black text-primary">가족 알림</p>
+                  {latestUnreadNotification ? (
+                    <>
+                      <p className="mt-0.5 truncate text-[15px] font-black text-text">{latestUnreadNotification.title}</p>
+                      <p className="mt-0.5 truncate text-[13px] font-semibold leading-relaxed text-text-muted">
+                        {latestUnreadNotification.body}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-0.5 text-[13px] font-semibold leading-relaxed text-text-muted">
+                      새 알림이 오면 이곳에 표시됩니다. 푸시가 막혀도 앱 안에서 확인할 수 있습니다.
+                    </p>
+                  )}
+                </div>
+              </div>
+              {latestUnreadNotification && (
+                <button
+                  type="button"
+                  onClick={() => handleNotificationAction(latestUnreadNotification)}
+                  className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-[13px] font-black text-primary-pale shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light"
+                >
+                  {latestUnreadNotification.type === 'app_interview_call' ? (
+                    <PhoneCall className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {latestUnreadNotification.type === 'app_interview_call' ? '연락 받기' : '확인'}
+                </button>
+              )}
+            </div>
+
+            {notifications.length > 1 && (
+              <div className="mt-3 grid gap-2 border-t border-border/70 pt-3">
+                {notifications.slice(0, 3).map((notification) => (
+                  <button
+                    key={notification.id}
+                    type="button"
+                    onClick={() => handleNotificationAction(notification)}
+                    className={cn(
+                      'flex items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-all duration-300 ease-out hover:bg-surface-alt',
+                      notification.status === 'unread' ? 'bg-primary-pale/70' : 'bg-transparent'
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-black text-text">{notification.title}</span>
+                      <span className="block truncate text-[12px] font-semibold text-text-subtle">
+                        {formatNotificationTime(notification.createdAt)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[12px] font-black text-primary">
+                      {notification.status === 'unread' ? '새 알림' : '읽음'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {notificationStatus === 'error' && (
+              <p className="mt-2 text-[12px] font-semibold text-error">로컬 서버 알림함을 불러오지 못했습니다.</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-border/70 bg-surface-alt/75 px-4 py-3 shadow-sm">
+            <p className="text-[13px] font-black text-secondary">부모님 참여는 세 단계로 끝납니다</p>
+            <p className="mt-1 text-[12px] font-semibold leading-relaxed text-text-muted">
+              마이크로 말씀하기, 자녀가 올린 사진 속 단서 보기, 오늘의 이야기 마치기만 하면 기억 카드와 가족 검수본은 Dearlog가 정리합니다.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRegisterSeniorPush}
+            disabled={pushStatus === 'registering' || pushStatus === 'ready'}
+            className="flex items-center justify-center gap-2 rounded-2xl border border-primary/20 bg-primary-pale px-4 py-3 text-[14px] font-black text-primary shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 disabled:opacity-55"
+          >
+            <BellRing className="h-4 w-4" />
+            {pushStatus === 'ready' ? '앱 연락 알림 켜짐' : pushStatus === 'registering' ? '알림 등록 중...' : '앱 연락 알림 켜기'}
+          </button>
+
           <div className="flex items-end gap-3 md:gap-5">
             {/* Recording button */}
             <button
               onClick={toggleRecording}
               aria-label={isRecording ? '녹음 중지' : '녹음 시작'}
               className={cn(
-                "flex items-center justify-center rounded-full shrink-0 transition-all duration-200",
+                "flex shrink-0 items-center justify-center rounded-full transition-all duration-300 ease-out",
                 isRecording
                   ? "w-[72px] h-[72px] md:w-[88px] md:h-[88px] bg-error/10 border-2 border-error/40 text-error ring-4 ring-error/15 animate-pulse"
-                  : "w-[68px] h-[68px] md:w-[80px] md:h-[80px] bg-primary text-white shadow-[0_16px_34px_rgba(122,49,67,0.26)] hover:bg-primary-light hover:scale-105"
+                  : "w-[68px] h-[68px] md:w-[80px] md:h-[80px] bg-primary text-primary-pale shadow-[0_14px_32px_rgba(92,52,32,0.15)] hover:bg-primary-light hover:scale-105"
               )}
             >
               {isRecording
@@ -667,13 +1033,13 @@ export default function InterviewPage() {
                 value={transcript}
                 onChange={(e) => setTranscript(e.target.value)}
                 placeholder="마이크 버튼을 누르고 말씀하시거나, 여기에 직접 적어주세요."
-                className="w-full h-[76px] md:h-[96px] px-4 md:px-5 py-3 md:py-4 pr-14 md:pr-16 rounded-2xl border border-border bg-surface-alt text-[16px] md:text-[18px] resize-none focus:ring-2 focus:ring-primary/25 focus:border-primary outline-none text-text placeholder:text-text-subtle transition-all"
+              className="h-[76px] w-full resize-none rounded-2xl border border-border/80 bg-surface-alt/75 px-4 py-3 pr-14 text-[16px] text-text shadow-sm outline-none transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:bg-surface focus:ring-4 focus:ring-primary/10 md:h-[96px] md:px-5 md:py-4 md:pr-16 md:text-[18px]"
               />
               <button
                 onClick={handleSend}
                 disabled={!transcript.trim() || isTyping}
                 aria-label="말씀 보내기"
-                className="absolute right-3 bottom-3 p-2.5 md:p-3 bg-primary text-white rounded-xl disabled:opacity-40 hover:bg-primary-light transition-colors shadow-sm"
+                className="absolute bottom-3 right-3 rounded-xl bg-primary p-2.5 text-primary-pale shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light disabled:opacity-40 md:p-3"
               >
                 <Send className="w-5 h-5" />
               </button>
@@ -682,7 +1048,7 @@ export default function InterviewPage() {
 
           {/* End session button */}
           <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-3">
-            <label className="flex items-center justify-center gap-2 px-5 py-3 md:py-4 bg-surface-alt border border-border rounded-2xl text-[16px] md:text-[17px] font-bold text-text-muted hover:bg-border/30 transition-colors cursor-pointer">
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-border/80 bg-surface/80 px-5 py-3 text-[16px] font-bold text-text-muted shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt md:py-4 md:text-[17px]">
               <ImageUp className="w-5 h-5" />
               사진으로 회상
               <input
@@ -699,7 +1065,7 @@ export default function InterviewPage() {
             <button
               onClick={handleEndSession}
               disabled={messages.length < 2 || isSummarizing}
-              className="w-full py-3 md:py-4 bg-secondary text-white rounded-2xl text-[16px] md:text-[18px] font-bold hover:bg-secondary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-3 shadow-sm"
+              className="flex w-full items-center justify-center gap-3 rounded-2xl bg-secondary py-3 text-[16px] font-bold text-secondary-pale shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-secondary/90 disabled:opacity-40 md:py-4 md:text-[18px]"
             >
               {isSummarizing ? (
                 <>
@@ -710,6 +1076,13 @@ export default function InterviewPage() {
                 '오늘의 이야기 마치기'
               )}
             </button>
+            <button
+              type="button"
+              onClick={handleHardshipPause}
+              className="sm:col-span-2 flex w-full items-center justify-center rounded-2xl border border-error/30 bg-error/10 px-5 py-3 text-[16px] font-black text-error shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-error/15"
+            >
+              힘들어요
+            </button>
           </div>
         </div>
         </div>
@@ -717,7 +1090,41 @@ export default function InterviewPage() {
 
       <aside className="hidden min-h-0 overflow-y-auto lg:block">
         <div className="space-y-4">
-          <section className="rounded-[28px] border border-border bg-surface p-5 shadow-[0_16px_44px_rgba(41,35,33,0.08)]">
+          <section className="premium-panel rounded-[28px] p-5">
+            <p className="text-[12px] font-black uppercase tracking-[0.16em] text-primary">Book progress</p>
+            <h2 className="mt-2 text-[21px] font-black text-text">자서전 성장 진척도</h2>
+            <div className="mt-5 rounded-[24px] border border-primary/20 bg-primary-pale/70 px-5 py-4 text-center">
+              <p className="text-[42px] leading-none" aria-label="진척도 캐릭터">
+                {serverProgress?.character ?? '🌰'}
+              </p>
+              <p className="mt-2 text-[15px] font-black text-primary">
+                기록 {serverProgress?.totalRecords ?? messages.filter((message) => message.role === 'user').length}개
+              </p>
+              <p className="mt-1 text-[12px] font-bold text-primary/75">
+                챕터별 15개 답변이 쌓이면 다음 장으로 넘어갈 수 있습니다.
+              </p>
+            </div>
+            <div className="mt-4 space-y-2">
+              {(serverProgress?.progress ?? []).slice(0, 7).map((item) => (
+                <div key={item.chapter.title} className="rounded-2xl border border-border bg-surface px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-black text-text">{item.chapter.title}</span>
+                    <span className={cn('text-[12px] font-black', item.complete ? 'text-primary' : 'text-text-subtle')}>
+                      {item.count}/{item.chapter.minAnswerCount}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-border/70">
+                    <div
+                      className="h-full rounded-full bg-primary"
+                      style={{ width: `${Math.min(100, (item.count / item.chapter.minAnswerCount) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="premium-panel rounded-[28px] p-5">
             <p className="text-[12px] font-black uppercase tracking-[0.16em] text-primary">Session guide</p>
             <h2 className="mt-2 text-[21px] font-black text-text">오늘의 회상 흐름</h2>
             <div className="mt-5 space-y-2">
@@ -725,7 +1132,7 @@ export default function InterviewPage() {
                 <div
                   key={item.category}
                   className={cn(
-                    'flex items-center justify-between rounded-2xl border px-3 py-3',
+                    'flex items-center justify-between rounded-2xl border px-3 py-3 transition-all duration-300 ease-out hover:-translate-y-0.5',
                     item.covered
                       ? 'border-primary/18 bg-primary-pale text-primary'
                       : 'border-border bg-surface-alt text-text-muted'
@@ -738,16 +1145,42 @@ export default function InterviewPage() {
             </div>
           </section>
 
-          <section className="rounded-[28px] border border-primary/15 bg-primary-pale p-5">
-            <p className="text-[12px] font-black uppercase tracking-[0.16em] text-primary">좋은 질문</p>
-            <div className="mt-4 space-y-3 text-[14px] font-bold leading-relaxed text-primary">
-              <p className="rounded-2xl bg-surface px-4 py-3 shadow-sm">그 장면에서 가장 먼저 보이는 사람은 누구였나요?</p>
-              <p className="rounded-2xl bg-surface px-4 py-3 shadow-sm">그때의 냄새, 소리, 계절감이 기억나시나요?</p>
-              <p className="rounded-2xl bg-surface px-4 py-3 shadow-sm">가족에게 꼭 남기고 싶은 한 문장이 있다면요?</p>
+          <section className="premium-panel rounded-[28px] p-5">
+            <p className="text-[12px] font-black uppercase tracking-[0.16em] text-text-subtle">Recording scope</p>
+            <h2 className="mt-2 text-[20px] font-black text-text">Dearlog가 기록하는 범위</h2>
+            <p className="mt-2 text-[13px] font-bold leading-relaxed text-text-muted">
+              모든 기억을 다 묻지 않고, 자서전과 가족 대화에 남기 좋은 여섯 범위로 나눠 질문합니다.
+            </p>
+            <div className="mt-4 grid gap-2">
+              {MEMORY_SCOPE_CATEGORIES.map((category) => (
+                <div key={category.id} className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">
+                  <p className="text-[14px] font-black text-text">{category.label}</p>
+                  <p className="mt-1 text-[12px] font-semibold leading-relaxed text-text-muted">{category.description}</p>
+                </div>
+              ))}
             </div>
           </section>
 
-          <section className="rounded-[28px] border border-border bg-surface p-5">
+          <section className="premium-panel-soft rounded-[28px] p-5">
+            <p className="text-[12px] font-black uppercase tracking-[0.16em] text-secondary">Caregiver prepared</p>
+            <h2 className="mt-2 text-[20px] font-black text-text">자녀가 준비하는 인터뷰</h2>
+            <div className="mt-4 space-y-3 text-[14px] font-bold leading-relaxed text-secondary">
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">사진과 질문은 가족 공간에서 미리 넣습니다.</p>
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">부모님은 앱 메뉴를 탐색하지 않고 이 화면에서 답변만 합니다.</p>
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">기록 후 가족이 공개 범위와 문장을 함께 확인합니다.</p>
+            </div>
+          </section>
+
+          <section className="premium-panel-soft rounded-[28px] p-5">
+            <p className="text-[12px] font-black uppercase tracking-[0.16em] text-primary">좋은 질문</p>
+            <div className="mt-4 space-y-3 text-[14px] font-bold leading-relaxed text-primary">
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">이 사진 속 장소에 도착했을 때 어떤 기분이셨나요?</p>
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">사진에 보이는 사람과 그날 나눈 말이 기억나시나요?</p>
+              <p className="rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">그 장면을 가족에게 한 문장으로 남긴다면요?</p>
+            </div>
+          </section>
+
+          <section className="premium-panel rounded-[28px] p-5">
             <p className="text-[12px] font-black uppercase tracking-[0.16em] text-text-subtle">기록 상태</p>
             <div className="mt-4 space-y-3 text-[14px] font-bold text-text-muted">
               <div className="flex items-center justify-between">

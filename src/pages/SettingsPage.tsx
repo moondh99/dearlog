@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings, Shield, AlertTriangle, CalendarDays, PlayCircle, Database, Loader2, CheckCircle2, Circle, ClipboardList, FileText, Printer, MessageSquareQuote, Quote } from 'lucide-react';
+import { Settings, Shield, AlertTriangle, CalendarDays, PlayCircle, Database, Loader2, CheckCircle2, Circle, ClipboardList, FileText, Printer, MessageSquareQuote, Quote, KeyRound, Lock, Unlock, ShieldCheck, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { splitSecret, combineShares, type Share } from '../lib/security/shamir';
+import { encryptText } from '../lib/security/encryption';
 import { useStore } from '../store';
 import { processUpcomingEvents, SUPPORTED_EVENT_TYPES } from '../lib/agents/calendar-trigger';
 import { ragIndex } from '../lib/rag/index';
 import StatusNotice, { type StatusNoticeTone } from '../components/StatusNotice';
+import TrustSafetyPanel from '../components/TrustSafetyPanel';
 import {
   CAPSTONE_SUBMISSION_SECTIONS,
   DEMO_PERSONA_QUESTIONS,
@@ -30,7 +33,7 @@ interface PolicyOption {
   description: string;
 }
 
-type SettingsPanel = 'policy' | 'index' | 'calendar' | 'demo';
+type SettingsPanel = 'policy' | 'index' | 'calendar' | 'legacy' | 'demo';
 
 const POLICY_OPTIONS: PolicyOption[] = [
   {
@@ -57,6 +60,7 @@ function getPolicyLabel(policy: PosthumousPolicy): string {
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const role = useStore((state) => state.auth.role);
   const posthumousPolicy = useStore((state) => state.posthumousPolicy);
   const setPosthumousPolicy = useStore((state) => state.setPosthumousPolicy);
   const signOut = useStore((state) => state.signOut);
@@ -79,6 +83,25 @@ export default function SettingsPage() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [saved, setSaved] = useState(false);
   const [eventTitle, setEventTitle] = useState('');
+  
+  // Legacy vault actions
+  const fetchLegacyVault = useStore((state) => state.fetchLegacyVault);
+  const setupLegacyVault = useStore((state) => state.setupLegacyVault);
+  const triggerDeathVerification = useStore((state) => state.triggerDeathVerification);
+  const approveDeathVerification = useStore((state) => state.approveDeathVerification);
+  const recoverLegacyData = useStore((state) => state.recoverLegacyData);
+  const resetLegacyVault = useStore((state) => state.resetLegacyVault);
+
+  useEffect(() => {
+    fetchLegacyVault();
+  }, [fetchLegacyVault]);
+
+  // Legacy local state
+  const [shareAInput, setShareAInput] = useState(() => {
+    return localStorage.getItem('dearlog_legacy_share_a') ?? '';
+  });
+  const [isProcessingLegacy, setIsProcessingLegacy] = useState(false);
+  const [showShareA, setShowShareA] = useState(false);
   const [eventType, setEventType] = useState<CalendarEventType>('생일');
   const [eventDate, setEventDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [eventPeople, setEventPeople] = useState('');
@@ -89,6 +112,159 @@ export default function SettingsPage() {
   const [indexNotice, setIndexNotice] = useState<{ tone: StatusNoticeTone; title: string; message?: string } | null>(null);
   const [calendarNotice, setCalendarNotice] = useState<{ tone: StatusNoticeTone; title: string; message?: string } | null>(null);
   const [activePanel, setActivePanel] = useState<SettingsPanel>('policy');
+
+  // Legacy encryption state
+  const [legacyShares, setLegacyShares] = useState<Share[] | null>(null);
+  const [selectedShareIndices, setSelectedShareIndices] = useState<Set<number>>(new Set());
+  const [recoveredSecret, setRecoveredSecret] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [legacyNotice, setLegacyNotice] = useState<{ tone: StatusNoticeTone; title: string; message?: string } | null>(null);
+
+  const handleSplitKey = () => {
+    const profile = useStore.getState().auth.profile;
+    const dek = `DEK-${profile?.name ?? 'dearlog'}-${Date.now().toString(36)}`;
+    const shares = splitSecret(dek, 2, 3);
+    setLegacyShares(shares);
+    setSelectedShareIndices(new Set());
+    setRecoveredSecret(null);
+    setRecoveryError(null);
+    setLegacyNotice({
+      tone: 'success',
+      title: '암호화 키를 3개 조각으로 분할했습니다',
+      message: `비밀 키: ${dek.substring(0, 20)}... → 임의의 2개 조각으로 복원할 수 있습니다.`,
+    });
+  };
+
+  const handleToggleShare = (index: number) => {
+    setSelectedShareIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+    setRecoveredSecret(null);
+    setRecoveryError(null);
+  };
+
+  const handleCombineShares = () => {
+    if (!legacyShares || selectedShareIndices.size < 2) return;
+    try {
+      const selected = Array.from(selectedShareIndices).map((i) => legacyShares[i]);
+      const secret = combineShares(selected);
+      setRecoveredSecret(secret);
+      setRecoveryError(null);
+    } catch (err) {
+      setRecoveredSecret(null);
+      setRecoveryError(err instanceof Error ? err.message : '복원에 실패했습니다');
+    }
+  };
+
+  const handleCreateVault = async () => {
+    setIsProcessingLegacy(true);
+    setLegacyNotice(null);
+    try {
+      const profile = useStore.getState().auth.profile;
+      const dek = `DEK-${profile?.name ?? 'dearlog'}-${Date.now().toString(36)}`;
+      const shares = splitSecret(dek, 2, 3);
+      const encryptedMemories = await encryptText(JSON.stringify(memories), dek);
+      const encryptedAutobiography = await encryptText(JSON.stringify(autobiographyChapters), dek);
+
+      await setupLegacyVault({
+        encryptedMemories,
+        encryptedAutobiography,
+        serverShare: JSON.stringify(shares[1]),
+        institutionShare: JSON.stringify(shares[2]),
+      });
+
+      const shareAStr = JSON.stringify(shares[0]);
+      localStorage.setItem('dearlog_legacy_share_a', shareAStr);
+      setShareAInput(shareAStr);
+
+      setLegacyNotice({
+        tone: 'success',
+        title: '유산 금고 개설 완료',
+        message: '데이터가 안전하게 암호화되어 백업되었습니다. 키 조각 A가 브라우저에 저장되었습니다.',
+      });
+    } catch (err) {
+      console.error(err);
+      setLegacyNotice({
+        tone: 'error',
+        title: '유산 금고 개설 실패',
+        message: err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsProcessingLegacy(false);
+    }
+  };
+
+  const handleTriggerDeath = async () => {
+    setIsProcessingLegacy(true);
+    setLegacyNotice(null);
+    try {
+      await triggerDeathVerification();
+      setLegacyNotice({
+        tone: 'success',
+        title: '사망 증명 연동 완료',
+        message: '사망 심사가 개시되었습니다. 관리자 승인을 대기합니다.',
+      });
+    } catch (err) {
+      console.error(err);
+      setLegacyNotice({
+        tone: 'error',
+        title: '사망 심사 개시 실패',
+        message: err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsProcessingLegacy(false);
+    }
+  };
+
+  const handleApproveDeath = async () => {
+    setIsProcessingLegacy(true);
+    setLegacyNotice(null);
+    try {
+      await approveDeathVerification();
+      setLegacyNotice({
+        tone: 'success',
+        title: '사망 심사 승인 완료',
+        message: '사망 심사가 최종 승인되었습니다. 키 조각 B, C가 릴리즈되었습니다.',
+      });
+    } catch (err) {
+      console.error(err);
+      setLegacyNotice({
+        tone: 'error',
+        title: '사망 심사 승인 실패',
+        message: err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsProcessingLegacy(false);
+    }
+  };
+
+  const handleRecoverData = async () => {
+    setIsProcessingLegacy(true);
+    setLegacyNotice(null);
+    try {
+      await recoverLegacyData(shareAInput);
+      setLegacyNotice({
+        tone: 'success',
+        title: '데이터 복원 성공',
+        message: '키 조각들을 결합하여 유산 데이터를 완벽히 복구했습니다!',
+      });
+    } catch (err) {
+      console.error(err);
+      setLegacyNotice({
+        tone: 'error',
+        title: '데이터 복원 실패',
+        message: err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.',
+      });
+    } finally {
+      setIsProcessingLegacy(false);
+    }
+  };
 
   const handleSignOut = () => {
     signOut();
@@ -207,11 +383,11 @@ export default function SettingsPage() {
   const demoReadinessChecks = [
     { label: '발표용 데이터', ready: demo.enabled },
     { label: '오프라인 시연', ready: demo.offlineMode },
-    { label: '기억 카드 6개 이상', ready: memories.length >= 6 },
-    { label: '사진 4장 이상', ready: photos.length >= 4 },
+    { label: '기억 카드 20개 이상', ready: memories.length >= 20 },
+    { label: '사진 12장 이상', ready: photos.length >= 12 },
     { label: '가족 질문 3개 이상', ready: familyQuestions.length >= 3 },
-    { label: '자서전 챕터 6개 이상', ready: autobiographyChapters.length >= 6 },
-    { label: '검색 연결 6개 이상', ready: ragEntries.length >= 6 },
+    { label: '자서전 챕터 20개 이상', ready: autobiographyChapters.length >= 20 },
+    { label: '검색 연결 20개 이상', ready: ragEntries.length >= 20 },
   ];
   const demoReadyCount = demoReadinessChecks.filter((check) => check.ready).length;
   const isDemoReady = demoReadinessChecks.every((check) => check.ready);
@@ -219,6 +395,7 @@ export default function SettingsPage() {
     { id: 'policy', label: '사후 정책' },
     { id: 'index', label: '기억 검색 연결', count: ragEntries.length },
     { id: 'calendar', label: '가족 일정', count: calendar.events.length },
+    { id: 'legacy', label: '유산 암호화' },
     { id: 'demo', label: '발표 데모', count: demo.enabled ? 1 : 0 },
   ];
 
@@ -231,13 +408,13 @@ export default function SettingsPage() {
         <button
           type="button"
           onClick={handleSignOut}
-          className="ml-auto rounded-xl border border-border bg-surface px-4 py-2 text-[14px] font-bold text-text-muted transition-colors hover:bg-surface-alt"
+          className="ml-auto rounded-xl border border-border/70 bg-surface px-4 py-2 text-[14px] font-bold text-text-muted shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt"
         >
           로그아웃
         </button>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="설정 영역">
+      <div className="flex gap-2 overflow-x-auto rounded-[24px] border border-border/70 bg-surface px-2 py-2 shadow-sm backdrop-blur" role="tablist" aria-label="설정 영역">
         {panels.map((panel) => (
           <button
             key={panel.id}
@@ -245,10 +422,10 @@ export default function SettingsPage() {
             role="tab"
             aria-selected={activePanel === panel.id}
             onClick={() => setActivePanel(panel.id)}
-            className={`shrink-0 px-4 py-2 rounded-xl text-[14px] font-bold border transition-colors ${
+            className={`shrink-0 rounded-xl border px-4 py-2 text-[14px] font-bold transition-all duration-300 ease-out ${
               activePanel === panel.id
-                ? 'bg-primary text-white border-primary'
-                : 'bg-surface border-border text-text-muted hover:bg-surface-alt'
+                ? 'border-primary bg-primary text-primary-pale shadow-sm'
+                : 'border-transparent bg-transparent text-text-muted hover:-translate-y-0.5 hover:bg-surface-alt'
             }`}
           >
             {panel.label}
@@ -259,7 +436,7 @@ export default function SettingsPage() {
 
       {/* Posthumous Policy Section */}
       {activePanel === 'policy' && <section
-        className="p-7 rounded-[28px] bg-surface border border-border shadow-[0_2px_8px_rgba(0,0,0,0.06)] space-y-6"
+        className="premium-panel space-y-6 rounded-[28px] p-7"
         aria-labelledby="posthumous-policy-heading"
       >
         <div className="flex items-center gap-3">
@@ -273,8 +450,10 @@ export default function SettingsPage() {
           사후에 기억 데이터를 어떻게 처리할지 설정합니다. 이 설정은 언제든지 변경할 수 있습니다.
         </p>
 
+        <TrustSafetyPanel compact />
+
         {/* Current policy status */}
-        <div className="p-4 rounded-2xl bg-surface-alt border border-border">
+        <div className="rounded-2xl border border-border/70 bg-surface p-4 shadow-sm">
           <p className="text-[12px] font-bold text-text-subtle uppercase tracking-wide mb-1">현재 정책</p>
           <p className="text-[16px] font-bold text-text">
             {getPolicyLabel(posthumousPolicy.policy)}
@@ -298,10 +477,10 @@ export default function SettingsPage() {
             {POLICY_OPTIONS.map((option) => (
               <label
                 key={option.value}
-                className={`flex items-start gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${
+                className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 ${
                   selectedPolicy === option.value
-                    ? 'border-primary bg-primary-pale/60 shadow-sm'
-                    : 'border-border bg-surface hover:border-border-strong'
+                    ? 'border-primary/30 bg-primary-pale/70'
+                    : 'border-border/70 bg-surface hover:border-border-strong'
                 }`}
               >
                 <input
@@ -336,7 +515,7 @@ export default function SettingsPage() {
             type="button"
             onClick={handleSave}
             disabled={!hasChanges}
-            className="px-6 py-3 text-[15px] font-bold text-white bg-primary rounded-2xl hover:bg-primary-light focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm"
+            className="rounded-2xl bg-primary px-6 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/15 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="정책 저장"
           >
             저장
@@ -347,7 +526,7 @@ export default function SettingsPage() {
         )}
       </section>}
 
-      {activePanel === 'index' && <section className="p-7 rounded-[28px] bg-surface border border-border shadow-[0_2px_8px_rgba(0,0,0,0.06)] space-y-6">
+      {activePanel === 'index' && <section className="premium-panel space-y-6 rounded-[28px] p-7">
         <div className="flex items-center gap-3">
           <Database className="w-5 h-5 text-secondary" aria-hidden="true" />
           <h2 className="text-[19px] font-black text-text">기억 검색 연결</h2>
@@ -360,7 +539,7 @@ export default function SettingsPage() {
             type="button"
             onClick={handleBackfillRAG}
             disabled={isIndexing || memories.length === 0}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-secondary text-white text-[15px] font-bold disabled:opacity-40 hover:bg-secondary/90 transition-colors shadow-sm"
+            className="inline-flex items-center gap-2 rounded-2xl bg-secondary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-secondary/90 disabled:opacity-40"
           >
             {isIndexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
             기억 검색 연결하기
@@ -379,7 +558,7 @@ export default function SettingsPage() {
         )}
       </section>}
 
-      {activePanel === 'calendar' && <section className="p-7 rounded-[28px] bg-surface border border-border shadow-[0_2px_8px_rgba(0,0,0,0.06)] space-y-6">
+      {activePanel === 'calendar' && <section className="premium-panel space-y-6 rounded-[28px] p-7">
         <div className="flex items-center gap-3">
           <CalendarDays className="w-5 h-5 text-primary" aria-hidden="true" />
           <h2 className="text-[19px] font-black text-text">가족 일정 알림</h2>
@@ -391,14 +570,14 @@ export default function SettingsPage() {
             onChange={(e) => setEventTitle(e.target.value)}
             aria-label="일정 제목"
             placeholder="일정 제목"
-            className="w-full px-4 py-3 rounded-2xl border border-border bg-surface-alt text-[15px] text-text outline-none focus:ring-2 focus:ring-primary/25"
+            className="w-full rounded-2xl border border-border/80 bg-surface px-4 py-3 text-[15px] text-text shadow-sm outline-none transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <select
               value={eventType}
               onChange={(e) => setEventType(e.target.value as CalendarEventType)}
               aria-label="일정 유형"
-              className="px-4 py-3 rounded-2xl border border-border bg-surface-alt text-[15px] text-text outline-none"
+              className="rounded-2xl border border-border/80 bg-surface px-4 py-3 text-[15px] text-text shadow-sm outline-none transition-all duration-300 ease-out focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
             >
               {SUPPORTED_EVENT_TYPES.map((type) => (
                 <option key={type} value={type}>{type}</option>
@@ -409,7 +588,7 @@ export default function SettingsPage() {
               value={eventDate}
               onChange={(e) => setEventDate(e.target.value)}
               aria-label="일정 날짜"
-              className="px-4 py-3 rounded-2xl border border-border bg-surface-alt text-[15px] text-text outline-none"
+              className="rounded-2xl border border-border/80 bg-surface px-4 py-3 text-[15px] text-text shadow-sm outline-none transition-all duration-300 ease-out focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
             />
           </div>
           <input
@@ -417,21 +596,21 @@ export default function SettingsPage() {
             onChange={(e) => setEventPeople(e.target.value)}
             aria-label="관련 인물"
             placeholder="관련 인물, 쉼표로 구분"
-            className="w-full px-4 py-3 rounded-2xl border border-border bg-surface-alt text-[15px] text-text outline-none focus:ring-2 focus:ring-primary/25"
+            className="w-full rounded-2xl border border-border/80 bg-surface px-4 py-3 text-[15px] text-text shadow-sm outline-none transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
           />
           <textarea
             value={eventDescription}
             onChange={(e) => setEventDescription(e.target.value)}
             aria-label="일정 설명"
             placeholder="일정 설명"
-            className="w-full h-24 p-4 rounded-2xl border border-border bg-surface-alt text-[15px] text-text resize-none outline-none focus:ring-2 focus:ring-primary/25"
+            className="h-24 w-full resize-none rounded-2xl border border-border/80 bg-surface p-4 text-[15px] text-text shadow-sm outline-none transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
           />
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
               onClick={handleAddEvent}
               disabled={!eventTitle.trim() || !eventDate}
-              className="px-5 py-3 rounded-2xl bg-primary text-white text-[15px] font-bold disabled:opacity-40 hover:bg-primary-light transition-colors shadow-sm"
+              className="rounded-2xl bg-primary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light disabled:opacity-40"
             >
               일정 등록
             </button>
@@ -439,7 +618,7 @@ export default function SettingsPage() {
               type="button"
               onClick={handleProcessCalendar}
               disabled={isProcessingCalendar || calendar.events.length === 0}
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-secondary text-white text-[15px] font-bold disabled:opacity-40 hover:bg-secondary/90 transition-colors shadow-sm"
+              className="inline-flex items-center gap-2 rounded-2xl bg-secondary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-secondary/90 disabled:opacity-40"
             >
               {isProcessingCalendar ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
               다가오는 일정 확인
@@ -460,7 +639,7 @@ export default function SettingsPage() {
           <div className="space-y-2">
             <p className="text-[12px] font-bold text-text-subtle uppercase tracking-wide">등록된 일정</p>
             {calendar.events.slice(0, 5).map((event) => (
-              <div key={event.id} className="rounded-2xl bg-surface-alt border border-border p-4">
+              <div key={event.id} className="rounded-2xl border border-border/70 bg-surface p-4 shadow-sm">
                 <p className="text-[15px] font-bold text-text">{event.title}</p>
                 <p className="text-[13px] text-text-muted mt-1">
                   {event.eventType} · {event.date} · {event.relatedPeople.join(', ') || '관련 인물 없음'}
@@ -474,7 +653,7 @@ export default function SettingsPage() {
           <div className="space-y-2">
             <p className="text-[12px] font-bold text-text-subtle uppercase tracking-wide">처리 결과</p>
             {calendarResults.map((result) => (
-              <div key={result.event.id} className="rounded-2xl bg-primary-pale/50 border border-primary/20 p-4">
+              <div key={result.event.id} className="rounded-2xl border border-primary/20 bg-primary-pale/60 p-4 shadow-sm">
                 <p className="text-[15px] font-bold text-text">
                   {result.event.title} · {result.action === 'auto_edit' ? '기억 전달 초안 생성' : '새 인터뷰 질문 생성'}
                 </p>
@@ -487,7 +666,325 @@ export default function SettingsPage() {
         )}
       </section>}
 
-      {activePanel === 'demo' && <section className="p-7 rounded-[28px] bg-surface border border-border shadow-[0_2px_8px_rgba(0,0,0,0.06)] space-y-6">
+      {activePanel === 'legacy' && <section
+        className="premium-panel space-y-6 rounded-[28px] p-7"
+        aria-labelledby="legacy-encryption-heading"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <KeyRound className="w-5 h-5 text-primary" aria-hidden="true" />
+            <h2 id="legacy-encryption-heading" className="text-[19px] font-black text-text">
+              디지털 유산 상속 워크플로우 (Shamir&apos;s Secret Sharing)
+            </h2>
+          </div>
+          {posthumousPolicy.vault && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (confirm('유산 금고 설정을 초기화하고 생존 상태로 복원하시겠습니까?')) {
+                  setIsProcessingLegacy(true);
+                  try {
+                    await resetLegacyVault();
+                    localStorage.removeItem('dearlog_legacy_share_a');
+                    setShareAInput('');
+                    setLegacyNotice({
+                      tone: 'info',
+                      title: '금고가 초기화되었습니다',
+                      message: '모든 암호화 데이터와 로컬 키 조각이 성공적으로 삭제되었습니다.',
+                    });
+                  } catch (err) {
+                    setLegacyNotice({
+                      tone: 'error',
+                      title: '초기화 실패',
+                      message: err instanceof Error ? err.message : '초기화 중 오류가 발생했습니다.',
+                    });
+                  } finally {
+                    setIsProcessingLegacy(false);
+                  }
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50/50 px-3 py-1.5 text-[12px] font-black text-red-600 hover:bg-red-50"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              시뮬레이션 초기화
+            </button>
+          )}
+        </div>
+
+        <p className="text-[15px] text-text-muted leading-relaxed">
+          어르신의 기억 데이터 암호화 키를 3개 조각으로 분리하고, 사후 사망 심사 통과 시에만 키를 조각 결합으로 복원하여 해독하는 풀스택 안전 프로토콜입니다.
+        </p>
+
+        {legacyNotice && (
+          <StatusNotice
+            tone={legacyNotice.tone}
+            title={legacyNotice.title}
+            message={legacyNotice.message}
+            onDismiss={() => setLegacyNotice(null)}
+          />
+        )}
+
+        {/* Stepper Steps UI */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-surface-alt/50 p-4 rounded-[24px] border border-border/60">
+          {[
+            {
+              step: 1,
+              title: '생존 (금고 개설)',
+              desc: '데이터 암호화 및 3개 조각 분산',
+              active: !posthumousPolicy.vault,
+              done: !!posthumousPolicy.vault,
+            },
+            {
+              step: 2,
+              title: '유고 발생 (심사 개시)',
+              desc: '행안부 연동 또는 보호자 심사 신청',
+              active: posthumousPolicy.vault?.deathVerificationStatus === 'alive',
+              done: posthumousPolicy.vault && posthumousPolicy.vault.deathVerificationStatus !== 'alive',
+            },
+            {
+              step: 3,
+              title: '사망 심사 승인',
+              desc: '관리자 승인 후 서버/기관 조각 릴리즈',
+              active: posthumousPolicy.vault?.deathVerificationStatus === 'pending_verification',
+              done: posthumousPolicy.vault?.deathVerificationStatus === 'released',
+            },
+            {
+              step: 4,
+              title: '유산 상속 (복원)',
+              desc: '보유 조각 A + 릴리즈된 조각들로 최종 해독',
+              active: posthumousPolicy.vault?.deathVerificationStatus === 'released' && !posthumousPolicy.recoveredMemories,
+              done: !!posthumousPolicy.recoveredMemories,
+            },
+          ].map((item) => (
+            <div
+              key={item.step}
+              className={`flex flex-col gap-1.5 rounded-2xl border p-4 transition-all duration-300 ${
+                item.active
+                  ? 'border-primary bg-primary-pale/50 shadow-sm ring-1 ring-primary/20'
+                  : item.done
+                  ? 'border-green-200 bg-green-50/20'
+                  : 'border-border/40 opacity-50 bg-surface'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black ${
+                    item.done
+                      ? 'bg-green-600 text-white'
+                      : item.active
+                      ? 'bg-primary text-white'
+                      : 'bg-text-subtle text-surface'
+                  }`}
+                >
+                  {item.step}
+                </span>
+                <span className="text-[14px] font-black text-text">{item.title}</span>
+              </div>
+              <p className="text-[12px] text-text-muted leading-relaxed">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Interactive Action Card based on current status */}
+        <div className="premium-panel border border-primary/10 bg-gradient-to-br from-surface to-surface-alt/30 p-6 rounded-[24px]">
+          {/* Step 1: Survive / Vault setup */}
+          {!posthumousPolicy.vault && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Lock className="w-5 h-5 text-primary" />
+                <h3 className="text-[16px] font-black text-text">1단계: 디지털 유산 금고 개설 및 기억 암호화</h3>
+              </div>
+              <p className="text-[14px] text-text-muted leading-relaxed">
+                현재 작성된 기억들({memories.length}개) 및 자서전을 대칭키(AES-GCM)로 암호화하고, 암호화 키를 Shamir&apos;s Secret Sharing (2-of-3)으로 쪼갭니다.
+                <br />
+                <strong>조각 A (가족 보관)</strong>는 로컬에만 저장되며, <strong>조각 B(서버), 조각 C(검증기관)</strong>가 서버로 안전히 백업됩니다.
+              </p>
+              <button
+                type="button"
+                onClick={handleCreateVault}
+                disabled={isProcessingLegacy || memories.length === 0}
+                className="inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light disabled:opacity-40"
+              >
+                {isProcessingLegacy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                유산 금고 개설 & 암호화 잠금 설정
+              </button>
+              {memories.length === 0 && (
+                <p className="text-[12px] text-red-500 font-bold">암호화할 기억 카드가 없습니다. 발표 데모 탭에서 샘플 데이터를 먼저 로드해 주세요.</p>
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Trigger death */}
+          {posthumousPolicy.vault?.deathVerificationStatus === 'alive' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-orange-500" />
+                <h3 className="text-[16px] font-black text-text">2단계: 유고 발생 심사 트리거 (사망 신고 연동)</h3>
+              </div>
+              <p className="text-[14px] text-text-muted leading-relaxed">
+                어르신의 생존 상태에서는 비공개 기억들이 완벽하게 차단(마스킹)됩니다.
+                사후 데이터 상속을 위해 행정안전부 사망 증명 연동 API 또는 보호자 연동 사망 심사 절차를 시작합니다.
+              </p>
+              <div className="bg-surface p-4 rounded-xl border border-border space-y-2.5">
+                <p className="text-[13px] font-bold text-text-muted">안전하게 보관 중인 키 조각 상태:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="rounded-xl border border-primary/20 bg-primary-pale/30 px-3 py-2 text-[12px]">
+                    <span className="font-black text-primary">✓ 조각 A (가족 보관)</span>
+                    <span className="block mt-1 text-[11px] font-mono text-text-subtle">브라우저 내 안전 저장됨</span>
+                  </div>
+                  <div className="rounded-xl border border-border bg-surface px-3 py-2 text-[12px] opacity-75">
+                    <span className="font-black text-text-muted">🔒 조각 B (서버 보관)</span>
+                    <span className="block mt-1 text-[11px] font-mono text-text-subtle">잠김 (사후 해독 불가)</span>
+                  </div>
+                  <div className="rounded-xl border border-border bg-surface px-3 py-2 text-[12px] opacity-75">
+                    <span className="font-black text-text-muted">🔒 조각 C (검증기관)</span>
+                    <span className="block mt-1 text-[11px] font-mono text-text-subtle">잠김 (사후 해독 불가)</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleTriggerDeath}
+                disabled={isProcessingLegacy}
+                className="inline-flex items-center gap-2 rounded-2xl bg-orange-600 px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-orange-500 disabled:opacity-40"
+              >
+                {isProcessingLegacy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+                사망 증명 연동 신청 (심사 개시)
+              </button>
+            </div>
+          )}
+
+          {/* Step 3: Approve death */}
+          {posthumousPolicy.vault?.deathVerificationStatus === 'pending_verification' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+                <h3 className="text-[16px] font-black text-text">3단계: 사망 사실 검증 및 승인 (서버/기관 조각 릴리즈)</h3>
+              </div>
+              <p className="text-[14px] text-text-muted leading-relaxed">
+                사망 증빙 심사를 처리합니다. 본 시뮬레이션에서는 관리자가 심사 서류를 검토하고 사망을 최종 승인하여 키 조각 B, C의 릴리즈 플래그를 활성화하는 과정입니다.
+              </p>
+              <button
+                type="button"
+                onClick={handleApproveDeath}
+                disabled={isProcessingLegacy}
+                className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-red-500 disabled:opacity-40"
+              >
+                {isProcessingLegacy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                사망 심사 최종 승인 & 키 조각 릴리즈
+              </button>
+            </div>
+          )}
+
+          {/* Step 4: Recover & Inherit */}
+          {posthumousPolicy.vault?.deathVerificationStatus === 'released' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Unlock className="w-5 h-5 text-green-600" />
+                <h3 className="text-[16px] font-black text-text">4단계: 디지털 유산 복원 및 해독</h3>
+              </div>
+              <p className="text-[14px] text-text-muted leading-relaxed">
+                사망 승인이 완료되어 서버 조각 B와 검증 기관 조각 C가 릴리즈되었습니다.
+                가족 보관 조각 A와 서버에서 수신한 조각 B, C를 모아 원본 AES-GCM 키를 복구하고 전체 유산 데이터를 성공적으로 해독합니다.
+              </p>
+
+              <div className="space-y-2">
+                <label className="block text-[13px] font-bold text-text-muted" htmlFor="share-a-input">
+                  가족 소유 키 조각 A (JSON 문자열)
+                </label>
+                <div className="relative">
+                  <textarea
+                    id="share-a-input"
+                    value={shareAInput}
+                    onChange={(e) => setShareAInput(e.target.value)}
+                    placeholder="조각 A JSON 문자열을 입력하거나 로컬 저장된 조각이 자동 로드됩니다"
+                    className="w-full h-24 rounded-2xl border border-border bg-surface px-4 py-3 font-mono text-[12px] text-text shadow-sm outline-none placeholder:text-text-subtle focus:border-primary/40 focus:ring-4 focus:ring-primary/10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowShareA(!showShareA)}
+                    className="absolute right-3 bottom-3 rounded-lg border border-border bg-surface-alt p-1.5 text-text-muted hover:bg-surface"
+                  >
+                    {showShareA ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              {showShareA && shareAInput && (
+                <div className="rounded-xl bg-surface-alt p-3 border border-border text-[11px] font-mono text-text-subtle break-all">
+                  {shareAInput}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRecoverData}
+                disabled={isProcessingLegacy || !shareAInput.trim()}
+                className="inline-flex items-center gap-2 rounded-2xl bg-green-600 px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-green-500 disabled:opacity-40"
+              >
+                {isProcessingLegacy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Unlock className="w-4 h-4" />}
+                조각 결합 및 데이터 해독
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Recovered Data Display Section */}
+        {posthumousPolicy.recoveredMemories && (
+          <div className="space-y-4 mt-6 border-t border-border/80 pt-6">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-6 h-6 text-green-600" />
+              <h3 className="text-[17px] font-black text-text">성공적으로 복원된 상속 유산 피드</h3>
+            </div>
+            
+            <p className="text-[14px] text-text-muted">
+              총 {posthumousPolicy.recoveredMemories.length}개의 어르신 기억 카드와 자서전 챕터가 안전하게 해독되어 복원되었습니다.
+            </p>
+
+            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+              {posthumousPolicy.recoveredMemories.map((memory: any) => (
+                <div
+                  key={memory.id}
+                  className="rounded-2xl border border-green-100 bg-white/70 p-5 shadow-sm backdrop-blur transition-all duration-300 hover:border-green-200"
+                >
+                  <div className="flex justify-between items-start gap-4">
+                    <span className="rounded-full bg-green-50 px-3 py-1 text-[12px] font-bold text-green-700">
+                      {memory.topic || '기억 조각'}
+                    </span>
+                    <span className="text-[12px] text-text-subtle">{memory.date}</span>
+                  </div>
+                  
+                  <div className="mt-3 text-[14px] leading-relaxed text-text font-serif">
+                    {memory.cleanedTranscript}
+                  </div>
+                  
+                  {memory.tags && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {memory.tags.people?.map((p: string) => (
+                        <span key={p} className="rounded-lg bg-surface-alt px-2 py-0.5 text-[11px] text-text-muted">
+                          👤 {p}
+                        </span>
+                      ))}
+                      {memory.tags.places?.map((pl: string) => (
+                        <span key={pl} className="rounded-lg bg-surface-alt px-2 py-0.5 text-[11px] text-text-muted">
+                          📍 {pl}
+                        </span>
+                      ))}
+                      {memory.tags.timePeriod && (
+                        <span className="rounded-lg bg-surface-alt px-2 py-0.5 text-[11px] text-text-muted">
+                          🕒 {memory.tags.timePeriod}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>}
+
+      {activePanel === 'demo' && <section className="premium-panel space-y-6 rounded-[28px] p-7">
         <div className="flex items-center gap-3">
           <PlayCircle className="w-5 h-5 text-primary" aria-hidden="true" />
           <h2 className="text-[19px] font-black text-text">발표 데모</h2>
@@ -501,11 +998,12 @@ export default function SettingsPage() {
             ['기억 카드', memories.length],
             ['사진', photos.length],
             ['가족 질문', familyQuestions.length],
+            ['가족 일정', calendar.events.length],
             ['자서전 챕터', autobiographyChapters.length],
             ['검색 연결', ragEntries.length],
             ['공개 기억', memories.filter((memory) => memory.privacy !== 'private').length],
           ].map(([label, value]) => (
-            <div key={label} className="rounded-2xl border border-border bg-surface-alt p-4">
+            <div key={label} className="rounded-2xl border border-border/70 bg-surface p-4 shadow-sm">
               <p className="text-[12px] font-bold text-text-subtle uppercase tracking-wide">{label}</p>
               <p className="mt-1 text-[24px] font-black text-text">{value}</p>
             </div>
@@ -516,7 +1014,7 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={seedDemoData}
-            className="px-5 py-3 rounded-2xl bg-primary text-white text-[15px] font-bold hover:bg-primary-light transition-colors shadow-sm"
+            className="rounded-2xl bg-primary px-5 py-3 text-[15px] font-bold text-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light"
           >
             발표용 데이터 불러오기
           </button>
@@ -524,11 +1022,11 @@ export default function SettingsPage() {
             type="button"
             onClick={clearDemoData}
             disabled={!demo.enabled}
-            className="px-5 py-3 rounded-2xl border border-border bg-surface-alt text-[15px] font-bold text-text-muted disabled:opacity-40 hover:bg-border/40 transition-colors"
+            className="rounded-2xl border border-border/70 bg-surface px-5 py-3 text-[15px] font-bold text-text-muted shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt disabled:opacity-40"
           >
             발표용 데이터 초기화
           </button>
-          <label className="inline-flex items-center gap-2 rounded-2xl border border-border bg-surface-alt px-5 py-3 text-[15px] font-bold text-text-muted">
+          <label className="inline-flex items-center gap-2 rounded-2xl border border-border/70 bg-surface px-5 py-3 text-[15px] font-bold text-text-muted shadow-sm">
             <input
               type="checkbox"
               checked={demo.offlineMode}
@@ -539,7 +1037,7 @@ export default function SettingsPage() {
           </label>
         </div>
 
-        <div className={`rounded-2xl border p-4 ${isDemoReady ? 'border-primary/20 bg-primary-pale' : 'border-border bg-surface-alt'}`}>
+        <div className={`rounded-2xl border p-4 shadow-sm ${isDemoReady ? 'border-primary/20 bg-primary-pale' : 'border-border/70 bg-surface'}`}>
           <p className={`text-[14px] font-bold leading-relaxed ${isDemoReady ? 'text-primary' : 'text-text-muted'}`}>
             {demo.enabled
               ? `${isDemoReady ? '발표 준비가 완료되었습니다.' : `발표 준비 ${demoReadyCount}/${demoReadinessChecks.length}개 완료.`}${demo.seededAt ? ` 불러온 시각: ${new Date(demo.seededAt).toLocaleString('ko-KR')}` : ''}`
@@ -549,7 +1047,7 @@ export default function SettingsPage() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           {demoReadinessChecks.map((check) => (
-            <div key={check.label} className="flex items-center gap-3 rounded-2xl border border-border bg-surface-alt p-4">
+            <div key={check.label} className="flex items-center gap-3 rounded-2xl border border-border/70 bg-surface p-4 shadow-sm">
               {check.ready ? (
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
               ) : (
@@ -682,13 +1180,27 @@ export default function SettingsPage() {
         </div>
 
         <div className="flex flex-wrap gap-3">
-          {[
-            ['말씀 나누기', '/'],
-            ['추억 보관함', '/archive'],
-            ['가족 공간', '/review'],
-            ['나의 분신', '/persona'],
-            ['자서전', '/autobiography'],
-          ].map(([label, path]) => (
+          {(role === 'guardian'
+            ? [
+                ['홈 (자녀)', '/child'],
+                ['질문 등록', '/child/questions'],
+                ['추억 사진', '/child/photos'],
+                ['진척도', '/child/progress'],
+                ['챕터 검수', '/child/chapters'],
+                ['추억 보관함', '/archive'],
+                ['나의 분신', '/persona'],
+                ['자서전', '/autobiography'],
+              ]
+            : [
+                ['홈 (부모님)', '/parent'],
+                ['말씀 나누기', '/parent/interview'],
+                ['진척도', '/parent/progress'],
+                ['원문 기록', '/parent/transcript'],
+                ['추억 보관함', '/archive'],
+                ['나의 분신', '/persona'],
+                ['자서전', '/autobiography'],
+              ]
+          ).map(([label, path]) => (
             <button
               key={path}
               type="button"
@@ -709,7 +1221,7 @@ export default function SettingsPage() {
           aria-modal="true"
           aria-labelledby="confirm-dialog-title"
         >
-          <div className="bg-surface rounded-[28px] p-7 max-w-sm w-full mx-4 shadow-[0_20px_60px_rgba(0,0,0,0.15)] border border-border space-y-4">
+          <div className="bg-surface rounded-[28px] p-7 max-w-sm w-full mx-4 shadow-[0_18px_50px_rgba(15,23,42,0.14)] border border-border space-y-4">
             <div className="flex items-center gap-2.5">
               <AlertTriangle className="w-5 h-5 text-primary" aria-hidden="true" />
               <h3 id="confirm-dialog-title" className="text-[18px] font-black text-text">

@@ -17,6 +17,15 @@ import type {
   UserRole,
 } from './lib/types';
 import { buildCapstoneDemoState, isDemoId } from './lib/demo/capstone-demo-data';
+import { normalizeUserRole } from './lib/roles';
+import {
+  setupLocalLegacyVault,
+  fetchLocalLegacyVault,
+  triggerLocalDeathVerification,
+  approveLocalDeathVerification,
+  fetchLocalLegacyShares,
+  resetLocalLegacyVault,
+} from './lib/local-server';
 
 // Re-export types that consumers of the store may need
 export type { Memory, PrivacyLevel };
@@ -59,6 +68,21 @@ export interface AutobiographyState {
 export interface PosthumousPolicyState {
   policy: PosthumousPolicy;
   confirmedAt: string | null;
+  vault?: {
+    id: string;
+    seniorId: string;
+    isVaultSetup: boolean;
+    deathVerificationStatus: 'alive' | 'pending_verification' | 'released';
+    isDeceased: boolean;
+    serverShareReleased: boolean;
+    institutionShareReleased: boolean;
+    encryptedMemories?: string | null;
+    encryptedAutobiography?: string | null;
+    createdAt: string;
+    updatedAt: string;
+  } | null;
+  recoveredMemories?: Memory[] | null;
+  recoveredAutobiography?: any | null;
 }
 
 export interface FamilyQuestionState {
@@ -83,11 +107,19 @@ export interface SeniorProfile {
   preferredName: string;
 }
 
+export interface GuardianProfile {
+  name: string;
+  relationship: string;
+  preferredName: string;
+}
+
 export interface AuthState {
+  userId: string | null;
   phoneNumber: string;
   isAuthenticated: boolean;
   role: UserRole | null;
   profile: SeniorProfile | null;
+  guardianProfile: GuardianProfile | null;
   onboardingCompleted: boolean;
   familyInviteSkipped: boolean;
   lastSignedInAt: string | null;
@@ -126,6 +158,8 @@ interface AppState {
   updateMemoryConsent: (id: string, consent: MemoryConsent) => void;
   updateMemoryConsentSettings: (id: string, settings: ConsentSettingsV2) => void;
   updateMemoryEmbedding: (id: string, embedding: number[]) => void;
+  revokeMemoryUsage: (id: string) => void;
+  deleteMemory: (id: string) => void;
 
   // RAG actions
   addRAGEntry: (entry: VectorEntry) => void;
@@ -143,6 +177,12 @@ interface AppState {
 
   // Posthumous policy actions
   setPosthumousPolicy: (policy: PosthumousPolicy) => void;
+  fetchLegacyVault: () => Promise<void>;
+  setupLegacyVault: (input: { encryptedMemories: string; encryptedAutobiography: string; serverShare: string; institutionShare: string }) => Promise<void>;
+  triggerDeathVerification: () => Promise<void>;
+  approveDeathVerification: () => Promise<void>;
+  recoverLegacyData: (shareA: string) => Promise<void>;
+  resetLegacyVault: () => Promise<void>;
 
   // Family Question actions
   addFamilyQuestion: (question: FamilyQuestion) => void;
@@ -162,9 +202,25 @@ interface AppState {
 
   // Auth actions
   startPhoneAuth: (phoneNumber: string) => void;
+  setServerAuthUser: (user: {
+    id: string;
+    phoneNumber: string;
+    role?: UserRole | 'pending' | null;
+    name?: string | null;
+    birthDecade?: string | null;
+    preferredName?: string | null;
+    seniorName?: string | null;
+    seniorBirthDecade?: string | null;
+    seniorPreferredName?: string | null;
+    guardianName?: string | null;
+    guardianRelationship?: string | null;
+    guardianPreferredName?: string | null;
+    forceRoleSelection?: boolean;
+  }) => void;
   verifyPhoneCode: (code: string) => boolean;
   selectRole: (role: UserRole) => void;
   saveSeniorProfile: (profile: SeniorProfile) => void;
+  saveGuardianProfile: (profile: GuardianProfile) => void;
   skipFamilyInvite: () => void;
   signOut: () => void;
 
@@ -193,11 +249,21 @@ const DEFAULT_CONSENT_SETTINGS: ConsentSettingsV2 = {
   민감정보: 'granted',
 };
 
+const REVOKED_CONSENT_SETTINGS: ConsentSettingsV2 = {
+  출판: 'revoked',
+  가족열람: 'revoked',
+  챗봇: 'revoked',
+  사후공개: 'revoked',
+  민감정보: 'revoked',
+};
+
 const DEFAULT_AUTH_STATE: AuthState = {
+  userId: null,
   phoneNumber: '',
   isAuthenticated: false,
   role: null,
   profile: null,
+  guardianProfile: null,
   onboardingCompleted: false,
   familyInviteSkipped: false,
   lastSignedInAt: null,
@@ -212,6 +278,7 @@ const DEFAULT_DEMO_STATE: DemoState = {
 export function createAuthenticatedAuthState(overrides: Partial<AuthState> = {}): AuthState {
   return {
     ...DEFAULT_AUTH_STATE,
+    userId: 'local_senior',
     phoneNumber: '01012345678',
     isAuthenticated: true,
     role: 'senior',
@@ -219,6 +286,11 @@ export function createAuthenticatedAuthState(overrides: Partial<AuthState> = {})
       name: '김영자',
       birthDecade: '1950년대',
       preferredName: '어르신',
+    },
+    guardianProfile: {
+      name: '김민수',
+      relationship: '자녀',
+      preferredName: '보호자',
     },
     onboardingCompleted: true,
     lastSignedInAt: '2024-01-01T00:00:00.000Z',
@@ -297,6 +369,9 @@ export const useStore = create<AppState>()(
       posthumousPolicy: {
         policy: 'maintain_current',
         confirmedAt: null,
+        vault: null,
+        recoveredMemories: null,
+        recoveredAutobiography: null,
       },
 
       familyQuestions: {
@@ -365,6 +440,59 @@ export const useStore = create<AppState>()(
           memories: state.memories.map((m) =>
             m.id === id ? { ...m, embedding } : m
           ),
+        })),
+
+      revokeMemoryUsage: (id) =>
+        set((state) => ({
+          memories: state.memories.map((m) =>
+            m.id === id
+              ? {
+                  ...m,
+                  privacy: 'private',
+                  consent: {
+                    ...m.consent,
+                    status: 'revoked',
+                    accessTier: '본인만',
+                    designatedFamilyIds: [],
+                    lastModified: new Date().toISOString(),
+                  },
+                  consentSettings: { ...REVOKED_CONSENT_SETTINGS },
+                }
+              : m
+          ),
+          ragIndex: {
+            entries: state.ragIndex.entries.filter((entry) => entry.memoryId !== id),
+            lastUpdated: new Date().toISOString(),
+          },
+        })),
+
+      deleteMemory: (id) =>
+        set((state) => ({
+          memories: state.memories.filter((memory) => memory.id !== id),
+          ragIndex: {
+            entries: state.ragIndex.entries.filter((entry) => entry.memoryId !== id),
+            lastUpdated: new Date().toISOString(),
+          },
+          photos: {
+            photos: state.photos.photos.map((photo) => ({
+              ...photo,
+              linkedMemoryIds: photo.linkedMemoryIds.filter((memoryId) => memoryId !== id),
+            })),
+            lastUpdated: new Date().toISOString(),
+          },
+          familyQuestions: {
+            questions: state.familyQuestions.questions.map((question) =>
+              question.answerMemoryId === id
+                ? { ...question, answerMemoryId: null }
+                : question
+            ),
+            lastUpdated: new Date().toISOString(),
+          },
+          autobiography: {
+            currentStructure: null,
+            narratives: [],
+            lastGenerated: null,
+          },
         })),
 
       // ── RAG Actions ──────────────────────────────────────────────────────
@@ -447,12 +575,112 @@ export const useStore = create<AppState>()(
 
       // ── Posthumous Policy Actions ────────────────────────────────────────
       setPosthumousPolicy: (policy) =>
-        set(() => ({
+        set((state) => ({
           posthumousPolicy: {
+            ...state.posthumousPolicy,
             policy,
             confirmedAt: new Date().toISOString(),
           },
         })),
+
+      fetchLegacyVault: async () => {
+        try {
+          const res = await fetchLocalLegacyVault();
+          set((state) => ({
+            posthumousPolicy: {
+              ...state.posthumousPolicy,
+              vault: res.vault?.isVaultSetup ? res.vault : null,
+            }
+          }));
+        } catch (error) {
+          console.error("fetchLegacyVault error:", error);
+        }
+      },
+
+      setupLegacyVault: async (input) => {
+        const res = await setupLocalLegacyVault(input);
+        set((state) => ({
+          posthumousPolicy: {
+            ...state.posthumousPolicy,
+            vault: res.vault,
+          }
+        }));
+      },
+
+      triggerDeathVerification: async () => {
+        const res = await triggerLocalDeathVerification();
+        set((state) => ({
+          posthumousPolicy: {
+            ...state.posthumousPolicy,
+            vault: res.vault,
+          }
+        }));
+      },
+
+      approveDeathVerification: async () => {
+        const res = await approveLocalDeathVerification();
+        set((state) => ({
+          posthumousPolicy: {
+            ...state.posthumousPolicy,
+            vault: res.vault,
+          }
+        }));
+      },
+
+      recoverLegacyData: async (shareA) => {
+        const state = useStore.getState();
+        const vault = state.posthumousPolicy.vault;
+        if (!vault || vault.deathVerificationStatus !== 'released') {
+          throw new Error('사망 심사 승인 전에는 복원할 수 없습니다.');
+        }
+        
+        // 서버에서 조각 B, C 조회
+        const sharesRes = await fetchLocalLegacyShares();
+        
+        // 조각 A + B + C 복원 시도
+        const shareAObj = JSON.parse(shareA);
+        const shareBObj = JSON.parse(sharesRes.serverShare);
+        const shareCObj = JSON.parse(sharesRes.institutionShare);
+        
+        // combineShares 2-of-3 복원
+        const { combineShares } = await import('./lib/security/shamir');
+        const key = combineShares([shareAObj, shareBObj, shareCObj]);
+        
+        // 복호화
+        const { decryptText } = await import('./lib/security/encryption');
+        
+        let decryptedMemories: Memory[] = [];
+        if (vault.encryptedMemories) {
+          const memoriesJson = await decryptText(vault.encryptedMemories, key);
+          decryptedMemories = JSON.parse(memoriesJson);
+        }
+        
+        let decryptedAuto = null;
+        if (vault.encryptedAutobiography) {
+          const autoJson = await decryptText(vault.encryptedAutobiography, key);
+          decryptedAuto = JSON.parse(autoJson);
+        }
+        
+        set((state) => ({
+          posthumousPolicy: {
+            ...state.posthumousPolicy,
+            recoveredMemories: decryptedMemories,
+            recoveredAutobiography: decryptedAuto,
+          }
+        }));
+      },
+
+      resetLegacyVault: async () => {
+        await resetLocalLegacyVault();
+        set((state) => ({
+          posthumousPolicy: {
+            ...state.posthumousPolicy,
+            vault: null,
+            recoveredMemories: null,
+            recoveredAutobiography: null,
+          }
+        }));
+      },
 
       // ── Family Question Actions ──────────────────────────────────────────
       addFamilyQuestion: (question) =>
@@ -551,6 +779,47 @@ export const useStore = create<AppState>()(
           },
         })),
 
+      setServerAuthUser: (user) =>
+        set((state) => {
+          const role = user.forceRoleSelection
+            ? null
+            : user.role === 'pending'
+              ? null
+              : normalizeUserRole(user.role ?? state.auth.role);
+          const hasCompletedSeniorProfile = role === 'senior'
+            && Boolean((user.seniorBirthDecade ?? user.birthDecade) && (user.seniorPreferredName ?? user.preferredName) && (user.seniorName ?? user.name) && (user.seniorName ?? user.name) !== '어르신');
+          const hasCompletedGuardianProfile = role === 'guardian'
+            && Boolean(user.guardianName && user.guardianRelationship && user.guardianPreferredName);
+          const profile = (user.seniorName ?? user.name)
+            ? {
+                name: user.seniorName ?? user.name ?? state.auth.profile?.name ?? '',
+                birthDecade: user.seniorBirthDecade ?? user.birthDecade ?? state.auth.profile?.birthDecade ?? '1950년대',
+                preferredName: user.seniorPreferredName ?? user.preferredName ?? state.auth.profile?.preferredName ?? '어르신',
+              }
+            : state.auth.profile;
+          const guardianProfile = (user.guardianName || user.guardianRelationship || user.guardianPreferredName)
+            ? {
+                name: user.guardianName ?? state.auth.guardianProfile?.name ?? '',
+                relationship: user.guardianRelationship ?? state.auth.guardianProfile?.relationship ?? '자녀',
+                preferredName: user.guardianPreferredName ?? state.auth.guardianProfile?.preferredName ?? '보호자',
+              }
+            : state.auth.guardianProfile;
+
+          return {
+            auth: {
+              ...state.auth,
+              userId: user.id,
+              phoneNumber: user.phoneNumber,
+              isAuthenticated: true,
+              role,
+              profile,
+              guardianProfile,
+              onboardingCompleted: user.forceRoleSelection ? false : Boolean(hasCompletedGuardianProfile || hasCompletedSeniorProfile),
+              lastSignedInAt: new Date().toISOString(),
+            },
+          };
+        }),
+
       verifyPhoneCode: (code) => {
         const verified = /^\d{6}$/.test(code.trim());
         if (verified) {
@@ -570,7 +839,7 @@ export const useStore = create<AppState>()(
           auth: {
             ...state.auth,
             role,
-            onboardingCompleted: role === 'family',
+            onboardingCompleted: false,
           },
         })),
 
@@ -580,6 +849,16 @@ export const useStore = create<AppState>()(
             ...state.auth,
             role: state.auth.role ?? 'senior',
             profile,
+            onboardingCompleted: true,
+          },
+        })),
+
+      saveGuardianProfile: (profile) =>
+        set((state) => ({
+          auth: {
+            ...state.auth,
+            role: 'guardian',
+            guardianProfile: profile,
             onboardingCompleted: true,
           },
         })),
@@ -622,6 +901,14 @@ export const useStore = create<AppState>()(
               ],
               lastUpdated: seededAt,
             },
+            calendar: {
+              ...state.calendar,
+              events: [
+                ...demo.calendarEvents,
+                ...state.calendar.events.filter((event) => !isDemoId(event.id)),
+              ],
+              lastSynced: seededAt,
+            },
             ragIndex: {
               entries: [
                 ...demo.ragEntries,
@@ -660,6 +947,12 @@ export const useStore = create<AppState>()(
           familyQuestions: {
             questions: state.familyQuestions.questions.filter((question) => !isDemoId(question.id)),
             lastUpdated: new Date().toISOString(),
+          },
+          calendar: {
+            ...state.calendar,
+            events: state.calendar.events.filter((event) => !isDemoId(event.id)),
+            processedEventIds: state.calendar.processedEventIds.filter((eventId) => !isDemoId(eventId)),
+            lastSynced: new Date().toISOString(),
           },
           ragIndex: {
             entries: state.ragIndex.entries.filter((entry) => !isDemoId(entry.memoryId)),
@@ -710,6 +1003,7 @@ export const useStore = create<AppState>()(
           auth: {
             ...DEFAULT_AUTH_STATE,
             ...(persisted.auth ?? {}),
+            role: normalizeUserRole((persisted.auth as any)?.role ?? null),
           },
           demo: {
             ...DEFAULT_DEMO_STATE,

@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ErrorBoundary from './ErrorBoundary';
 
-function BrokenView() {
+function BrokenView(): ReactElement {
   throw new Error('boom');
 }
 

@@ -1,39 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700;800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
 @import "tailwindcss";
 
 @theme {
-  /* Brand */
-  --color-primary:          #7A3143;
-  --color-primary-light:    #9B4358;
-  --color-primary-pale:     #F6E3E8;
+  /* Brand - Classic Warm (Sepia Brown & Muted Olive) */
+  --color-primary:          #5C3420;
+  --color-primary-light:    #7D4D35;
+  --color-primary-pale:     #FDFBF8;
 
   /* Surface */
-  --color-bg:               #F7F4EF;
-  --color-surface:          #FFFFFF;
-  --color-surface-alt:      #EFE9E1;
-  --color-border:           #E1D8CD;
-  --color-border-strong:    #C9BAAD;
+  --color-bg:               #FAF6F0;
+  --color-surface:          #FCFAF7;
+  --color-surface-alt:      #F4EFE6;
+  --color-border:           #E8DEC9;
+  --color-border-strong:    #D3C3A4;
 
   /* Text */
-  --color-text:             #292321;
-  --color-text-muted:       #6C625E;
-  --color-text-subtle:      #9A908B;
+  --color-text:             #2B241F;
+  --color-text-muted:       #63554D;
+  --color-text-subtle:      #9C8E84;
 
   /* Semantic */
-  --color-secondary:        #557A68;
-  --color-secondary-pale:   #E6F0EA;
-  --color-success:          #15803D;
-  --color-error:            #B91C1C;
+  --color-secondary:        #6E7A5A;
+  --color-secondary-pale:   #F1F3ED;
+  --color-success:          #4B6344;
+  --color-error:            #9B3A3A;
 
   /* Font */
+  --font-serif: 'Playfair Display', 'Nanum Myeongjo', 'KoPub Batang', serif;
   --font-sans: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
 }
 
 body {
-  background-color: var(--color-bg);
+  background:
+    radial-gradient(circle at top left, rgba(252, 250, 247, 0.98), transparent 34rem),
+    linear-gradient(180deg, #FCFAF7 0%, var(--color-bg) 44%, #F4EFE6 100%);
   color: var(--color-text);
-  font-family: var(--font-sans);
+  font-family: var(--font-serif);
   font-feature-settings: "tnum";
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html {
@@ -41,7 +47,7 @@ html {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-primary) 18%, white);
+  background: color-mix(in srgb, var(--color-primary) 12%, white);
 }
 
 button,
@@ -55,6 +61,9 @@ textarea {
 button,
 a {
   letter-spacing: 0;
+  transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+  transition-duration: 300ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 input,
@@ -64,7 +73,7 @@ textarea {
 }
 
 *:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
   outline-offset: 3px;
 }
 
@@ -74,7 +83,7 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D2C7BB;
+  background: var(--color-border-strong);
   border: 3px solid var(--color-bg);
   border-radius: 999px;
 }
@@ -82,3 +91,23 @@ textarea {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+@layer components {
+  .premium-panel {
+    border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+    background:
+      linear-gradient(180deg, rgba(252, 250, 247, 0.96), rgba(252, 250, 247, 0.88)),
+      var(--color-surface);
+    box-shadow: 0 18px 50px rgba(92, 52, 32, 0.045);
+    backdrop-filter: blur(18px);
+  }
+
+  .premium-panel-soft {
+    border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
+    background:
+      linear-gradient(180deg, rgba(252, 250, 247, 0.82), rgba(244, 239, 230, 0.9)),
+      var(--color-surface-alt);
+    box-shadow: 0 10px 30px rgba(92, 52, 32, 0.03);
+  }
+}
+

@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "server:dev": "tsx server/index.ts",
+    "server:worker": "tsx server/worker.ts",
+    "db:generate": "prisma generate --schema server/prisma/schema.prisma",
+    "db:migrate": "tsx server/prisma/init.ts",
+    "db:seed": "tsx server/prisma/seed.ts",
     "build": "vite build",
     "preview": "vite preview",
     "demo:assets": "tsx scripts/generate-capstone-assets.ts",
@@ -13,7 +18,12 @@
     "test": "vitest --run"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.3",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/multer": "^2.1.0",
+    "@types/supertest": "^7.2.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -22,12 +32,18 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "multer": "^2.1.1",
     "openai": "^4.20.0",
+    "prisma": "^6.19.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.14.1",
+    "supertest": "^7.2.2",
     "tailwind-merge": "^3.5.0",
+    "twilio": "^6.0.2",
     "vite": "^6.2.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.20.1",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

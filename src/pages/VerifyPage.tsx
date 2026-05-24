@@ -17,7 +17,7 @@ export default function VerifyPage() {
       setError('6자리 인증번호를 입력해 주세요.');
       return;
     }
-    navigate('/onboarding/role');
+    navigate('/select-mode');
   };
 
   return (

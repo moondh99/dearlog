@@ -61,6 +61,10 @@ describe('InterviewPage layout', () => {
     expect(screen.getByTestId('interview-shell')).toHaveClass('min-h-0', 'overflow-hidden');
     expect(screen.getByTestId('interview-messages')).toHaveClass('min-h-0', 'overflow-y-auto');
     expect(screen.getByTestId('interview-input-panel')).toHaveClass('shrink-0');
+    expect(screen.getByText('Dearlog가 기록하는 범위')).toBeInTheDocument();
+    expect(screen.getByText('어린시절과 학창시절')).toBeInTheDocument();
+    expect(screen.getByText('가족과 관계')).toBeInTheDocument();
+    expect(screen.getByText('가치관과 남길 말')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '녹음 시작' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '말씀 보내기' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '오늘의 이야기 마치기' })).toBeInTheDocument();
@@ -92,6 +96,10 @@ describe('InterviewPage layout', () => {
     expect(screen.getByText('사진 속 장면을 살펴보고 있어요...')).toBeInTheDocument();
 
     expect(await screen.findByText('아이가 욕실에서 목욕을 거부하는 장면입니다.')).toBeInTheDocument();
+    expect(screen.getByText('AI 인터뷰어가 읽은 사진 단서')).toBeInTheDocument();
+    expect(screen.getByText('시기: 1990년대 · 장소: 욕실 · 인물: 아이 · 사물: 욕조')).toBeInTheDocument();
+    expect(screen.getByText(/사진 단서: 시기: 1990년대 · 장소: 욕실 · 인물: 아이 · 사물: 욕조/)).toBeInTheDocument();
+    expect(screen.getByText(/이 장면을 보며 먼저 여쭤볼 질문입니다/)).toBeInTheDocument();
     expect(screen.getByText('1990년대')).toBeInTheDocument();
     expect(screen.getByText('인물: 아이')).toBeInTheDocument();
     expect(screen.getByText('장소: 욕실')).toBeInTheDocument();

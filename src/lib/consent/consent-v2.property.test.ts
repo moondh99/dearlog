@@ -48,7 +48,7 @@ import type { Memory, UserRole, ConsentStatus } from '../types';
 
 const SENSITIVE_EMOTIONS = ['슬픔', '분노', '후회', '트라우마'];
 
-const userRoleArb: fc.Arbitrary<UserRole> = fc.constantFrom('senior', 'family');
+const userRoleArb: fc.Arbitrary<UserRole> = fc.constantFrom('senior', 'guardian');
 
 const consentStatusArb: fc.Arbitrary<ConsentStatus> = fc.constantFrom('granted', 'revoked');
 

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, CheckCircle2, ShieldCheck, Smartphone } from 'lucide-react';
 import { useStore } from '../store';
+import { registerLocalPhoneAccount, updateLocalUserRole } from '../lib/local-server';
 
 function isKoreanPhoneNumber(value: string) {
   return /^01[016789][-\s]?\d{3,4}[-\s]?\d{4}$/.test(value.trim());
@@ -15,70 +16,129 @@ function normalizePhoneNumber(value: string) {
 export default function AuthPage() {
   const navigate = useNavigate();
   const startPhoneAuth = useStore((state) => state.startPhoneAuth);
+  const setServerAuthUser = useStore((state) => state.setServerAuthUser);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleDevLogin = async (role: 'senior' | 'guardian') => {
+    setIsSubmitting(true);
+    try {
+      const defaultPhone = '01012345678';
+      const { user } = await registerLocalPhoneAccount(defaultPhone);
+      startPhoneAuth(defaultPhone);
+      
+      const store = useStore.getState();
+      store.seedDemoData();
+      
+      if (role === 'senior') {
+        await updateLocalUserRole(user.id, 'senior');
+        store.selectRole('senior');
+        store.saveSeniorProfile({
+          name: '김영자',
+          birthDecade: '1950년대',
+          preferredName: '어르신'
+        });
+        navigate('/parent');
+      } else {
+        await updateLocalUserRole(user.id, 'guardian');
+        store.selectRole('guardian');
+        store.saveGuardianProfile({
+          name: '김민수',
+          relationship: '자녀',
+          preferredName: '보호자'
+        });
+        navigate('/child');
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : '데모 로그인 실패');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const autoRole = params.get('auto');
+    if (autoRole === 'senior') {
+      handleDevLogin('senior');
+    } else if (autoRole === 'guardian') {
+      handleDevLogin('guardian');
+    }
+  }, []);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isKoreanPhoneNumber(phoneNumber)) {
       setError('휴대폰 번호를 다시 확인해 주세요.');
       return;
     }
 
-    startPhoneAuth(normalizePhoneNumber(phoneNumber));
-    navigate('/auth/verify');
+    const normalizedPhoneNumber = normalizePhoneNumber(phoneNumber);
+    setIsSubmitting(true);
+    try {
+      const { user } = await registerLocalPhoneAccount(normalizedPhoneNumber);
+      // SMS 인증 없이 휴대폰 번호를 로컬 DB 계정으로 즉시 등록합니다.
+      startPhoneAuth(normalizedPhoneNumber);
+      setServerAuthUser({ ...user, forceRoleSelection: true });
+      navigate('/select-mode');
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : '가입 정보를 저장하지 못했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
-    <main className="min-h-[100dvh] bg-bg px-4 py-5 text-text sm:px-6 lg:px-8">
-      <div className="mx-auto grid min-h-[calc(100dvh-2.5rem)] w-full max-w-6xl overflow-hidden rounded-[34px] border border-border bg-surface shadow-[0_24px_80px_rgba(41,35,33,0.12)] lg:grid-cols-[1.08fr_0.92fr]">
-        <section className="flex min-h-[380px] flex-col justify-between bg-[#2A2027] p-8 text-white lg:p-12">
+    <main className="min-h-[100dvh] bg-bg px-4 py-6 text-text sm:px-6 lg:px-8">
+      <div className="premium-panel mx-auto grid min-h-[calc(100dvh-3rem)] w-full max-w-6xl overflow-hidden rounded-[34px] lg:grid-cols-[1.08fr_0.92fr]">
+        <section className="flex min-h-[380px] flex-col justify-between bg-primary p-9 text-primary-pale lg:p-14">
           <div>
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-white/12 ring-1 ring-white/15">
-                <BookOpen className="h-6 w-6" aria-hidden="true" />
+              <div className="flex h-12 w-12 items-center justify-center rounded-[16px] border border-primary-light/20 bg-primary-light/30 shadow-sm ring-1 ring-primary-light/10">
+                <BookOpen className="h-6 w-6 text-primary-pale" aria-hidden="true" />
               </div>
               <div>
-                <h1 className="text-[31px] font-black leading-none tracking-tight">Dearlog</h1>
-                <p className="mt-1 text-[13px] font-bold text-white/55">Memory to book</p>
+                <h1 className="text-[31px] font-black leading-none tracking-tight text-primary-pale">Dearlog</h1>
+                <p className="mt-1 text-[13px] font-bold text-primary-pale/55">Family memory archive</p>
               </div>
             </div>
 
             <div className="mt-16 max-w-xl">
-              <p className="text-[13px] font-black uppercase tracking-[0.22em] text-white/45">Mobile memoir service</p>
+              <p className="text-[12px] font-black uppercase tracking-[0.26em] text-primary-pale/45">Memoir plus family archive</p>
               <h2 className="mt-4 text-[34px] font-black leading-tight tracking-tight sm:text-[44px]">
-                기록된 기억을 가족에게 건넬 수 있는 책으로.
+                부모님의 기억을 가족이 다시 만나는 아카이브로.
               </h2>
-              <p className="mt-5 max-w-lg text-[17px] font-semibold leading-relaxed text-white/68">
-                대화형 회상, 가족 검수, 근거 기반 분신 대화, 인쇄용 자서전까지 하나의 여정으로 연결합니다.
+              <p className="mt-6 max-w-lg text-[17px] font-medium leading-relaxed text-primary-pale/64">
+                자녀가 사진과 질문을 준비하면, 부모님은 큰 마이크 버튼으로 편하게 답하고 가족 검수 뒤 자서전·분신 대화·주간 가족 퀴즈로 이어갑니다.
               </p>
             </div>
           </div>
 
-          <div className="mt-10 grid gap-3 sm:grid-cols-3">
-            {['대화형 회상', '가족 공개 동의', 'A5 인쇄 자서전'].map((item) => (
-              <div key={item} className="rounded-[18px] border border-white/10 bg-white/8 px-4 py-3">
-                <CheckCircle2 className="mb-2 h-4 w-4 text-[#DDB4BE]" aria-hidden="true" />
-                <p className="text-[13px] font-black text-white/86">{item}</p>
+          <div className="mt-12 grid gap-3 sm:grid-cols-3">
+            {['자녀가 준비', '부모님은 음성 답변', '가족 검수 아카이브'].map((item) => (
+              <div key={item} className="rounded-[18px] border border-primary-light/20 bg-primary-light/30 px-4 py-3.5 shadow-sm backdrop-blur transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-primary-light/45">
+                <CheckCircle2 className="mb-2 h-4 w-4 text-primary-pale/70" aria-hidden="true" />
+                <p className="text-[13px] font-black text-primary-pale/82">{item}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="flex items-center justify-center p-5 sm:p-8 lg:p-12">
+        <section className="flex items-center justify-center p-6 sm:p-9 lg:p-14">
           <div className="w-full max-w-md">
-            <div className="mb-7">
-              <p className="text-[13px] font-black uppercase tracking-[0.18em] text-primary">Sign in</p>
+            <div className="mb-8">
+              <p className="text-[12px] font-black uppercase tracking-[0.22em] text-text-subtle">Sign in</p>
               <h2 className="mt-2 text-[27px] font-black tracking-tight text-text">시연을 시작합니다</h2>
-              <p className="mt-2 text-[15px] font-semibold leading-relaxed text-text-muted">
-                휴대폰 번호 인증 후 어르신 프로필과 가족 초대 흐름으로 이어집니다.
+              <p className="mt-3 text-[15px] font-medium leading-relaxed text-text-muted">
+                휴대폰 번호 하나로 계정을 만들고, 역할을 선택한 뒤 실제 사용자 테스트를 시작합니다.
               </p>
             </div>
 
-            <div className="mb-5 flex items-start gap-3 rounded-[22px] border border-primary/12 bg-primary-pale p-4">
+            <div className="mb-6 flex items-start gap-3 rounded-[22px] border border-border/70 bg-surface-alt/72 p-4 shadow-sm">
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
-              <p className="text-[14px] font-bold leading-relaxed text-primary">
-                휴대폰 번호는 본인 확인과 가족 초대 연결에만 사용합니다.
+              <p className="text-[14px] font-semibold leading-relaxed text-text-muted">
+                SMS 인증은 진행하지 않습니다. 입력한 번호는 로컬 DB에 계정 식별용으로 저장됩니다.
               </p>
             </div>
 
@@ -96,7 +156,7 @@ export default function AuthPage() {
                   }}
                   placeholder="010 1234 5678"
                   aria-invalid={Boolean(error)}
-                  className="w-full rounded-[20px] border border-border bg-surface-alt py-4 pl-12 pr-4 text-[18px] font-bold text-text outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="w-full rounded-[20px] border border-border/80 bg-surface-alt/70 py-4 pl-12 pr-4 text-[18px] font-bold text-text outline-none shadow-sm transition-all duration-300 ease-out placeholder:text-text-subtle focus:border-primary/40 focus:bg-surface focus:ring-4 focus:ring-primary/10"
                 />
               </div>
             </label>
@@ -105,15 +165,35 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              className="w-full rounded-[20px] bg-primary px-5 py-4 text-[17px] font-black text-white shadow-[0_16px_32px_rgba(122,49,67,0.24)] transition hover:bg-primary-light focus:outline-none focus:ring-2 focus:ring-primary/30"
+              disabled={isSubmitting}
+              className="w-full rounded-[20px] bg-primary px-5 py-4 text-[17px] font-black text-primary-pale shadow-[0_14px_34px_rgba(92,52,32,0.18)] transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.01] hover:bg-primary-light focus:outline-none focus:ring-4 focus:ring-primary/15"
             >
-              인증번호 받기
+              {isSubmitting ? '저장 중...' : '휴대폰 번호로 시작'}
             </button>
           </form>
 
-            <div className="mt-6 rounded-[22px] border border-border bg-surface-alt p-4">
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleDevLogin('senior')}
+              className="rounded-[16px] border border-border/80 bg-surface-alt/50 py-3 text-[14px] font-black text-text shadow-sm hover:bg-surface-alt transition-all disabled:opacity-50"
+            >
+              데모 로그인 (부모님)
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleDevLogin('guardian')}
+              className="rounded-[16px] border border-border/80 bg-surface-alt/50 py-3 text-[14px] font-black text-text shadow-sm hover:bg-surface-alt transition-all disabled:opacity-50"
+            >
+              데모 로그인 (자녀)
+            </button>
+          </div>
+
+            <div className="mt-7 rounded-[22px] border border-border/70 bg-surface-alt/70 p-4.5 shadow-sm">
               <p className="text-[12px] font-black uppercase tracking-[0.16em] text-text-subtle">Demo hint</p>
-              <p className="mt-1 text-[14px] font-bold leading-relaxed text-text-muted">
+              <p className="mt-1.5 text-[14px] font-semibold leading-relaxed text-text-muted">
                 발표 시에는 로그인 후 설정의 발표 데모 탭에서 사전 데이터를 불러오면 됩니다.
               </p>
             </div>

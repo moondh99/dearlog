@@ -31,6 +31,10 @@ export interface PrintReadyOptions {
   closingMessage?: string;
 }
 
+type PrintPhoto = StoredPhoto & {
+  printImageDataUrl?: string;
+};
+
 /** Default PDF configuration */
 const DEFAULT_CONFIG: PDFConfig = {
   fontFamily: KOREAN_FONT_FAMILY,
@@ -163,20 +167,37 @@ export async function generatePrintReady(
       doc.setFont(KOREAN_FONT_FAMILY, 'normal');
     }
 
+    const printPhotos = options.photos ? await preparePrintPhotos(options.photos) : [];
+
     renderPrintCover(doc, autobiography, options);
     doc.addPage();
     renderPrintIntro(doc, options);
     doc.addPage();
     renderPrintTableOfContents(doc, autobiography.chapters);
 
+    const photoByMemoryId = new Map<string, StoredPhoto>();
+    printPhotos.forEach((photo) => {
+      photo.linkedMemoryIds.forEach((memoryId) => {
+        if (!photoByMemoryId.has(memoryId)) {
+          photoByMemoryId.set(memoryId, photo);
+        }
+      });
+    });
+
     for (const [index, chapter] of autobiography.chapters.entries()) {
       doc.addPage();
-      renderPrintChapter(doc, chapter, index);
+      const linkedMemoryId = chapter.citations[0]?.memoryId;
+      renderPrintChapter(
+        doc,
+        chapter,
+        index,
+        linkedMemoryId ? photoByMemoryId.get(linkedMemoryId) : undefined,
+      );
     }
 
-    if (options.photos && options.photos.length > 0) {
+    if (printPhotos.length > 0) {
       doc.addPage();
-      renderPrintPhotoPages(doc, options.photos);
+      renderPrintPhotoPages(doc, printPhotos);
     }
 
     doc.addPage();
@@ -269,6 +290,47 @@ function setStroke(doc: jsPDF, color: readonly [number, number, number]): void {
   doc.setDrawColor(color[0], color[1], color[2]);
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const mime = blob.type || 'image/png';
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+async function resolvePrintImageDataUrl(url: string): Promise<string | undefined> {
+  if (/^data:image\/(png|jpe?g|webp);/i.test(url)) return url;
+  if (/^data:image\/svg\+xml/i.test(url)) return undefined;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return undefined;
+    const blob = await response.blob();
+    if (!/^image\/(png|jpe?g|webp)$/i.test(blob.type)) return undefined;
+    return await blobToDataUrl(blob);
+  } catch {
+    return undefined;
+  }
+}
+
+async function preparePrintPhotos(photos: StoredPhoto[]): Promise<PrintPhoto[]> {
+  return Promise.all(photos.map(async (photo) => ({
+    ...photo,
+    printImageDataUrl: await resolvePrintImageDataUrl(photo.url),
+  })));
+}
+
 function renderPrintPageBackground(doc: jsPDF): void {
   setFill(doc, PRINT_COLORS.paper);
   doc.rect(0, 0, A5_WIDTH, A5_HEIGHT, 'F');
@@ -347,38 +409,169 @@ function renderPrintTableOfContents(doc: jsPDF, chapters: ChapterNarrative[]): v
   setColor(doc, PRINT_COLORS.ink);
   doc.setFontSize(19);
   doc.text('목차', PRINT_MARGIN, 44);
-  let y = 66;
+  let y = 60;
   chapters.forEach((chapter, index) => {
+    if (y > A5_HEIGHT - 24) {
+      doc.addPage();
+      renderPrintPageBackground(doc);
+      setColor(doc, PRINT_COLORS.accentDark);
+      doc.setFontSize(8);
+      doc.text('CONTENTS', PRINT_MARGIN, 28);
+      y = 44;
+    }
     setColor(doc, PRINT_COLORS.accent);
-    doc.setFontSize(9);
+    doc.setFontSize(7.5);
     doc.text(String(index + 1).padStart(2, '0'), PRINT_MARGIN, y);
     setColor(doc, PRINT_COLORS.ink);
-    doc.setFontSize(11.2);
-    doc.text(chapter.title.replace(/^\d+장\.\s*/, ''), PRINT_MARGIN + 16, y);
+    doc.setFontSize(8.4);
+    doc.text(doc.splitTextToSize(chapter.title.replace(/^\d+장\.\s*/, ''), 82), PRINT_MARGIN + 13, y);
     setStroke(doc, PRINT_COLORS.line);
-    doc.line(PRINT_MARGIN + 16, y + 4, A5_WIDTH - PRINT_MARGIN, y + 4);
-    y += 16;
+    doc.line(PRINT_MARGIN + 13, y + 3.4, A5_WIDTH - PRINT_MARGIN, y + 3.4);
+    y += 6.8;
   });
 }
 
-function renderPrintChapter(doc: jsPDF, chapter: ChapterNarrative, index = 0): void {
+function renderPhotoCard(
+  doc: jsPDF,
+  photo: PrintPhoto | undefined,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  index: number,
+): void {
+  const palette = index % 2 === 0 ? PRINT_COLORS.plate : [225, 234, 232] as const;
+  setFill(doc, [255, 255, 255]);
+  setStroke(doc, PRINT_COLORS.line);
+  doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+  const imageBoxWidth = Math.min(42, width - 10);
+  const imageBoxHeight = height - 12;
+  const imageX = x + 5;
+  const imageY = y + 6;
+  setFill(doc, palette);
+  doc.roundedRect(imageX, imageY, imageBoxWidth, imageBoxHeight, 2.5, 2.5, 'F');
+  if (photo?.printImageDataUrl) {
+    try {
+      const imageRatio = 4 / 3;
+      const boxRatio = imageBoxWidth / imageBoxHeight;
+      const drawWidth = boxRatio > imageRatio ? imageBoxHeight * imageRatio : imageBoxWidth;
+      const drawHeight = boxRatio > imageRatio ? imageBoxHeight : imageBoxWidth / imageRatio;
+      doc.addImage(
+        photo.printImageDataUrl,
+        photo.printImageDataUrl.includes('image/jpeg') ? 'JPEG' : 'PNG',
+        imageX + (imageBoxWidth - drawWidth) / 2,
+        imageY + (imageBoxHeight - drawHeight) / 2,
+        drawWidth,
+        drawHeight,
+      );
+    } catch {
+      setColor(doc, PRINT_COLORS.accentDark);
+      doc.setFontSize(7);
+      doc.text(`PHOTO ${String(index + 1).padStart(2, '0')}`, x + 9, y + height / 2 - 2);
+    }
+  } else {
+    setColor(doc, PRINT_COLORS.accentDark);
+    doc.setFontSize(7);
+    doc.text(`PHOTO ${String(index + 1).padStart(2, '0')}`, x + 9, y + height / 2 - 2);
+    doc.setFontSize(6.3);
+    doc.text(photo?.metadata?.cameraModel ?? 'ARCHIVE', x + 9, y + height / 2 + 7);
+  }
+
+  const textX = x + Math.min(52, width * 0.44);
+  const textWidth = width - (textX - x) - 7;
+  setColor(doc, PRINT_COLORS.ink);
+  doc.setFontSize(8.8);
+  const description = photo?.analysis?.description ?? '이 장과 연결된 가족 기록 자료';
+  doc.text(doc.splitTextToSize(description, textWidth), textX, y + 14);
+  setColor(doc, PRINT_COLORS.muted);
+  doc.setFontSize(7);
+  const capturedAt = photo?.metadata?.capturedAt?.slice(0, 10) ?? '촬영일 미상';
+  const place = photo?.metadata?.inferredPlace ?? photo?.analysis?.places[0] ?? '장소 미상';
+  doc.text(capturedAt, textX, y + height - 16);
+  doc.text(`${place} · GPS 공개 전 확인 필요`, textX, y + height - 8);
+}
+
+function addPhotoImage(
+  doc: jsPDF,
+  photo: PrintPhoto | undefined,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fallbackLabel: string,
+  index: number,
+): void {
+  const palette = index % 2 === 0 ? PRINT_COLORS.plate : [225, 234, 232] as const;
+  setFill(doc, palette);
+  setStroke(doc, PRINT_COLORS.line);
+  doc.roundedRect(x, y, width, height, 3, 3, 'FD');
+  if (photo?.printImageDataUrl) {
+    try {
+      const imageRatio = 4 / 3;
+      const boxRatio = width / height;
+      const drawWidth = boxRatio > imageRatio ? height * imageRatio : width;
+      const drawHeight = boxRatio > imageRatio ? height : width / imageRatio;
+      doc.addImage(
+        photo.printImageDataUrl,
+        photo.printImageDataUrl.includes('image/jpeg') ? 'JPEG' : 'PNG',
+        x + (width - drawWidth) / 2,
+        y + (height - drawHeight) / 2,
+        drawWidth,
+        drawHeight,
+      );
+      return;
+    } catch {
+      // Fall through to the label plate.
+    }
+  }
+  setColor(doc, PRINT_COLORS.accentDark);
+  doc.setFontSize(9);
+  doc.text(fallbackLabel, x + width / 2, y + height / 2, { align: 'center' });
+}
+
+function renderChapterOpeningPage(doc: jsPDF, chapter: ChapterNarrative, index: number, photo?: PrintPhoto): void {
   renderPrintPageBackground(doc);
   const chapterNo = String(index + 1).padStart(2, '0');
+  const title = chapter.title.replace(/^\d+장\.\s*/, '');
   setColor(doc, PRINT_COLORS.accent);
-  doc.setFontSize(36);
-  doc.text(chapterNo, PRINT_MARGIN, 32);
+  doc.setFontSize(10);
+  doc.text(`CHAPTER ${chapterNo}`, PRINT_MARGIN, 24);
+  setColor(doc, PRINT_COLORS.ink);
+  doc.setFontSize(18);
+  doc.text(doc.splitTextToSize(title, A5_WIDTH - PRINT_MARGIN * 2), PRINT_MARGIN, 38);
+  addPhotoImage(doc, photo, PRINT_MARGIN, 58, A5_WIDTH - PRINT_MARGIN * 2, 78, `PHOTO ${chapterNo}`, index);
+  setColor(doc, PRINT_COLORS.muted);
+  doc.setFontSize(7.8);
+  const capturedAt = photo?.metadata?.capturedAt?.slice(0, 10) ?? '촬영일 미상';
+  const place = photo?.metadata?.inferredPlace ?? photo?.analysis?.places[0] ?? '장소 미상';
+  doc.text(`${capturedAt} · ${place} · GPS 공개 전 확인 필요`, PRINT_MARGIN, 145);
+  setFill(doc, PRINT_COLORS.paperDeep);
+  doc.roundedRect(PRINT_MARGIN, 156, A5_WIDTH - PRINT_MARGIN * 2, 30, 3, 3, 'F');
+  setColor(doc, PRINT_COLORS.accentDark);
+  doc.setFontSize(7.5);
+  doc.text('MEMORY EXCERPT', PRINT_MARGIN + 6, 167);
+  setColor(doc, PRINT_COLORS.muted);
+  doc.setFontSize(8.2);
+  doc.text(doc.splitTextToSize(chapter.body.split('\n\n')[0] ?? chapter.body, A5_WIDTH - PRINT_MARGIN * 2 - 12).slice(0, 3), PRINT_MARGIN + 6, 177);
+}
+
+function renderPrintChapter(doc: jsPDF, chapter: ChapterNarrative, index = 0, photo?: PrintPhoto): void {
+  renderChapterOpeningPage(doc, chapter, index, photo);
+  doc.addPage();
+  renderPrintPageBackground(doc);
+  const chapterNo = String(index + 1).padStart(2, '0');
   setColor(doc, PRINT_COLORS.accentDark);
   doc.setFontSize(8);
-  doc.text('MEMORY CHAPTER', PRINT_MARGIN + 34, 24);
+  doc.text(`CHAPTER ${chapterNo}`, PRINT_MARGIN, 24);
   setColor(doc, PRINT_COLORS.ink);
-  doc.setFontSize(15.5);
   const title = chapter.title.replace(/^\d+장\.\s*/, '');
-  doc.text(doc.splitTextToSize(title, 78), PRINT_MARGIN + 34, 34);
+  doc.setFontSize(13);
+  doc.text(doc.splitTextToSize(title, 92), PRINT_MARGIN, 35);
   setStroke(doc, PRINT_COLORS.accent);
-  doc.setLineWidth(0.35);
-  doc.line(PRINT_MARGIN, 54, A5_WIDTH - PRINT_MARGIN, 54);
+  doc.line(PRINT_MARGIN, 45, A5_WIDTH - PRINT_MARGIN, 45);
+  renderPhotoCard(doc, photo, PRINT_MARGIN, 54, A5_WIDTH - PRINT_MARGIN * 2, 42, index);
   setColor(doc, PRINT_COLORS.ink);
-  renderParagraph(doc, chapter.body, PRINT_MARGIN, 70, A5_WIDTH - PRINT_MARGIN * 2, 9.8, 1.9, A5_HEIGHT, PRINT_MARGIN + 4);
+  renderParagraph(doc, chapter.body, PRINT_MARGIN, 108, A5_WIDTH - PRINT_MARGIN * 2, 8.35, 1.55, A5_HEIGHT, PRINT_MARGIN + 16);
   setFill(doc, PRINT_COLORS.paperDeep);
   doc.roundedRect(PRINT_MARGIN, A5_HEIGHT - 30, A5_WIDTH - PRINT_MARGIN * 2, 11, 2, 2, 'F');
   setColor(doc, PRINT_COLORS.muted);
@@ -386,7 +579,7 @@ function renderPrintChapter(doc: jsPDF, chapter: ChapterNarrative, index = 0): v
   doc.text(`출처 기억 ${chapter.citations.map((citation) => citation.memoryId.replace('demo_memory_', '')).join(', ')}`, PRINT_MARGIN + 5, A5_HEIGHT - 23);
 }
 
-function renderPrintPhotoPages(doc: jsPDF, photos: StoredPhoto[]): void {
+function renderPrintPhotoPages(doc: jsPDF, photos: PrintPhoto[]): void {
   renderPrintPageBackground(doc);
   setColor(doc, PRINT_COLORS.accentDark);
   doc.setFontSize(8);
@@ -398,33 +591,13 @@ function renderPrintPhotoPages(doc: jsPDF, photos: StoredPhoto[]): void {
   doc.setFontSize(8.5);
   doc.text('원본 사진의 GPS 좌표는 가족 공개 전 확인 상태로 처리합니다.', PRINT_MARGIN, 52);
   let y = 66;
-  photos.slice(0, 4).forEach((photo, index) => {
+  photos.forEach((photo, index) => {
     if (index > 0 && index % 2 === 0) {
       doc.addPage();
       renderPrintPageBackground(doc);
       y = 28;
     }
-    const palette = index % 2 === 0 ? PRINT_COLORS.plate : [225, 234, 232] as const;
-    setStroke(doc, PRINT_COLORS.line);
-    setFill(doc, [255, 255, 255]);
-    doc.roundedRect(PRINT_MARGIN, y, A5_WIDTH - PRINT_MARGIN * 2, 55, 3, 3, 'FD');
-    setFill(doc, palette);
-    doc.roundedRect(PRINT_MARGIN + 6, y + 7, 35, 35, 2, 2, 'F');
-    setColor(doc, PRINT_COLORS.accentDark);
-    doc.setFontSize(7);
-    doc.text(`PHOTO ${String(index + 1).padStart(2, '0')}`, PRINT_MARGIN + 10, y + 24);
-    doc.setFontSize(6.5);
-    doc.text(photo.metadata?.cameraModel ?? 'ARCHIVE', PRINT_MARGIN + 10, y + 32);
-
-    setColor(doc, PRINT_COLORS.ink);
-    doc.setFontSize(9.5);
-    const description = photo.analysis?.description ?? '사진 기록';
-    doc.text(doc.splitTextToSize(description, 62), PRINT_MARGIN + 48, y + 15);
-    setColor(doc, PRINT_COLORS.muted);
-    doc.setFontSize(7.5);
-    const meta = photo.metadata?.capturedAt?.slice(0, 10) ?? '촬영일 미상';
-    doc.text(meta, PRINT_MARGIN + 48, y + 38);
-    doc.text(`${photo.metadata?.inferredPlace ?? '장소 미상'} · GPS 공개 전 확인 필요`, PRINT_MARGIN + 48, y + 47);
+    renderPhotoCard(doc, photo, PRINT_MARGIN, y, A5_WIDTH - PRINT_MARGIN * 2, 55, index);
     y += 66;
   });
 }
@@ -469,6 +642,7 @@ function renderParagraph(
   for (const line of lines) {
     if (y + lineHeightMm > pageHeight - margin) {
       doc.addPage();
+      renderPrintPageBackground(doc);
       y = margin;
     }
     doc.text(line, x, y);

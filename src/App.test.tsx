@@ -23,7 +23,7 @@ describe('App routing', () => {
   });
 
   it('loads the settings route through the lazy route boundary', async () => {
-    useStore.setState({ auth: createAuthenticatedAuthState() });
+    useStore.setState({ auth: createAuthenticatedAuthState({ role: 'guardian' }) });
 
     render(
       <MemoryRouter initialEntries={['/settings']}>
@@ -38,10 +38,12 @@ describe('App routing', () => {
   it('redirects unauthenticated users to phone login before protected routes', async () => {
     useStore.setState({
       auth: {
+        userId: null,
         phoneNumber: '',
         isAuthenticated: false,
         role: null,
         profile: null,
+        guardianProfile: null,
         onboardingCompleted: false,
         familyInviteSkipped: false,
         lastSignedInAt: null,
@@ -54,8 +56,8 @@ describe('App routing', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('heading', { name: 'Dearlog' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '인증번호 받기' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'DEARLOG' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument();
   });
 
   it('redirects authenticated users without onboarding to role selection', async () => {
@@ -73,6 +75,6 @@ describe('App routing', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('heading', { name: '누구의 이야기로 시작할까요?' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '누가 사용하실 건가요?' })).toBeInTheDocument();
   });
 });
