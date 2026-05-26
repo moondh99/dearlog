@@ -75,6 +75,154 @@ function serializeNotification(notification: {
   };
 }
 
+function mapMemoryToResponse(m: any) {
+  const people = (m.tags || []).filter((t: any) => t.category === 'people').map((t: any) => t.value);
+  const places = (m.tags || []).filter((t: any) => t.category === 'places').map((t: any) => t.value);
+  const emotions = (m.tags || []).filter((t: any) => t.category === 'emotions').map((t: any) => t.value);
+  const timePeriodTag = (m.tags || []).find((t: any) => t.category === 'timePeriod');
+  const timePeriod = timePeriodTag ? timePeriodTag.value : '';
+
+  let contradictions: string[] = [];
+  try {
+    if (m.contradictions) {
+      contradictions = JSON.parse(m.contradictions);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  const consentSettings = m.consentSettings ? {
+    출판: m.consentSettings.publish,
+    가족열람: m.consentSettings.familyRead,
+    챗봇: m.consentSettings.chatbot,
+    사후공개: m.consentSettings.posthumous,
+    민감정보: m.consentSettings.sensitive
+  } : {
+    출판: 'granted',
+    가족열람: 'granted',
+    챗봇: 'granted',
+    사후공개: 'granted',
+    민감정보: 'granted'
+  };
+
+  const consent = {
+    status: (consentSettings.가족열람 === 'granted' && m.privacy !== 'private') ? 'granted' : 'revoked',
+    accessTier: m.privacy === 'public' ? '전체 가족' : (m.privacy === 'family' ? '지정 가족' : '본인만'),
+    designatedFamilyIds: [],
+    lastModified: m.date ? new Date(m.date).toISOString() : new Date().toISOString()
+  };
+
+  let embedding: number[] | null = null;
+  if (m.vectorEntry && m.vectorEntry.embeddingJson) {
+    try {
+      embedding = JSON.parse(m.vectorEntry.embeddingJson);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return {
+    id: m.id,
+    date: m.date ? new Date(m.date).toISOString() : new Date().toISOString(),
+    topic: m.topic,
+    originalTranscript: m.originalTranscript,
+    cleanedTranscript: m.cleanedTranscript,
+    publishVersion: m.publishVersion,
+    privacy: m.privacy,
+    confidenceLabel: m.confidenceLabel,
+    contradictions,
+    tags: {
+      people,
+      places,
+      emotions,
+      timePeriod
+    },
+    consent,
+    consentSettings,
+    embedding
+  };
+}
+
+function mapPhotoToResponse(p: any) {
+  let analysis = null;
+  if (p.analysisJson) {
+    try {
+      analysis = JSON.parse(p.analysisJson);
+    } catch (e) {
+      // ignore
+    }
+  }
+  let metadata = {};
+  if (p.metadataJson) {
+    try {
+      metadata = JSON.parse(p.metadataJson);
+    } catch (e) {
+      // ignore
+    }
+  }
+  let linkedMemoryIds: string[] = [];
+  if (p.linkedMemoryIds) {
+    try {
+      linkedMemoryIds = JSON.parse(p.linkedMemoryIds);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return {
+    id: p.id,
+    url: `/api/files/${p.fileKey}`,
+    uploadedAt: p.uploadedAt ? p.uploadedAt.toISOString() : new Date().toISOString(),
+    analysis,
+    metadata,
+    linkedMemoryIds,
+    fileKey: p.fileKey,
+    fileName: p.fileName,
+    mimeType: p.mimeType,
+    metadataJson: p.metadataJson,
+    analysisJson: p.analysisJson
+  };
+}
+
+function mapQuestionToResponse(q: any) {
+  return {
+    id: q.id,
+    questionText: q.text,
+    submittedBy: q.createdById || '',
+    anonymous: q.anonymous,
+    priority: q.priority,
+    status: q.status,
+    createdAt: q.createdAt ? q.createdAt.toISOString() : new Date().toISOString(),
+    answeredAt: q.answeredAt ? q.answeredAt.toISOString() : null,
+    answerMemoryId: q.answerMemoryId
+  };
+}
+
+function mapAutobiographyDraftToResponse(d: any) {
+  let currentStructure = null;
+  if (d.structureJson) {
+    try {
+      currentStructure = JSON.parse(d.structureJson);
+    } catch (e) {
+      // ignore
+    }
+  }
+  let narratives = [];
+  if (d.narrativesJson) {
+    try {
+      narratives = JSON.parse(d.narrativesJson);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return {
+    currentStructure,
+    narratives,
+    lastGenerated: d.lastGenerated ? d.lastGenerated.toISOString() : null
+  };
+}
+
 async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: string) {
   if (requestedSeniorId) {
     await assertGuardianCanAccessSenior(guardianId, requestedSeniorId);
@@ -336,7 +484,7 @@ export function createApp() {
           },
         })
       ));
-      res.status(201).json({ photo, questions });
+      res.status(201).json({ photo: mapPhotoToResponse(photo), questions: questions.map(mapQuestionToResponse) });
     } catch (error) {
       next(error);
     }
@@ -754,6 +902,385 @@ export function createApp() {
       });
       
       res.json({ records: filteredRecords });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/memories', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+
+      const memories = await prisma.memory.findMany({
+        where: { userId: seniorId },
+        include: { tags: true, consentSettings: true, vectorEntry: true },
+        orderBy: { date: 'desc' }
+      });
+
+      const vault = await prisma.legacyVault.findUnique({
+        where: { seniorId }
+      });
+
+      const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
+
+      const mappedMemories = memories.map(m => {
+        const baseMemory = mapMemoryToResponse(m);
+        if (isMasked) {
+          return {
+            ...baseMemory,
+            topic: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            originalTranscript: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            cleanedTranscript: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            publishVersion: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            embedding: null
+          };
+        }
+        return baseMemory;
+      });
+
+      res.json({ memories: mappedMemories });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/memories', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const {
+        id,
+        date,
+        topic,
+        originalTranscript,
+        cleanedTranscript,
+        publishVersion,
+        tags,
+        privacy,
+        confidenceLabel,
+        contradictions,
+        consentSettings,
+        embedding
+      } = req.body;
+
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+
+      const parsedContradictions = contradictions ? JSON.stringify(contradictions) : "[]";
+
+      const memory = await prisma.$transaction(async (tx) => {
+        const created = await tx.memory.create({
+          data: {
+            id: id || undefined,
+            userId: seniorId,
+            date: date ? new Date(date) : undefined,
+            topic,
+            originalTranscript,
+            cleanedTranscript,
+            publishVersion,
+            privacy: privacy || 'private',
+            confidenceLabel: confidenceLabel || '확인됨',
+            contradictions: parsedContradictions,
+            tags: tags ? {
+              create: [
+                ...(tags.people || []).map((v: string) => ({ category: 'people', value: v })),
+                ...(tags.places || []).map((v: string) => ({ category: 'places', value: v })),
+                ...(tags.emotions || []).map((v: string) => ({ category: 'emotions', value: v })),
+                ...(tags.timePeriod ? [{ category: 'timePeriod', value: tags.timePeriod }] : [])
+              ]
+            } : undefined,
+            consentSettings: consentSettings ? {
+              create: {
+                publish: consentSettings.출판 || 'granted',
+                familyRead: consentSettings.가족열람 || 'granted',
+                chatbot: consentSettings.챗봇 || 'granted',
+                posthumous: consentSettings.사후공개 || 'granted',
+                sensitive: consentSettings.민감정보 || 'granted'
+              }
+            } : {
+              create: {
+                publish: 'granted',
+                familyRead: 'granted',
+                chatbot: 'granted',
+                posthumous: 'granted',
+                sensitive: 'granted'
+              }
+            }
+          },
+          include: {
+            tags: true,
+            consentSettings: true,
+            vectorEntry: true
+          }
+        });
+
+        if (embedding) {
+          await tx.memoryVectorEntry.create({
+            data: {
+              memoryId: created.id,
+              embeddingJson: JSON.stringify(embedding),
+              text: `${topic}\n${cleanedTranscript}`
+            }
+          });
+        }
+
+        return created;
+      });
+
+      const finalMemory = await prisma.memory.findUnique({
+        where: { id: memory.id },
+        include: { tags: true, consentSettings: true, vectorEntry: true }
+      });
+
+      res.status(201).json({ memory: finalMemory ? mapMemoryToResponse(finalMemory) : null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/memories/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const {
+        privacy,
+        publishVersion,
+        confidenceLabel,
+        contradictions,
+        consentSettings,
+        embedding
+      } = req.body;
+
+      const parsedContradictions = contradictions ? JSON.stringify(contradictions) : undefined;
+
+      await prisma.$transaction(async (tx) => {
+        const memory = await tx.memory.update({
+          where: { id: req.params.id },
+          data: {
+            privacy: privacy || undefined,
+            publishVersion: publishVersion || undefined,
+            confidenceLabel: confidenceLabel || undefined,
+            contradictions: parsedContradictions,
+            consentSettings: consentSettings ? {
+              upsert: {
+                create: {
+                  publish: consentSettings.출판 || 'granted',
+                  familyRead: consentSettings.가족열람 || 'granted',
+                  chatbot: consentSettings.챗봇 || 'granted',
+                  posthumous: consentSettings.사후공개 || 'granted',
+                  sensitive: consentSettings.민감정보 || 'granted'
+                },
+                update: {
+                  publish: consentSettings.출판 || undefined,
+                  familyRead: consentSettings.가족열람 || undefined,
+                  chatbot: consentSettings.챗봇 || undefined,
+                  posthumous: consentSettings.사후공개 || undefined,
+                  sensitive: consentSettings.민감정보 || undefined
+                }
+              }
+            } : undefined
+          }
+        });
+
+        if (embedding !== undefined) {
+          if (embedding === null) {
+            await tx.memoryVectorEntry.deleteMany({
+              where: { memoryId: req.params.id }
+            });
+          } else {
+            await tx.memoryVectorEntry.upsert({
+              where: { memoryId: req.params.id },
+              create: {
+                memoryId: req.params.id,
+                embeddingJson: JSON.stringify(embedding),
+                text: `${memory.topic}\n${memory.cleanedTranscript}`
+              },
+              update: {
+                embeddingJson: JSON.stringify(embedding),
+                text: `${memory.topic}\n${memory.cleanedTranscript}`
+              }
+            });
+          }
+        }
+      });
+
+      const finalMemory = await prisma.memory.findUnique({
+        where: { id: req.params.id },
+        include: { tags: true, consentSettings: true, vectorEntry: true }
+      });
+
+      res.json({ memory: finalMemory ? mapMemoryToResponse(finalMemory) : null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/memories/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      await prisma.memory.delete({
+        where: { id: req.params.id }
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // --- Photo Endpoints ---
+  app.get('/api/photos', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+
+      const photos = await prisma.photo.findMany({
+        where: { userId: seniorId },
+        orderBy: { uploadedAt: 'desc' }
+      });
+
+      res.json({ photos: photos.map(mapPhotoToResponse) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/photos/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const { linkedMemoryIds } = req.body;
+      const parsedLinkedMemoryIds = linkedMemoryIds ? JSON.stringify(linkedMemoryIds) : undefined;
+
+      const photo = await prisma.photo.update({
+        where: { id: req.params.id },
+        data: {
+          linkedMemoryIds: parsedLinkedMemoryIds
+        }
+      });
+
+      res.json({ photo: mapPhotoToResponse(photo) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/photos/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      await prisma.photo.delete({
+        where: { id: req.params.id }
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // --- Family Question Endpoints ---
+  app.get('/api/family-questions', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+
+      const questions = await prisma.question.findMany({
+        where: {
+          category: { in: ['guardian_questions', 'family_question'] }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      res.json({ questions: questions.map(mapQuestionToResponse) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/questions/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const { text, priority, status, anonymous, answerMemoryId } = req.body;
+
+      const question = await prisma.question.update({
+        where: { id: req.params.id },
+        data: {
+          text: text !== undefined ? String(text).trim() : undefined,
+          priority: priority || undefined,
+          status: status || undefined,
+          anonymous: anonymous !== undefined ? Boolean(anonymous) : undefined,
+          answerMemoryId: answerMemoryId !== undefined ? answerMemoryId : undefined,
+          answeredAt: status === 'answered' ? new Date() : undefined
+        }
+      });
+
+      res.json({ question: mapQuestionToResponse(question) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/questions/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      await prisma.question.delete({
+        where: { id: req.params.id }
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // --- Autobiography Draft Endpoints ---
+  app.get('/api/autobiography/draft', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+
+      const draft = await prisma.autobiographyDraft.findUnique({
+        where: { userId: seniorId }
+      });
+
+      res.json({ draft: draft ? mapAutobiographyDraftToResponse(draft) : null });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/autobiography/draft', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const { structure, narratives } = req.body;
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+
+      const draft = await prisma.autobiographyDraft.upsert({
+        where: { userId: seniorId },
+        create: {
+          userId: seniorId,
+          structureJson: structure ? JSON.stringify(structure) : '{}',
+          narrativesJson: narratives ? JSON.stringify(narratives) : '[]',
+          lastGenerated: new Date()
+        },
+        update: {
+          structureJson: structure ? JSON.stringify(structure) : undefined,
+          narrativesJson: narratives ? JSON.stringify(narratives) : undefined,
+          lastGenerated: new Date()
+        }
+      });
+
+      res.status(201).json({ draft: mapAutobiographyDraftToResponse(draft) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/autobiography/draft', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+
+      await prisma.autobiographyDraft.deleteMany({
+        where: { userId: seniorId }
+      });
+
+      res.json({ ok: true });
     } catch (error) {
       next(error);
     }

@@ -25,6 +25,19 @@ import {
   approveLocalDeathVerification,
   fetchLocalLegacyShares,
   resetLocalLegacyVault,
+  fetchLocalMemories,
+  saveLocalMemory,
+  updateLocalMemory,
+  deleteLocalMemory,
+  fetchLocalPhotos,
+  updateLocalPhoto,
+  deleteLocalPhoto,
+  fetchLocalFamilyQuestions,
+  updateLocalFamilyQuestion,
+  deleteLocalFamilyQuestion,
+  fetchLocalAutobiographyDraft,
+  saveLocalAutobiographyDraft,
+  clearLocalAutobiographyDraft,
 } from './lib/local-server';
 
 // Re-export types that consumers of the store may need
@@ -149,6 +162,10 @@ interface AppState {
   demo: DemoState;
 
   // Memory actions (existing)
+  fetchMemories: () => Promise<void>;
+  fetchPhotos: () => Promise<void>;
+  fetchFamilyQuestions: () => Promise<void>;
+  fetchAutobiographyDraft: () => Promise<void>;
   addMemory: (memory: Memory) => void;
   updateMemoryPrivacy: (id: string, privacy: PrivacyLevel) => void;
   updateMemoryPublishVersion: (id: string, publishVersion: string) => void;
@@ -346,7 +363,7 @@ function deriveConsentSettings(consent?: MemoryConsent): ConsentSettingsV2 {
 
 export const useStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       // ── Initial State ────────────────────────────────────────────────────
       memories: [],
 
@@ -394,55 +411,178 @@ export const useStore = create<AppState>()(
       demo: { ...DEFAULT_DEMO_STATE },
 
       // ── Memory Actions (existing) ────────────────────────────────────────
-      addMemory: (memory) =>
-        set((state) => ({ memories: [memory, ...state.memories] })),
+      fetchMemories: async () => {
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          const res = await fetchLocalMemories();
+          set({ memories: res.memories.map((m: any) => migrateMemory(m)) });
+        } catch (error) {
+          console.error("fetchMemories error:", error);
+        }
+      },
 
-      updateMemoryPrivacy: (id, privacy) =>
+      fetchPhotos: async () => {
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          const res = await fetchLocalPhotos();
+          set((state) => ({
+            photos: {
+              photos: res.photos,
+              lastUpdated: new Date().toISOString()
+            }
+          }));
+        } catch (error) {
+          console.error("fetchPhotos error:", error);
+        }
+      },
+
+      fetchFamilyQuestions: async () => {
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          const res = await fetchLocalFamilyQuestions();
+          set((state) => ({
+            familyQuestions: {
+              questions: res.questions,
+              lastUpdated: new Date().toISOString()
+            }
+          }));
+        } catch (error) {
+          console.error("fetchFamilyQuestions error:", error);
+        }
+      },
+
+      fetchAutobiographyDraft: async () => {
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          const res = await fetchLocalAutobiographyDraft();
+          if (res && res.draft) {
+            set((state) => ({
+              autobiography: {
+                currentStructure: res.draft!.currentStructure,
+                narratives: res.draft!.narratives,
+                lastGenerated: res.draft!.lastGenerated
+              }
+            }));
+          }
+        } catch (error) {
+          console.error("fetchAutobiographyDraft error:", error);
+        }
+      },
+
+      addMemory: async (memory) => {
+        set((state) => ({ memories: [memory, ...state.memories] }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(memory.id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await saveLocalMemory(memory);
+        } catch (error) {
+          console.error("addMemory error:", error);
+        }
+      },
+
+      updateMemoryPrivacy: async (id, privacy) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id ? { ...m, privacy } : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { privacy });
+        } catch (error) {
+          console.error("updateMemoryPrivacy error:", error);
+        }
+      },
 
-      updateMemoryPublishVersion: (id, publishVersion) =>
+      updateMemoryPublishVersion: async (id, publishVersion) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id ? { ...m, publishVersion } : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { publishVersion });
+        } catch (error) {
+          console.error("updateMemoryPublishVersion error:", error);
+        }
+      },
 
       // ── Memory Actions (new) ─────────────────────────────────────────────
-      updateMemoryConfidence: (id, label, contradictions) =>
+      updateMemoryConfidence: async (id, label, contradictions) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id
               ? { ...m, confidenceLabel: label, contradictions }
               : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { confidenceLabel: label, contradictions });
+        } catch (error) {
+          console.error("updateMemoryConfidence error:", error);
+        }
+      },
 
-      updateMemoryConsent: (id, consent) =>
+      updateMemoryConsent: async (id, consent) => {
+        const derived = deriveConsentSettings(consent);
         set((state) => ({
           memories: state.memories.map((m) =>
-            m.id === id ? { ...m, consent } : m
+            m.id === id ? { ...m, consent, consentSettings: derived } : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { consentSettings: derived });
+        } catch (error) {
+          console.error("updateMemoryConsent error:", error);
+        }
+      },
 
-      updateMemoryConsentSettings: (id, consentSettings) =>
+      updateMemoryConsentSettings: async (id, consentSettings) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id ? { ...m, consentSettings } : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { consentSettings });
+        } catch (error) {
+          console.error("updateMemoryConsentSettings error:", error);
+        }
+      },
 
-      updateMemoryEmbedding: (id, embedding) =>
+      updateMemoryEmbedding: async (id, embedding) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id ? { ...m, embedding } : m
           ),
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, { embedding });
+        } catch (error) {
+          console.error("updateMemoryEmbedding error:", error);
+        }
+      },
 
-      revokeMemoryUsage: (id) =>
+      revokeMemoryUsage: async (id) => {
         set((state) => ({
           memories: state.memories.map((m) =>
             m.id === id
@@ -464,9 +604,21 @@ export const useStore = create<AppState>()(
             entries: state.ragIndex.entries.filter((entry) => entry.memoryId !== id),
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalMemory(id, {
+            privacy: 'private',
+            consentSettings: REVOKED_CONSENT_SETTINGS,
+            embedding: null
+          });
+        } catch (error) {
+          console.error("revokeMemoryUsage error:", error);
+        }
+      },
 
-      deleteMemory: (id) =>
+      deleteMemory: async (id) => {
         set((state) => ({
           memories: state.memories.filter((memory) => memory.id !== id),
           ragIndex: {
@@ -493,7 +645,15 @@ export const useStore = create<AppState>()(
             narratives: [],
             lastGenerated: null,
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await deleteLocalMemory(id);
+        } catch (error) {
+          console.error("deleteMemory error:", error);
+        }
+      },
 
       // ── RAG Actions ──────────────────────────────────────────────────────
       addRAGEntry: (entry) =>
@@ -542,15 +702,24 @@ export const useStore = create<AppState>()(
         })),
 
       // ── Autobiography Actions ────────────────────────────────────────────
-      setChapterStructure: (structure) =>
+      setChapterStructure: async (structure) => {
         set((state) => ({
           autobiography: {
             ...state.autobiography,
             currentStructure: structure,
           },
-        })),
+        }));
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          await saveLocalAutobiographyDraft({ structure });
+        } catch (error) {
+          console.error("setChapterStructure error:", error);
+        }
+      },
 
-      setChapterNarrative: (narrative) =>
+      setChapterNarrative: async (narrative) => {
         set((state) => ({
           autobiography: {
             ...state.autobiography,
@@ -562,16 +731,35 @@ export const useStore = create<AppState>()(
             ],
             lastGenerated: new Date().toISOString(),
           },
-        })),
+        }));
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          const currentNarratives = get().autobiography.narratives;
+          await saveLocalAutobiographyDraft({ narratives: currentNarratives });
+        } catch (error) {
+          console.error("setChapterNarrative error:", error);
+        }
+      },
 
-      clearAutobiography: () =>
+      clearAutobiography: async () => {
         set(() => ({
           autobiography: {
             currentStructure: null,
             narratives: [],
             lastGenerated: null,
           },
-        })),
+        }));
+        const auth = get().auth;
+        const isOffline = get().demo.enabled || get().demo.offlineMode || (auth.userId && isDemoId(auth.userId));
+        if (isOffline) return;
+        try {
+          await clearLocalAutobiographyDraft();
+        } catch (error) {
+          console.error("clearAutobiography error:", error);
+        }
+      },
 
       // ── Posthumous Policy Actions ────────────────────────────────────────
       setPosthumousPolicy: (policy) =>
@@ -683,15 +871,17 @@ export const useStore = create<AppState>()(
       },
 
       // ── Family Question Actions ──────────────────────────────────────────
-      addFamilyQuestion: (question) =>
+      addFamilyQuestion: async (question) => {
         set((state) => ({
           familyQuestions: {
             questions: [...state.familyQuestions.questions, question],
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        // Note: Questions are already created on the backend when createLocalQuestion is called.
+      },
 
-      updateFamilyQuestion: (id, updates) =>
+      updateFamilyQuestion: async (id, updates) => {
         set((state) => ({
           familyQuestions: {
             questions: state.familyQuestions.questions.map((q) =>
@@ -699,15 +889,31 @@ export const useStore = create<AppState>()(
             ),
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalFamilyQuestion(id, updates);
+        } catch (error) {
+          console.error("updateFamilyQuestion error:", error);
+        }
+      },
 
-      removeFamilyQuestion: (id) =>
+      removeFamilyQuestion: async (id) => {
         set((state) => ({
           familyQuestions: {
             questions: state.familyQuestions.questions.filter((q) => q.id !== id),
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await deleteLocalFamilyQuestion(id);
+        } catch (error) {
+          console.error("removeFamilyQuestion error:", error);
+        }
+      },
 
       // ── Calendar Actions ─────────────────────────────────────────────────
       setCalendarEvents: (events) =>
@@ -744,15 +950,17 @@ export const useStore = create<AppState>()(
         })),
 
       // ── Photo Actions ────────────────────────────────────────────────────
-      addPhoto: (photo) =>
+      addPhoto: async (photo) => {
         set((state) => ({
           photos: {
             photos: [...state.photos.photos, photo],
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        // Note: Photos are already created on the backend when uploadLocalPhoto is called.
+      },
 
-      updatePhoto: (id, updates) =>
+      updatePhoto: async (id, updates) => {
         set((state) => ({
           photos: {
             photos: state.photos.photos.map((p) =>
@@ -760,15 +968,31 @@ export const useStore = create<AppState>()(
             ),
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await updateLocalPhoto(id, updates);
+        } catch (error) {
+          console.error("updatePhoto error:", error);
+        }
+      },
 
-      removePhoto: (id) =>
+      removePhoto: async (id) => {
         set((state) => ({
           photos: {
             photos: state.photos.photos.filter((p) => p.id !== id),
             lastUpdated: new Date().toISOString(),
           },
-        })),
+        }));
+        const isOffline = get().demo.enabled || get().demo.offlineMode || isDemoId(id) || (get().auth.userId && isDemoId(get().auth.userId));
+        if (isOffline) return;
+        try {
+          await deleteLocalPhoto(id);
+        } catch (error) {
+          console.error("removePhoto error:", error);
+        }
+      },
 
       // ── Auth Actions ─────────────────────────────────────────────────────
       startPhoneAuth: (phoneNumber) =>

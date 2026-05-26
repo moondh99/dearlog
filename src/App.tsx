@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -64,6 +64,19 @@ function getOnboardingRoute(role: string | null) {
 function RequireAuth() {
   const location = useLocation();
   const auth = useStore((state) => state.auth);
+  const fetchMemories = useStore((state) => state.fetchMemories);
+  const fetchPhotos = useStore((state) => state.fetchPhotos);
+  const fetchFamilyQuestions = useStore((state) => state.fetchFamilyQuestions);
+  const fetchAutobiographyDraft = useStore((state) => state.fetchAutobiographyDraft);
+
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      fetchMemories().catch((err) => console.error("fetchMemories error in RequireAuth:", err));
+      fetchPhotos().catch((err) => console.error("fetchPhotos error in RequireAuth:", err));
+      fetchFamilyQuestions().catch((err) => console.error("fetchFamilyQuestions error in RequireAuth:", err));
+      fetchAutobiographyDraft().catch((err) => console.error("fetchAutobiographyDraft error in RequireAuth:", err));
+    }
+  }, [auth.isAuthenticated, fetchMemories, fetchPhotos, fetchFamilyQuestions, fetchAutobiographyDraft]);
 
   if (!auth.isAuthenticated) {
     return <Navigate to="/splash" replace state={{ from: location.pathname }} />;

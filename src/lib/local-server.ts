@@ -1,3 +1,5 @@
+import type { Memory, StoredPhoto, FamilyQuestion, ChapterStructure, ChapterNarrative } from './types';
+
 const isLocalFrontend = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE = import.meta.env.VITE_LOCAL_API_URL ?? (isLocalFrontend ? 'http://localhost:8787' : window.location.origin);
 
@@ -351,6 +353,124 @@ export function createLocalQuestion(text: string, chapterId?: string, seniorId?:
     method: 'POST',
     role: 'guardian',
     body: JSON.stringify({ text, chapterId, seniorId }),
+  });
+}
+
+export function fetchLocalMemories() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ memories: Memory[] }>('/api/memories', {
+    role,
+  });
+}
+
+export function saveLocalMemory(memory: any) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ memory: Memory }>('/api/memories', {
+    method: 'POST',
+    role,
+    body: JSON.stringify(memory),
+  });
+}
+
+export function updateLocalMemory(id: string, updates: any) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ memory: Memory }>(`/api/memories/${id}`, {
+    method: 'PATCH',
+    role,
+    body: JSON.stringify(updates),
+  });
+}
+
+export function deleteLocalMemory(id: string) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ ok: boolean }>(`/api/memories/${id}`, {
+    method: 'DELETE',
+    role,
+  });
+}
+
+export function fetchLocalPhotos() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ photos: StoredPhoto[] }>('/api/photos', {
+    role,
+  });
+}
+
+export function updateLocalPhoto(id: string, updates: any) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ photo: StoredPhoto }>(`/api/photos/${id}`, {
+    method: 'PATCH',
+    role,
+    body: JSON.stringify(updates),
+  });
+}
+
+export function deleteLocalPhoto(id: string) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ ok: boolean }>(`/api/photos/${id}`, {
+    method: 'DELETE',
+    role,
+  });
+}
+
+export function fetchLocalFamilyQuestions() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ questions: FamilyQuestion[] }>('/api/family-questions', {
+    role,
+  });
+}
+
+export function updateLocalFamilyQuestion(id: string, updates: any) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ question: FamilyQuestion }>(`/api/questions/${id}`, {
+    method: 'PATCH',
+    role,
+    body: JSON.stringify(updates),
+  });
+}
+
+export function deleteLocalFamilyQuestion(id: string) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ ok: boolean }>(`/api/questions/${id}`, {
+    method: 'DELETE',
+    role,
+  });
+}
+
+export function fetchLocalAutobiographyDraft() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ draft: { currentStructure: ChapterStructure | null; narratives: ChapterNarrative[]; lastGenerated: string | null } | null }>('/api/autobiography/draft', {
+    role,
+  });
+}
+
+export function saveLocalAutobiographyDraft(draft: { structure?: ChapterStructure | null; narratives?: ChapterNarrative[] }) {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ draft: { currentStructure: ChapterStructure | null; narratives: ChapterNarrative[]; lastGenerated: string | null } }>('/api/autobiography/draft', {
+    method: 'POST',
+    role,
+    body: JSON.stringify(draft),
+  });
+}
+
+export function clearLocalAutobiographyDraft() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ ok: boolean }>('/api/autobiography/draft', {
+    method: 'DELETE',
+    role,
   });
 }
 

@@ -38,6 +38,8 @@ model User {
   publicationRequests  PublicationRequest[]    @relation("PublicationSenior")
   requestedPublications PublicationRequest[]   @relation("PublicationRequester")
   legacyVault          LegacyVault?
+  memories             Memory[]
+  autobiographyDraft   AutobiographyDraft?
 }
 
 model GuardianSeniorLink {
@@ -64,34 +66,40 @@ model Chapter {
 }
 
 model Question {
-  id          String            @id @default(uuid())
-  category    String
-  text        String
-  chapterId   String?
-  photoId     String?
-  createdById String?
-  status      String            @default("pending")
-  createdAt   DateTime          @default(now())
-  answeredAt  DateTime?
+  id             String            @id @default(uuid())
+  category       String
+  text           String
+  chapterId      String?
+  photoId        String?
+  createdById    String?
+  status         String            @default("pending")
+  createdAt      DateTime          @default(now())
+  answeredAt     DateTime?
   answerRecordId String?
-  chapter     Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  photo       Photo?            @relation(fields: [photoId], references: [id], onDelete: SetNull)
-  createdBy   User?             @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  records     InterviewRecord[]
-  sessions    InterviewSession[]
+  
+  anonymous      Boolean           @default(false)
+  priority       String            @default("normal")
+  answerMemoryId String?
+
+  chapter        Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  photo          Photo?            @relation(fields: [photoId], references: [id], onDelete: SetNull)
+  createdBy      User?             @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  records        InterviewRecord[]
+  sessions       InterviewSession[]
 }
 
 model Photo {
-  id           String     @id @default(uuid())
-  userId       String
-  fileKey      String
-  fileName     String
-  mimeType     String
-  metadataJson String     @default("{}")
-  analysisJson String     @default("{}")
-  uploadedAt   DateTime   @default(now())
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  questions    Question[]
+  id              String     @id @default(uuid())
+  userId          String
+  fileKey         String
+  fileName        String
+  mimeType        String
+  metadataJson    String     @default("{}")
+  analysisJson    String     @default("{}")
+  linkedMemoryIds String     @default("[]")
+  uploadedAt      DateTime   @default(now())
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions       Question[]
 }
 
 model InterviewSchedule {
@@ -232,4 +240,58 @@ model LegacyVault {
   
   senior                   User     @relation(fields: [seniorId], references: [id], onDelete: Cascade)
 }
+
+model Memory {
+  id                 String                  @id @default(uuid())
+  userId             String
+  date               DateTime                @default(now())
+  topic              String
+  originalTranscript String
+  cleanedTranscript  String
+  publishVersion     String
+  privacy            String                  @default("private")
+  confidenceLabel    String                  @default("확인됨")
+  contradictions     String                  @default("[]")
+  
+  user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tags               MemoryTag[]
+  consentSettings    MemoryConsentSettings?
+  vectorEntry        MemoryVectorEntry?
+}
+
+model MemoryTag {
+  id        String @id @default(uuid())
+  memoryId  String
+  category  String // "people", "places", "emotions", "timePeriod"
+  value     String
+  memory    Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model MemoryConsentSettings {
+  memoryId   String @id
+  publish    String @default("granted")
+  familyRead String @default("granted")
+  chatbot    String @default("granted")
+  posthumous String @default("granted")
+  sensitive  String @default("granted")
+  memory     Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model MemoryVectorEntry {
+  memoryId      String @id
+  embeddingJson String
+  text          String
+  memory        Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model AutobiographyDraft {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  structureJson  String    @default("{}")
+  narrativesJson String    @default("[]")
+  lastGenerated  DateTime?
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 

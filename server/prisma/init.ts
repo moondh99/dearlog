@@ -45,6 +45,7 @@ const statements = [
     "mimeType" TEXT NOT NULL,
     "metadataJson" TEXT NOT NULL DEFAULT '{}',
     "analysisJson" TEXT NOT NULL DEFAULT '{}',
+    "linkedMemoryIds" TEXT NOT NULL DEFAULT '[]',
     "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Photo_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
@@ -59,6 +60,9 @@ const statements = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "answeredAt" DATETIME,
     "answerRecordId" TEXT,
+    "anonymous" BOOLEAN NOT NULL DEFAULT 0,
+    "priority" TEXT NOT NULL DEFAULT 'normal',
+    "answerMemoryId" TEXT,
     CONSTRAINT "Question_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "Chapter" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Question_photoId_fkey" FOREIGN KEY ("photoId") REFERENCES "Photo" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Question_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
@@ -186,6 +190,50 @@ const statements = [
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "LegacyVault_seniorId_fkey" FOREIGN KEY ("seniorId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS "Memory" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "date" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "topic" TEXT NOT NULL,
+    "originalTranscript" TEXT NOT NULL,
+    "cleanedTranscript" TEXT NOT NULL,
+    "publishVersion" TEXT NOT NULL,
+    "privacy" TEXT NOT NULL DEFAULT 'private',
+    "confidenceLabel" TEXT NOT NULL DEFAULT '확인됨',
+    "contradictions" TEXT NOT NULL DEFAULT '[]',
+    CONSTRAINT "Memory_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "MemoryTag" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "memoryId" TEXT NOT NULL,
+    "category" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    CONSTRAINT "MemoryTag_memoryId_fkey" FOREIGN KEY ("memoryId") REFERENCES "Memory" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "MemoryConsentSettings" (
+    "memoryId" TEXT NOT NULL PRIMARY KEY,
+    "publish" TEXT NOT NULL DEFAULT 'granted',
+    "familyRead" TEXT NOT NULL DEFAULT 'granted',
+    "chatbot" TEXT NOT NULL DEFAULT 'granted',
+    "posthumous" TEXT NOT NULL DEFAULT 'granted',
+    "sensitive" TEXT NOT NULL DEFAULT 'granted',
+    CONSTRAINT "MemoryConsentSettings_memoryId_fkey" FOREIGN KEY ("memoryId") REFERENCES "Memory" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "MemoryVectorEntry" (
+    "memoryId" TEXT NOT NULL PRIMARY KEY,
+    "embeddingJson" TEXT NOT NULL,
+    "text" TEXT NOT NULL,
+    CONSTRAINT "MemoryVectorEntry_memoryId_fkey" FOREIGN KEY ("memoryId") REFERENCES "Memory" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "AutobiographyDraft" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL UNIQUE,
+    "structureJson" TEXT NOT NULL DEFAULT '{}',
+    "narrativesJson" TEXT NOT NULL DEFAULT '[]',
+    "lastGenerated" DATETIME,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "AutobiographyDraft_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
 ];
 
 export async function initLocalDatabase() {
@@ -227,6 +275,26 @@ export async function initLocalDatabase() {
   const notificationColumnNames = new Set(notificationColumns.map((column) => column.name));
   if (!notificationColumnNames.has('metadataJson')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "Notification" ADD COLUMN "metadataJson" TEXT');
+  }
+
+  // Photo linkedMemoryIds 컬럼 추가
+  const photoColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Photo")');
+  const photoColumnNames = new Set(photoColumns.map((column) => column.name));
+  if (!photoColumnNames.has('linkedMemoryIds')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Photo" ADD COLUMN "linkedMemoryIds" TEXT NOT NULL DEFAULT \'[]\'');
+  }
+
+  // Question 속성 컬럼 추가
+  const questionColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Question")');
+  const questionColumnNames = new Set(questionColumns.map((column) => column.name));
+  if (!questionColumnNames.has('anonymous')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Question" ADD COLUMN "anonymous" BOOLEAN NOT NULL DEFAULT 0');
+  }
+  if (!questionColumnNames.has('priority')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Question" ADD COLUMN "priority" TEXT NOT NULL DEFAULT \'normal\'');
+  }
+  if (!questionColumnNames.has('answerMemoryId')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Question" ADD COLUMN "answerMemoryId" TEXT');
   }
 }
 
