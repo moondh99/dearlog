@@ -1,222 +1,137 @@
-/**
- * Unit tests for Interviewer Agent v2 enhancements.
- * Tests question category tracking, session output, and wording preservation.
- */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as fc from 'fast-check'
 
-import { describe, it, expect } from 'vitest';
-import {
-  createSessionState,
-  getNextQuestionCategory,
-  markCategoryCovered,
-  addMessageToSession,
-  generateSessionJSON,
-  generateMemorySummaryCard,
-  buildSystemPrompt,
-  QUESTION_CATEGORY_SEQUENCE,
-  type QuestionCategoryType,
-  type InterviewSessionState,
-} from './interviewer';
-import type { ChatMessage } from '../types';
+const openAIChatCreate = vi.hoisted(() => vi.fn())
+const devMode = vi.hoisted(() => ({ demo: false }))
 
-describe('Interviewer Agent v2', () => {
-  describe('createSessionState', () => {
-    it('creates a new session with default trigger', () => {
-      const state = createSessionState('session-1');
-      expect(state.sessionId).toBe('session-1');
-      expect(state.triggeredBy).toBe('user');
-      expect(state.coveredCategories).toEqual([]);
-      expect(state.messages).toEqual([]);
-      expect(state.isComplete).toBe(false);
-      expect(state.startedAt).toBeTruthy();
-    });
+vi.mock('../openai-client', () => ({
+  getOpenAIClient: () => ({
+    chat: {
+      completions: {
+        create: openAIChatCreate,
+      },
+    },
+  }),
+}))
 
-    it('creates a session with calendar trigger', () => {
-      const state = createSessionState('session-2', 'calendar');
-      expect(state.triggeredBy).toBe('calendar');
-    });
+vi.mock('./config', () => ({
+  isDemoMode: () => devMode.demo,
+}))
 
-    it('creates a session with photo trigger', () => {
-      const state = createSessionState('session-3', 'photo');
-      expect(state.triggeredBy).toBe('photo');
-    });
+import { generateFollowUpQuestion } from './interviewer'
 
-    it('creates a session with family_question trigger', () => {
-      const state = createSessionState('session-4', 'family_question');
-      expect(state.triggeredBy).toBe('family_question');
-    });
-  });
+function respondWith(payload: unknown) {
+  openAIChatCreate.mockResolvedValueOnce({
+    choices: [{ message: { content: JSON.stringify(payload) } }],
+  })
+}
 
-  describe('getNextQuestionCategory', () => {
-    it('returns 인물 when no categories are covered', () => {
-      expect(getNextQuestionCategory([])).toBe('인물');
-    });
+function lastRequest() {
+  return openAIChatCreate.mock.calls[openAIChatCreate.mock.calls.length - 1][0]
+}
 
-    it('returns 장소 after 인물 is covered', () => {
-      expect(getNextQuestionCategory(['인물'])).toBe('장소');
-    });
+function messageContent(role: 'system' | 'user') {
+  return lastRequest().messages.find((message: any) => message.role === role).content as string
+}
 
-    it('returns 감정 after 인물 and 장소 are covered', () => {
-      expect(getNextQuestionCategory(['인물', '장소'])).toBe('감정');
-    });
+const VALID_RESULT = {
+  question: '그 시장에서 함께 일하던 분은 누구였나요?',
+  detectedKeywords: {
+    persons: ['어머니'],
+    places: ['남대문시장'],
+    emotions: ['뿌듯함'],
+    events: ['첫 장사'],
+  },
+  confidence: 'high' as const,
+}
 
-    it('returns 사건 after first three are covered', () => {
-      expect(getNextQuestionCategory(['인물', '장소', '감정'])).toBe('사건');
-    });
+describe('generateFollowUpQuestion', () => {
+  beforeEach(() => {
+    openAIChatCreate.mockReset()
+    devMode.demo = false
+    // 실패 경로는 의도적으로 console.warn 을 남기므로 테스트 출력에서 걷어낸다.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
 
-    it('returns 시간 after first four are covered', () => {
-      expect(getNextQuestionCategory(['인물', '장소', '감정', '사건'])).toBe('시간');
-    });
+  it('returns the canned demo question without calling the provider in demo mode', async () => {
+    devMode.demo = true
 
-    it('returns null when all categories are covered', () => {
-      expect(getNextQuestionCategory(['인물', '장소', '감정', '사건', '시간'])).toBeNull();
-    });
-  });
+    const result = await generateFollowUpQuestion('아무 답변', '어린시절', [])
 
-  describe('markCategoryCovered', () => {
-    it('marks the next expected category', () => {
-      const state = createSessionState('s1');
-      const updated = markCategoryCovered(state, '인물');
-      expect(updated.coveredCategories).toEqual(['인물']);
-    });
+    expect(openAIChatCreate).not.toHaveBeenCalled()
+    expect(result.question).toBeTruthy()
+    expect(result.detectedKeywords).toEqual({ persons: [], places: [], emotions: [], events: [] })
+    expect(result.confidence).toBe('high')
+  })
 
-    it('does not allow skipping categories', () => {
-      const state = createSessionState('s1');
-      const updated = markCategoryCovered(state, '장소'); // should be 인물 first
-      expect(updated.coveredCategories).toEqual([]);
-    });
+  it('parses the provider question and detected keywords', async () => {
+    respondWith(VALID_RESULT)
 
-    it('does not duplicate already covered categories', () => {
-      let state = createSessionState('s1');
-      state = markCategoryCovered(state, '인물');
-      const updated = markCategoryCovered(state, '인물');
-      expect(updated.coveredCategories).toEqual(['인물']);
-    });
+    const result = await generateFollowUpQuestion(
+      '어머니와 남대문시장에서 처음 장사를 시작했어요.',
+      '일과 삶',
+      []
+    )
 
-    it('marks session as complete when all categories are covered', () => {
-      let state = createSessionState('s1');
-      for (const cat of QUESTION_CATEGORY_SEQUENCE) {
-        state = markCategoryCovered(state, cat);
-      }
-      expect(state.isComplete).toBe(true);
-      expect(state.coveredCategories).toEqual(QUESTION_CATEGORY_SEQUENCE);
-    });
-  });
+    expect(result).toEqual(VALID_RESULT)
+  })
 
-  describe('addMessageToSession', () => {
-    it('preserves original user wording exactly', () => {
-      const state = createSessionState('s1');
-      const originalText = '우리 아버지는 1960년에 서울에서 태어나셨어요. 정말 힘든 시절이었지요.';
-      const message: ChatMessage = { role: 'user', text: originalText };
-      const updated = addMessageToSession(state, message);
-      expect(updated.messages[0].text).toBe(originalText);
-      expect(updated.messages[0].role).toBe('user');
-    });
+  it('sends the topic, previous questions, and the untouched answer to the provider', async () => {
+    respondWith(VALID_RESULT)
 
-    it('preserves model messages exactly', () => {
-      const state = createSessionState('s1');
-      const modelText = '어르신, 그때 어떤 분들과 함께 계셨나요?';
-      const message: ChatMessage = { role: 'model', text: modelText };
-      const updated = addMessageToSession(state, message);
-      expect(updated.messages[0].text).toBe(modelText);
-      expect(updated.messages[0].role).toBe('model');
-    });
+    const answer = '1968년 겨울, 어머니와 남대문시장에서 첫 가게를 열었어요.'
+    await generateFollowUpQuestion(answer, '일과 삶', ['어디서 일하셨나요?', '누구와 함께였나요?'])
 
-    it('appends messages without modifying existing ones', () => {
-      let state = createSessionState('s1');
-      const msg1: ChatMessage = { role: 'user', text: '첫 번째 메시지' };
-      const msg2: ChatMessage = { role: 'model', text: '두 번째 메시지' };
-      state = addMessageToSession(state, msg1);
-      state = addMessageToSession(state, msg2);
-      expect(state.messages).toHaveLength(2);
-      expect(state.messages[0].text).toBe('첫 번째 메시지');
-      expect(state.messages[1].text).toBe('두 번째 메시지');
-    });
-  });
+    const userPrompt = messageContent('user')
+    expect(userPrompt).toContain('현재 주제: 일과 삶')
+    expect(userPrompt).toContain('어디서 일하셨나요?')
+    expect(userPrompt).toContain('누구와 함께였나요?')
+    // 인터뷰어는 답변을 요약/재해석하지 않고 원문 그대로 전달해야 한다.
+    expect(userPrompt.endsWith(answer)).toBe(true)
+  })
 
-  describe('generateMemorySummaryCard', () => {
-    it('generates a summary card from messages', () => {
-      const messages: ChatMessage[] = [
-        { role: 'model', text: '어르신, 가장 기억에 남는 분은 누구인가요?' },
-        { role: 'user', text: '우리 어머니가 가장 기억에 남아요. 1965년에 부산시장에서 장사를 하셨지요. 정말 감사한 분이에요.' },
-      ];
-      const card = generateMemorySummaryCard(messages);
-      expect(card.topic).toBeTruthy();
-      expect(card.keyPeople).toContain('우리 어머니');
-      expect(card.keyPlaces).toContain('부산시장');
-      expect(card.keyEmotions).toContain('감사');
-      expect(card.timePeriod).toBe('1965년대');
-    });
+  it('keeps the follow-up question constraints in the system prompt', async () => {
+    respondWith(VALID_RESULT)
 
-    it('returns empty arrays when no entities found', () => {
-      const messages: ChatMessage[] = [
-        { role: 'user', text: '네, 좋습니다.' },
-      ];
-      const card = generateMemorySummaryCard(messages);
-      expect(card.keyPeople).toEqual([]);
-      expect(card.keyPlaces).toEqual([]);
-      expect(card.keyEmotions).toEqual([]);
-    });
-  });
+    await generateFollowUpQuestion('답변', '어린시절', [])
 
-  describe('generateSessionJSON', () => {
-    it('generates valid SessionJSON with all required fields', () => {
-      let state = createSessionState('session-test', 'photo');
-      state = addMessageToSession(state, { role: 'model', text: '질문입니다.' });
-      state = addMessageToSession(state, { role: 'user', text: '답변입니다.' });
+    const systemPrompt = messageContent('system')
+    expect(systemPrompt).toContain('꼬리질문 1개')
+    expect(systemPrompt).toContain('금지 사항')
+    expect(systemPrompt).toContain('복합질문')
+    expect(systemPrompt).toContain('JSON')
+  })
 
-      const sessionJSON = generateSessionJSON(state);
+  it('throws a Korean-facing error when the provider call fails', async () => {
+    openAIChatCreate.mockRejectedValueOnce(new Error('network down'))
 
-      expect(sessionJSON.sessionId).toBe('session-test');
-      expect(sessionJSON.startedAt).toBeTruthy();
-      expect(sessionJSON.endedAt).toBeTruthy();
-      expect(sessionJSON.messages).toHaveLength(2);
-      expect(sessionJSON.triggeredBy).toBe('photo');
-      expect(sessionJSON.memorySummaryCard).toBeDefined();
-      expect(sessionJSON.memorySummaryCard.topic).toBeTruthy();
-    });
+    await expect(generateFollowUpQuestion('답변', '어린시절', [])).rejects.toThrow(
+      'AI 꼬리질문 생성에 실패했습니다.'
+    )
+  })
 
-    it('preserves original message wording in output', () => {
-      let state = createSessionState('session-wording');
-      const originalText = '특수문자 포함: !@#$%^&*() 그리고 한글 "따옴표"';
-      state = addMessageToSession(state, { role: 'user', text: originalText });
+  it('throws instead of returning a blank question when the provider content is empty', async () => {
+    openAIChatCreate.mockResolvedValueOnce({ choices: [{ message: { content: '' } }] })
 
-      const sessionJSON = generateSessionJSON(state);
-      expect(sessionJSON.messages[0].text).toBe(originalText);
-    });
+    await expect(generateFollowUpQuestion('답변', '어린시절', [])).rejects.toThrow(
+      'AI 꼬리질문 생성에 실패했습니다.'
+    )
+  })
 
-    it('supports all trigger types', () => {
-      const triggers: Array<'user' | 'calendar' | 'photo' | 'family_question'> = [
-        'user', 'calendar', 'photo', 'family_question',
-      ];
-      for (const trigger of triggers) {
-        const state = createSessionState(`session-${trigger}`, trigger);
-        const json = generateSessionJSON(state);
-        expect(json.triggeredBy).toBe(trigger);
-      }
-    });
-  });
+  it('preserves arbitrary answer wording byte-for-byte in the provider prompt', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.string({ minLength: 1, maxLength: 300, unit: 'grapheme' }),
+        async (answer) => {
+          openAIChatCreate.mockReset()
+          respondWith(VALID_RESULT)
 
-  describe('buildSystemPrompt', () => {
-    it('includes category instruction when nextCategory is provided', () => {
-      const prompt = buildSystemPrompt('neutral', null, '인물');
-      expect(prompt).toContain('인물');
-      expect(prompt).toContain('꼬리질문 카테고리 지침');
-    });
+          await generateFollowUpQuestion(answer, '어린시절', ['이전 질문'])
 
-    it('includes single-question constraint', () => {
-      const prompt = buildSystemPrompt('neutral', null);
-      expect(prompt).toContain('단일 질문 제약');
-      expect(prompt).toContain('한 번에 하나의 질문만');
-    });
-
-    it('includes emotion instructions for distressed state', () => {
-      const prompt = buildSystemPrompt('distressed', null);
-      expect(prompt).toContain('고통/트라우마 감지');
-    });
-
-    it('does not include category instruction when nextCategory is null', () => {
-      const prompt = buildSystemPrompt('neutral', null, null);
-      expect(prompt).not.toContain('꼬리질문 카테고리 지침');
-    });
-  });
-});
+          expect(messageContent('user').endsWith(answer)).toBe(true)
+        }
+      ),
+      { numRuns: 50 }
+    )
+  })
+})

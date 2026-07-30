@@ -1,221 +1,409 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import {
+  BookOpen,
+  ChevronRight,
+  ClipboardCheck,
+  ImagePlus,
+  Layers,
+  MessageCircle,
+  PencilLine,
+  Plus,
+} from 'lucide-react'
 import ChildBottomNav from '../components/ChildBottomNav'
-import Button from '../components/Button'
-import { useStore } from '../store'
-import { fetchLocalProgress, fetchLocalInterviewRecords } from '../lib/local-server'
+import { useAuthStore } from '../store/authStore'
+import { useInterviewStore } from '../store/interviewStore'
+import { useChildStore } from '../store/childStore'
+import { useCalendarStore } from '../store/calendarStore'
+import { useConsentStore } from '../store/consentStore'
+import { useDevModeStore } from '../store/devModeStore'
+import {
+  DEMO_SENIOR_ID,
+  DEMO_SENIOR_NAME,
+} from '../lib/demo/demo-seed-adapter'
+import { toLocalDateStamp } from '../lib/date'
+import childRecordSpace from '../assets/figma/child-record-space.png'
+import childHomeMascot from '../assets/figma/child-home-mascot.png'
 
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+function fullDateLabel() {
+  return new Date().toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  })
+}
 
-function todayLabel() {
-  const d = new Date()
-  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEKDAYS[d.getDay()]})`
+function dateStamp() {
+  return toLocalDateStamp()
+}
+
+function firstLetter(name: string) {
+  return name.trim().charAt(0) || '홍'
+}
+
+function formatCount(value: number) {
+  if (value > 999) return '999+'
+  return `${value}`
+}
+
+type QuickMenuItem = {
+  title: string
+  subtitle: string
+  badge?: number
+  Icon: typeof ClipboardCheck
+  onClick: () => void
+}
+
+function QuickMenuButton({ item }: { item: QuickMenuItem }) {
+  return (
+    <button
+      type="button"
+      onClick={item.onClick}
+      className="flex min-h-[64px] w-full items-center gap-3 border-b border-[#E0DBE8] py-3 text-left transition active:opacity-60"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#EDE8F0] text-[#4E5B73]">
+        <item.Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[14px] font-bold leading-[21px] text-[#2A2830]">{item.title}</span>
+        <span className="block truncate text-[11px] font-medium leading-[16.5px] text-[#7A767F]">{item.subtitle}</span>
+      </span>
+      {item.badge ? (
+        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#2A2830] px-1 text-[10px] font-bold leading-[15px] text-[#F7F5FB]">
+          {formatCount(item.badge)}
+        </span>
+      ) : null}
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#C2C5CC]" aria-hidden="true" />
+    </button>
+  )
 }
 
 export default function ChildHomeScreen() {
   const navigate = useNavigate()
-  
-  // Local auth state
-  const auth = useStore((state) => state.auth)
-  const userName = auth.guardianProfile?.name ?? auth.guardianProfile?.preferredName ?? ''
+  const { userName } = useAuthStore()
+  const { chapters, transcripts, fetchChaptersAndQuestions, fetchTranscripts } = useInterviewStore()
+  const { questions, fetchQuestions, activeSeniorId, setActiveSeniorId, photos, fetchPhotos } = useChildStore()
+  const { fetchEvents } = useCalendarStore()
+  const { fetchConsents } = useConsentStore()
+  const isOfflineDemo = useDevModeStore((state) => state.isOfflineDemo)
 
-  // Local store family questions
-  const familyQuestions = useStore((state) => state.familyQuestions.questions)
+  const [seniors, setSeniors] = useState<Array<{
+    id: string
+    name: string
+    relationship?: string | null
+    recordSpaceName?: string | null
+    recordSpaceCoverUrl?: string | null
+  }>>([])
+  const [recordSpaceNotice, setRecordSpaceNotice] = useState<string | null>(null)
 
-  // API progress & transcripts states
-  const [serverProgress, setServerProgress] = useState<any>(null)
-  const [transcripts, setTranscripts] = useState<any[]>([])
-
-  // Fetch data from local server
   useEffect(() => {
-    async function loadData() {
-      try {
-        const prog = await fetchLocalProgress()
-        setServerProgress(prog)
-      } catch (e) {
-        console.error("Progress fetch error:", e)
+    if (isOfflineDemo) {
+      setSeniors([{
+        id: DEMO_SENIOR_ID,
+        name: DEMO_SENIOR_NAME,
+        relationship: '어머니',
+        recordSpaceName: `${DEMO_SENIOR_NAME}님의 기록 공간`,
+      }])
+      if (!useChildStore.getState().activeSeniorId) {
+        setActiveSeniorId(DEMO_SENIOR_ID)
       }
+      return
+    }
+
+    let active = true
+    const loadSeniors = async () => {
       try {
-        const recordsRes = await fetchLocalInterviewRecords()
-        setTranscripts(recordsRes.records || [])
+        const { fetchFamilyMembers } = await import('../lib/local-server')
+        const res = await fetchFamilyMembers()
+        if (!active || !res?.members) return
+        const parentSeniors = res.members
+          .filter((m: any) => m.role === 'parent')
+          .map((m: any) => ({
+            id: m.id,
+            name: m.name,
+            relationship: m.relationship ?? null,
+            recordSpaceName: m.recordSpaceName ?? null,
+            recordSpaceCoverUrl: m.recordSpaceCoverUrl ?? null,
+          }))
+        setSeniors(parentSeniors)
+        const selectedSeniorId = useChildStore.getState().activeSeniorId
+        if (parentSeniors.length > 0 && !selectedSeniorId) {
+          setActiveSeniorId(parentSeniors[0].id)
+        }
       } catch (e) {
-        console.error("Records fetch error:", e)
+        console.error('Failed to load family members in Home:', e)
       }
     }
-    loadData()
-  }, [])
+    loadSeniors()
+    return () => {
+      active = false
+    }
+  }, [isOfflineDemo, setActiveSeniorId])
 
-  // Progress computations
-  const totalQuestions = serverProgress?.totalRecords ?? 0
-  const completedQuestions = serverProgress?.progress?.reduce((acc: number, item: any) => acc + item.count, 0) ?? 0
-  
-  // Calculate completion percentage: minimum count sum vs actual count sum
-  const targetQuestions = serverProgress?.progress?.reduce((acc: number, item: any) => acc + (item.chapter?.minAnswerCount ?? 15), 0) ?? 90
-  const progressPct = targetQuestions > 0 ? Math.min(100, Math.round((completedQuestions / targetQuestions) * 100)) : 0
+  useEffect(() => {
+    if (activeSeniorId) {
+      fetchQuestions()
+      fetchChaptersAndQuestions()
+      fetchTranscripts()
+      fetchEvents()
+      fetchConsents()
+      fetchPhotos()
+    }
+  }, [activeSeniorId, fetchQuestions, fetchChaptersAndQuestions, fetchTranscripts, fetchEvents, fetchConsents, fetchPhotos])
 
-  const recentTranscripts = useMemo(
-    () => transcripts.slice(0, 3).map(t => ({
-      id: t.id,
-      chapterTitle: t.chapter?.title ?? '기억',
-      recordedAt: new Date(t.recordedAt).toLocaleDateString('ko-KR'),
-      questionText: t.question?.text ?? '자유 회상 대화',
-    })),
+  const totalQuestions = useMemo(
+    () => chapters.reduce((acc, ch) => acc + ch.questions.length, 0),
+    [chapters]
+  )
+  const completedQuestions = useMemo(
+    () => chapters.reduce((acc, ch) => acc + ch.questions.filter((q) => q.completed).length, 0),
+    [chapters]
+  )
+  const progressPct = totalQuestions > 0 ? Math.round((completedQuestions / totalQuestions) * 100) : 0
+
+  const pendingReviewTranscripts = useMemo(
+    () => transcripts.filter((transcript) => transcript.reviewStatus !== 'applied'),
     [transcripts]
   )
 
   const pendingChildQuestions = useMemo(
-    () => familyQuestions.filter((q) => q.status === 'pending' || q.status === 'delivered').length,
-    [familyQuestions]
+    () => questions.filter((q) => q.status === 'pending').length,
+    [questions]
   )
 
   const answeredChildQuestions = useMemo(
-    () => familyQuestions.filter((q) => q.status === 'answered').length,
-    [familyQuestions]
+    () => questions.filter((q) => q.status === 'answered').length,
+    [questions]
   )
+  const answeredStoryCount = Math.max(answeredChildQuestions, transcripts.length)
 
   const chaptersInProgress = useMemo(
-    () => serverProgress?.progress?.filter((item: any) => item.count > 0).length ?? 0,
-    [serverProgress]
+    () => chapters.filter((ch) => ch.questions.some((q) => q.completed)).length,
+    [chapters]
   )
 
+  const recordSpaces = seniors.length > 0
+    ? seniors.map((senior) => ({
+        id: senior.id,
+        name: senior.recordSpaceName || senior.name,
+        relationship: senior.relationship,
+        date: dateStamp(),
+        active: activeSeniorId === senior.id,
+        coverUrl: senior.recordSpaceCoverUrl,
+      }))
+    : [{ id: 'demo-space', name: '기록 공간 만들기', relationship: '새 기록 공간', date: '부모님 정보 입력', active: false, coverUrl: null }]
+
+  const displayName = userName || '홍길동'
+
+  const showRecordSpaceNotice = (message: string) => {
+    setRecordSpaceNotice(message)
+    window.setTimeout(() => setRecordSpaceNotice((current) => (current === message ? null : current)), 2400)
+  }
+
+  const handleSelectRecordSpace = (space: typeof recordSpaces[number]) => {
+    if (space.id === 'demo-space') {
+      navigate('/child/record-space/new')
+      return
+    }
+    if (space.active) {
+      showRecordSpaceNotice(`이미 선택된 기록 공간이에요. ${space.name}`)
+      return
+    }
+    setActiveSeniorId(space.id)
+    showRecordSpaceNotice(`기록 공간을 전환했어요. ${space.name}`)
+  }
+
+  const quickMenuItems: QuickMenuItem[] = [
+    {
+      title: '새 기록 확인하기',
+      subtitle: pendingReviewTranscripts.length > 0 ? `검수 대기 ${formatCount(pendingReviewTranscripts.length)}개` : '새 답변을 기다리는 중',
+      badge: pendingReviewTranscripts.length || undefined,
+      Icon: ClipboardCheck,
+      onClick: () => navigate('/child/chapters'),
+    },
+    {
+      title: '질문 준비하기',
+      subtitle: `질문 ${formatCount(questions.length)}개 · 답변 ${formatCount(answeredStoryCount)}개`,
+      Icon: PencilLine,
+      onClick: () => navigate('/child/questions'),
+    },
+    {
+      title: '사진 올리기',
+      subtitle: photos.length > 0 ? `사진 ${formatCount(photos.length)}장 업로드됨` : '사진으로 질문 만들기',
+      Icon: ImagePlus,
+      onClick: () => navigate('/child/photos'),
+    },
+    {
+      title: '챕터 정리하기',
+      subtitle: `${formatCount(chaptersInProgress)}개 챕터 구성 중`,
+      Icon: Layers,
+      onClick: () => navigate('/child/chapters'),
+    },
+    {
+      title: '가족 기록집 보기',
+      subtitle: `${progressPct}% 완성`,
+      Icon: BookOpen,
+      onClick: () => navigate('/child/progress'),
+    },
+  ]
+
   return (
-    <div className="flex flex-col min-h-screen bg-[#F8F3EA]">
-      <div className="flex-1 overflow-y-auto pb-24 px-5">
-        {/* Header */}
-        <div className="pt-14 pb-6">
+    <div className="flex min-h-[100dvh] flex-col bg-[#F8F6F9] text-[#2A2830]">
+      <main className="flex-1 overflow-y-auto px-6 pb-[112px]">
+        <header className="relative border-b border-[#E0DBE8] pb-4 pt-5">
           <div className="flex items-start justify-between">
-            <div>
-              <p className="text-[14px] text-[#7A6A5C]">{todayLabel()}</p>
-              <h1 className="mt-1 text-[22px] font-bold text-[#3E3128]">
-                {userName ? `${userName}님, 안녕하세요` : '안녕하세요'}
-              </h1>
-              <p className="mt-0.5 text-[16px] text-[#7A6A5C]">부모님의 이야기를 함께 기록해요</p>
+            <div className="min-w-0 pr-4">
+              <p className="text-[4px] font-medium uppercase leading-[5.5px] tracking-[1.27px] text-[#2A2830]">
+                FAMILY ARCHIVE
+              </p>
+              <p className="font-serif text-[21px] font-bold leading-[25px] text-[#183025]">Dearlog</p>
             </div>
             <button
-              onClick={() => navigate('/settings')}
-              className="mt-1 w-10 h-10 rounded-full bg-[#D9E0D2] flex items-center justify-center active:opacity-70"
+              type="button"
+              onClick={() => navigate('/child/mypage')}
+              className="flex h-[37px] w-[37px] items-center justify-center rounded-full bg-[#4E5B73] text-[14px] font-medium leading-[21px] text-white transition active:scale-95"
+              aria-label="마이페이지"
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="8" r="4" fill="#6B8F71" />
-                <path
-                  d="M4 20C4 16.134 7.582 13 12 13C16.418 13 20 16.134 20 20"
-                  stroke="#6B8F71"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                />
-              </svg>
+              {firstLetter(displayName)}
             </button>
           </div>
-        </div>
 
-        {/* New answers notification */}
-        {recentTranscripts.length > 0 && (
-          <div
-            className="rounded-2xl p-4 mb-5 animate-fade-in"
-            style={{ backgroundColor: '#D9E0D2', border: '1.5px solid #C7D1BE' }}
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center"
-                style={{ backgroundColor: '#6B8F71' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                  <path d="M18 8C18 6.4 17.37 4.87 16.24 3.76C15.13 2.63 13.6 2 12 2C10.4 2 8.87 2.63 7.76 3.76C6.63 4.87 6 6.4 6 8C6 15 3 17 3 17H21C21 17 18 15 18 8Z" fill="white" />
-                  <path d="M13.73 21C13.55 21.3 13.3 21.55 13 21.73C12.7 21.9 12.35 22 12 22C11.65 22 11.3 21.9 11 21.73C10.7 21.55 10.45 21.3 10.27 21" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <span className="text-[14px] font-bold text-[#3E5E41]">새 답변 알림</span>
-            </div>
-            <p className="text-[14px] text-[#3E3128] mb-3">
-              부모님이 최근 <strong>{recentTranscripts.length}개</strong>의 인터뷰에 답변하셨어요
-            </p>
-            <div className="flex flex-col gap-2">
-              {recentTranscripts.map((t) => (
+          <div className="relative mt-4 min-h-[70px] pr-[74px]">
+            <h1 className="truncate font-serif text-[21px] font-medium leading-[31.5px] text-[#2F3136]">
+              안녕하세요, {displayName}님
+            </h1>
+            <p className="mt-0.5 truncate text-[12px] font-normal leading-[18px] text-[#B0B4BC]">{fullDateLabel()}</p>
+            <span className="sr-only">부모님의 이야기를 함께 기록해요</span>
+            <img
+              src={childHomeMascot}
+              alt=""
+              className="absolute right-1 top-0 h-[58px] w-[46px] object-cover drop-shadow-[0_4px_4px_rgba(0,0,0,0.22)]"
+            />
+          </div>
+        </header>
+
+        <section className="pt-4" aria-labelledby="record-space-heading">
+          <div className="flex min-h-[21px] items-center justify-between gap-3">
+            <h2 id="record-space-heading" className="text-[14px] font-medium leading-[21px] text-[#2F3136]">
+              기록 공간 선택하기
+            </h2>
+            <span className="shrink-0 text-[11px] leading-[16.5px] text-[#7A767F]">
+              {seniors.length > 0 ? `${formatCount(seniors.length)}명` : '대기 중'}
+            </span>
+          </div>
+
+          <div className="-mx-6 mt-3 overflow-x-auto pb-4">
+            <div className="flex w-max gap-3 px-6">
+              {recordSpaces.map((space) => (
                 <button
-                  key={t.id}
-                  onClick={() => navigate('/child/chapters')}
-                  className="text-left bg-white/60 rounded-xl px-3 py-2 transition-opacity active:opacity-70"
+                  key={space.id}
+                  type="button"
+                  onClick={() => handleSelectRecordSpace(space)}
+                  className={`w-[132px] shrink-0 rounded-[18px] border bg-white p-2.5 text-left transition active:scale-[0.98] ${
+                    space.active
+                      ? 'border-[#9485BE] shadow-[0_8px_18px_rgba(148,133,190,0.18)]'
+                      : 'border-[#E0DBE8] shadow-[0_4px_12px_rgba(42,40,48,0.06)]'
+                  }`}
+                  aria-pressed={space.active}
                 >
-                  <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-[11px] font-medium text-[#6B8F71]">{t.chapterTitle}</span>
-                    <span className="text-[11px] text-[#7A6A5C]">{t.recordedAt}</span>
+                  <div className="flex min-h-[37px] items-start justify-between gap-2">
+                    <p className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-bold leading-[18px] text-[#2A2830]">
+                        {space.name}
+                      </span>
+                      <span className="block truncate text-[10px] font-normal leading-[15px] text-[#B0B4BC]">
+                        {space.relationship || '기록 공간'} · {space.date}
+                      </span>
+                    </p>
+                    <PencilLine className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#7A767F]" aria-hidden="true" />
                   </div>
-                  <p className="text-[13px] text-[#3E3128] line-clamp-1">{t.questionText}</p>
+                  <div className="mt-2 h-[118px] overflow-hidden rounded-[16px] bg-[#EEE9F4]">
+                    <img src={space.coverUrl || childRecordSpace} alt="" className="h-full w-full object-cover" />
+                  </div>
+                  <span
+                    className={`mt-2 flex min-h-6 items-center justify-center rounded-full text-[10px] font-medium leading-[15px] ${
+                      space.active ? 'bg-[#EDE8F0] text-[#6F648F]' : 'bg-[#F8F6F9] text-[#7A767F]'
+                    }`}
+                  >
+                    {space.active ? '선택됨' : space.id === 'demo-space' ? '만들기' : '선택하기'}
+                  </span>
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => navigate('/child/chapters')}
-              className="mt-3 text-[13px] font-medium text-[#6B8F71] hover:underline"
+          </div>
+
+          {recordSpaceNotice ? (
+            <div
+              role="status"
+              className="mt-1 rounded-[14px] border border-[#E0DBE8] bg-white px-4 py-3 text-[12px] font-medium leading-[18px] text-[#6F648F]"
             >
-              검수 화면에서 전체 보기 →
+              {recordSpaceNotice}
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => navigate('/child/record-space/new')}
+            className="ml-auto mt-1 flex h-[52px] w-[52px] items-center justify-center rounded-full bg-[#EDE8F0] text-[#2A2830] shadow-[0_4px_8px_rgba(0,0,0,0.18)] transition active:scale-95"
+            aria-label="부모님 기록 공간 추가"
+          >
+            <Plus className="h-6 w-6" aria-hidden="true" />
+          </button>
+        </section>
+
+        <section className="mt-5 rounded-[14px] border border-[#E0DBE8] bg-white px-5 py-5" aria-labelledby="record-progress-heading">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="record-progress-heading" className="text-[13px] font-medium leading-[19.5px] text-[#2F3136]">
+              기록 진행도
+            </h2>
+            <span className="shrink-0 text-[13px] font-normal tabular-nums leading-[19.5px] text-[#2A2830]">{progressPct}%</span>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#F0EDE8]">
+            <div className="h-full rounded-full bg-[#AFA3D0]" style={{ width: `${progressPct}%` }} />
+          </div>
+          <p className="mt-2 text-[12px] font-normal leading-[16.5px] text-[#B0B4BC]">
+            {totalQuestions > 0
+              ? `총 ${formatCount(totalQuestions)}개 질문 중 ${formatCount(completedQuestions)}개 완료`
+              : '질문이 준비되면 진행도가 표시됩니다'}
+          </p>
+        </section>
+
+        <section className="mt-8" aria-labelledby="quick-menu-heading">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="quick-menu-heading" className="text-[14px] font-medium leading-[21px] text-[#2F3136]">
+              빠른 메뉴
+            </h2>
+            <button
+              type="button"
+              onClick={() => navigate('/child/progress')}
+              className="text-[11px] font-normal leading-[16.5px] text-[#7A767F] transition active:opacity-60"
+            >
+              전체 보기
             </button>
           </div>
-        )}
 
-        {/* Progress summary */}
-        <div
-          className="rounded-2xl p-5 mb-5"
-          style={{ backgroundColor: '#FFFDF8', boxShadow: '0 2px 12px rgba(139,94,60,0.08)' }}
-        >
-          <h2 className="text-[16px] font-bold text-[#3E3128] mb-3">자서전 진행 현황</h2>
-          <div className="flex gap-4 mb-4">
-            {[
-              { label: '전체 완료', value: `${progressPct}%`, color: '#C8956C' },
-              { label: '진행 중 챕터', value: `${chaptersInProgress}개`, color: '#8B5E3C' },
-              { label: '답변 완료', value: `${completedQuestions}개`, color: '#6B8F71' },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="flex-1 text-center">
-                <p className="text-[20px] font-bold" style={{ color }}>{value}</p>
-                <p className="text-[11px] text-[#7A6A5C] mt-0.5">{label}</p>
-              </div>
+          <div className="flex flex-col">
+            {quickMenuItems.map((item) => (
+              <QuickMenuButton key={item.title} item={item} />
             ))}
           </div>
-          <div className="w-full h-2.5 rounded-full bg-[#F4DDD0] overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${progressPct}%`, backgroundColor: '#C8956C' }}
-            />
-          </div>
-          <button
-            onClick={() => navigate('/child/progress')}
-            className="mt-3 text-[13px] text-[#C8956C] hover:underline"
-          >
-            상세 진척도 보기 →
-          </button>
-        </div>
+        </section>
 
-        {/* My questions summary */}
-        <div
-          className="rounded-2xl p-5 mb-5"
-          style={{ backgroundColor: '#FFFDF8', boxShadow: '0 2px 12px rgba(139,94,60,0.08)' }}
+        <button
+          type="button"
+          onClick={() => navigate('/child/chatbot')}
+          className="mt-7 flex min-h-[56px] w-full items-center justify-between gap-4 rounded-[14px] border border-[#E0DBE8] bg-white px-5 py-4 text-left transition active:opacity-70"
         >
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[16px] font-bold text-[#3E3128]">등록한 질문</h2>
-            {pendingChildQuestions > 0 && (
-              <span
-                className="text-[11px] font-medium px-2.5 py-1 rounded-full text-white animate-pulse"
-                style={{ backgroundColor: '#C8956C' }}
-              >
-                {pendingChildQuestions}개 대기 중
-              </span>
-            )}
-          </div>
-          <div className="flex gap-3 mb-4">
-            <div className="flex-1 rounded-xl p-3 text-center" style={{ backgroundColor: '#F4DDD0' }}>
-              <p className="text-[18px] font-bold text-[#C8956C]">{pendingChildQuestions}</p>
-              <p className="text-[11px] text-[#7A6A5C] mt-0.5">대기 중</p>
-            </div>
-            <div className="flex-1 rounded-xl p-3 text-center" style={{ backgroundColor: '#D9E0D2' }}>
-              <p className="text-[18px] font-bold text-[#6B8F71]">{answeredChildQuestions}</p>
-              <p className="text-[11px] text-[#7A6A5C] mt-0.5">답변 완료</p>
-            </div>
-          </div>
-          <Button fullWidth variant="secondary" onClick={() => navigate('/child/questions')}>
-            질문 등록하기
-          </Button>
-        </div>
-      </div>
+          <span className="min-w-0">
+            <span className="block truncate text-[14px] font-bold leading-[21px] text-[#2A2830]">대화방 바로가기</span>
+            <span className="block truncate text-[11px] font-medium leading-[16.5px] text-[#7A767F]">
+              부모님 기억 아카이브와 대화해요
+            </span>
+          </span>
+          <MessageCircle className="h-5 w-5 shrink-0 text-[#4E5B73]" aria-hidden="true" />
+        </button>
+      </main>
 
       <ChildBottomNav />
     </div>

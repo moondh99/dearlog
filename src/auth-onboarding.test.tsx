@@ -1,240 +1,227 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppRoutes } from './App';
-import { useStore } from './store';
-import { resetStoreForTest } from './test-utils/store-fixtures';
+import { useAuthStore } from './store/authStore';
 
-vi.mock('./lib/rag/index', () => ({
-  ragIndex: {
-    addMemory: vi.fn(),
-  },
+const localServerMocks = vi.hoisted(() => ({
+  registerLocalPhoneAccount: vi.fn(),
+  updateLocalUserProfile: vi.fn(),
+  updateLocalUserRole: vi.fn(),
+  loginWithInvitationToken: vi.fn(),
+  fetchFamilyMembers: vi.fn(),
+  fetchLocalChapters: vi.fn(),
+  fetchLocalQuestions: vi.fn(),
+  fetchLocalInterviewRecords: vi.fn(),
+  fetchLocalCalendarEvents: vi.fn(),
+  fetchLocalPhotos: vi.fn(),
+  fetchLocalFamilyQuestions: vi.fn(),
+  uploadLocalPhoto: vi.fn(async () => ({ photo: {}, questions: [] })),
+  updateLocalInterviewRecordReview: vi.fn(async () => ({ record: {} })),
 }));
 
 vi.mock('./lib/local-server', () => ({
-  registerLocalPhoneAccount: vi.fn(async (phoneNumber: string) => {
-    const existingSenior = phoneNumber === '01099998888';
-    return {
-      user: {
-        id: `test-user-${phoneNumber.slice(-4)}`,
-        name: existingSenior ? '기존 시니어' : `사용자 ${phoneNumber.slice(-4)}`,
-        phoneNumber,
-        role: existingSenior ? 'senior' : 'pending',
-        birthDecade: existingSenior ? '1950년대' : null,
-        preferredName: existingSenior ? '어르신' : null,
-        seniorName: existingSenior ? '기존 시니어' : null,
-        seniorBirthDecade: existingSenior ? '1950년대' : null,
-        seniorPreferredName: existingSenior ? '어르신' : null,
-        guardianName: null,
-        guardianRelationship: null,
-        guardianPreferredName: null,
-      },
-      isNew: !existingSenior,
-    };
-  }),
-  updateLocalUserRole: vi.fn(async (userId: string, role: 'senior' | 'guardian') => ({
-    user: {
-      id: userId,
-      name: role === 'guardian' ? '보호자' : '어르신',
-      phoneNumber: '01012345678',
-      role,
-      birthDecade: null,
-      preferredName: role === 'guardian' ? '보호자' : '어르신',
-      seniorName: role === 'senior' ? '어르신' : null,
-      seniorBirthDecade: null,
-      seniorPreferredName: role === 'senior' ? '어르신' : null,
-      guardianName: null,
-      guardianRelationship: null,
-      guardianPreferredName: role === 'guardian' ? '보호자' : null,
-    },
-  })),
-  updateLocalUserProfile: vi.fn(async (input: { userId: string; role: 'senior' | 'guardian'; name: string; birthDecade?: string; preferredName: string; relationship?: string }) => ({
-    user: input.role === 'guardian'
-      ? {
-          id: input.userId,
-          name: input.name,
-          phoneNumber: '01012345678',
-          role: 'guardian',
-          birthDecade: null,
-          preferredName: input.preferredName,
-          seniorName: null,
-          seniorBirthDecade: null,
-          seniorPreferredName: null,
-          guardianName: input.name,
-          guardianRelationship: input.relationship ?? '자녀',
-          guardianPreferredName: input.preferredName,
-        }
-      : {
-          id: input.userId,
-          name: input.name,
-          phoneNumber: '01012345678',
-          role: 'senior',
-          birthDecade: input.birthDecade,
-          preferredName: input.preferredName,
-          seniorName: input.name,
-          seniorBirthDecade: input.birthDecade,
-          seniorPreferredName: input.preferredName,
-          guardianName: null,
-          guardianRelationship: null,
-          guardianPreferredName: null,
-        },
-  })),
-  acceptLocalInterviewSession: vi.fn(async () => ({ session: { id: 'test-session', status: 'active' } })),
-  createLocalInterviewSession: vi.fn(async () => ({ session: { id: 'test-session' } })),
-  endLocalInterviewSession: vi.fn(async () => ({ session: { id: 'test-session', status: 'ended' } })),
-  fetchLocalNotifications: vi.fn(async () => ({ notifications: [], unreadCount: 0 })),
-  fetchLocalProgress: vi.fn(async () => ({ character: '🌰', totalRecords: 0, progress: [] })),
-  fetchLocalVapidPublicKey: vi.fn(async () => ({ publicKey: '' })),
-  fetchLocalInterviewRecords: vi.fn(async () => ({ records: [] })),
-  fetchLocalChapters: vi.fn(async () => ({ chapters: [] })),
-  markLocalNotificationRead: vi.fn(async (id: string) => ({
-    notification: { id, type: 'nudge', title: '확인됨', body: '', status: 'read', createdAt: new Date().toISOString(), readAt: new Date().toISOString(), metadata: {} },
-  })),
-  pauseLocalInterviewSession: vi.fn(async () => ({ session: { id: 'test-session', status: 'paused' } })),
-  registerLocalPushSubscription: vi.fn(async () => ({ subscription: {} })),
+  registerLocalPhoneAccount: localServerMocks.registerLocalPhoneAccount,
+  updateLocalUserProfile: localServerMocks.updateLocalUserProfile,
+  updateLocalUserRole: localServerMocks.updateLocalUserRole,
+  loginWithInvitationToken: localServerMocks.loginWithInvitationToken,
+  fetchFamilyMembers: localServerMocks.fetchFamilyMembers,
+  fetchLocalChapters: localServerMocks.fetchLocalChapters,
+  fetchLocalQuestions: localServerMocks.fetchLocalQuestions,
+  fetchLocalInterviewRecords: localServerMocks.fetchLocalInterviewRecords,
+  fetchLocalCalendarEvents: localServerMocks.fetchLocalCalendarEvents,
+  fetchLocalPhotos: localServerMocks.fetchLocalPhotos,
+  fetchLocalFamilyQuestions: localServerMocks.fetchLocalFamilyQuestions,
+  uploadLocalPhoto: localServerMocks.uploadLocalPhoto,
+  updateLocalInterviewRecordReview: localServerMocks.updateLocalInterviewRecordReview,
+  updateLocalPhoto: vi.fn(async () => ({ photo: {} })),
+  deleteLocalPhoto: vi.fn(async () => ({ ok: true })),
+  updateLocalFamilyQuestion: vi.fn(async () => ({ question: {} })),
+  deleteLocalFamilyQuestion: vi.fn(async () => ({ ok: true })),
+  createLocalQuestion: vi.fn(async () => ({ question: {} })),
   saveLocalInterviewRecord: vi.fn(async () => ({ record: {} })),
-  uploadLocalAudio: vi.fn(async () => ({ fileKey: 'audio/test.webm', mimeType: 'audio/webm', size: 1 })),
+  updateLocalInterviewRecordConsent: vi.fn(async () => ({ record: {} })),
+  bulkUpdateLocalInterviewRecordConsent: vi.fn(async () => ({ ok: true })),
+  saveLocalCalendarEvent: vi.fn(async () => ({ event: {} })),
+  deleteLocalCalendarEvent: vi.fn(async () => ({ ok: true })),
 }));
 
-function setSignedOutState() {
-  useStore.setState({
-    auth: {
-      userId: null,
-      phoneNumber: '',
-      isAuthenticated: false,
-      role: null,
-      profile: null,
-      guardianProfile: null,
-      onboardingCompleted: false,
-      familyInviteSkipped: false,
-      lastSignedInAt: null,
-    },
+function guardianUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'guardian-1',
+    name: '김보호',
+    phoneNumber: '01012345678',
+    role: 'guardian',
+    birthDate: null,
+    birthDecade: null,
+    preferredName: '보호자',
+    seniorName: null,
+    seniorBirthDecade: null,
+    seniorPreferredName: null,
+    guardianName: '김보호',
+    guardianRelationship: '자녀',
+    guardianPreferredName: '보호자',
+    ...overrides,
+  };
+}
+
+function seniorUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'senior-1',
+    name: '김영자',
+    phoneNumber: null,
+    role: 'senior',
+    birthDate: null,
+    birthDecade: null,
+    preferredName: '어르신',
+    seniorName: '김영자',
+    seniorBirthDecade: null,
+    seniorPreferredName: '어르신',
+    guardianName: '김보호',
+    guardianRelationship: null,
+    guardianPreferredName: null,
+    ...overrides,
+  };
+}
+
+function resetAuthStore() {
+  window.localStorage.clear();
+  window.sessionStorage.clear();
+  useAuthStore.setState({
+    role: null,
+    userName: '',
+    userId: null,
+    phoneNumber: '',
+    authToken: null,
   });
 }
 
 describe('auth and onboarding flow', () => {
   beforeEach(() => {
-    resetStoreForTest();
-    setSignedOutState();
+    resetAuthStore();
+    vi.useRealTimers();
+    localServerMocks.registerLocalPhoneAccount.mockResolvedValue({
+      user: guardianUser(),
+      authToken: 'login-token',
+      isNew: false,
+    });
+    localServerMocks.updateLocalUserProfile.mockResolvedValue({
+      user: guardianUser(),
+      authToken: 'profile-token',
+    });
+    localServerMocks.updateLocalUserRole.mockResolvedValue({
+      user: guardianUser(),
+      authToken: 'role-token',
+    });
+    localServerMocks.loginWithInvitationToken.mockResolvedValue({
+      user: seniorUser(),
+      authToken: 'invite-token',
+    });
+    localServerMocks.fetchFamilyMembers.mockResolvedValue({
+      members: [{ id: 'senior-1', name: '김영자', role: 'parent', relationship: '부모님', isMe: false }],
+    });
+    localServerMocks.fetchLocalChapters.mockResolvedValue({ chapters: [] });
+    localServerMocks.fetchLocalQuestions.mockResolvedValue({ questions: [] });
+    localServerMocks.fetchLocalInterviewRecords.mockResolvedValue({ records: [] });
+    localServerMocks.fetchLocalCalendarEvents.mockResolvedValue({ events: [] });
+    localServerMocks.fetchLocalPhotos.mockResolvedValue({ photos: [] });
+    localServerMocks.fetchLocalFamilyQuestions.mockResolvedValue({ questions: [] });
   });
 
-  it('stores phone login and moves directly to role selection', async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('logs in an existing guardian and stores the issued auth token', async () => {
     render(
       <MemoryRouter initialEntries={['/auth']}>
         <AppRoutes />
       </MemoryRouter>
     );
 
-    fireEvent.change(await screen.findByPlaceholderText('010 1234 5678'), {
-      target: { value: '010 1234 5678' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '휴대폰 번호로 시작' }));
-
-    expect(await screen.findByRole('heading', { name: '누가 사용하실 건가요?' })).toBeInTheDocument();
-    expect(useStore.getState().auth.phoneNumber).toBe('01012345678');
-    expect(useStore.getState().auth.userId).toBe('test-user-5678');
-    expect(useStore.getState().auth.isAuthenticated).toBe(true);
-  });
-
-  it('always shows profile role selection even for an existing phone account', async () => {
-    render(
-      <MemoryRouter initialEntries={['/auth']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    fireEvent.change(await screen.findByPlaceholderText('010 1234 5678'), {
-      target: { value: '01099998888' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '휴대폰 번호로 시작' }));
-
-    expect(await screen.findByRole('heading', { name: '누가 사용하실 건가요?' })).toBeInTheDocument();
-    expect(useStore.getState().auth).toMatchObject({
-      userId: 'test-user-8888',
-      role: null,
-      onboardingCompleted: false,
-    });
-  });
-
-  it('saves senior profile, skips family invite, and enters the main journey', async () => {
-    render(
-      <MemoryRouter initialEntries={['/auth']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    fireEvent.change(await screen.findByPlaceholderText('010 1234 5678'), {
-      target: { value: '01012345678' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '휴대폰 번호로 시작' }));
-    
-    // Select senior role on SelectModeScreen
-    fireEvent.click(await screen.findByTestId('role-senior'));
-    fireEvent.click(screen.getByTestId('confirm-role'));
-
-    expect(await screen.findByRole('heading', { name: '어르신 기본 프로필' })).toBeInTheDocument();
-
-    fireEvent.change(screen.getByPlaceholderText('김영자'), {
-      target: { value: '박순자' },
-    });
-    fireEvent.change(screen.getByDisplayValue('1950년대'), {
-      target: { value: '1940년대' },
-    });
-    fireEvent.change(screen.getByPlaceholderText('어르신'), {
-      target: { value: '할머니' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '초대 건너뛰기' }));
-    fireEvent.click(screen.getByRole('button', { name: '시작하기' }));
-
-    await waitFor(() => {
-      expect(useStore.getState().auth.onboardingCompleted).toBe(true);
-    });
-    expect(useStore.getState().auth.familyInviteSkipped).toBe(true);
-    expect(useStore.getState().auth.profile).toMatchObject({
-      name: '박순자',
-      birthDecade: '1940년대',
-      preferredName: '할머니',
-    });
-    
-    // Expect to land on ParentHomeScreen
-    expect(await screen.findByText('오늘의 인터뷰')).toBeInTheDocument();
-  });
-
-  it('routes guardian role users to the guardian space without locking senior features', async () => {
-    render(
-      <MemoryRouter initialEntries={['/auth']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    fireEvent.change(await screen.findByPlaceholderText('010 1234 5678'), {
-      target: { value: '01012345678' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '휴대폰 번호로 시작' }));
-    
-    // Select guardian role on SelectModeScreen
-    fireEvent.click(await screen.findByTestId('role-guardian'));
-    fireEvent.click(screen.getByTestId('confirm-role'));
-
-    expect(await screen.findByRole('heading', { name: '보호자 기본 정보' })).toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText('김민수'), {
+    fireEvent.click(await screen.findByRole('button', { name: '로그인' }));
+    fireEvent.change(await screen.findByPlaceholderText('이름을 입력해주세요'), {
       target: { value: '김보호' },
     });
-    fireEvent.change(screen.getByPlaceholderText('보호자'), {
-      target: { value: '딸' },
+    fireEvent.change(screen.getByPlaceholderText('010-0000-0000'), {
+      target: { value: '010-1234-5678' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '가족 공간 시작' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '로그인' }).at(-1)!);
 
-    // Expect to land on ChildHomeScreen
-    expect(await screen.findByText('등록한 질문')).toBeInTheDocument();
-    expect(useStore.getState().auth).toMatchObject({
-      role: 'guardian',
-      onboardingCompleted: true,
-      guardianProfile: {
+    expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
+    expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01012345678', '김보호', true, undefined);
+    expect(useAuthStore.getState()).toMatchObject({
+      role: 'child',
+      userId: 'guardian-1',
+      authToken: 'login-token',
+    });
+  });
+
+  it('signs up a guardian, saves the default profile, and refreshes the auth token', async () => {
+    localServerMocks.registerLocalPhoneAccount.mockResolvedValueOnce({
+      user: guardianUser({ guardianName: null, guardianRelationship: null, guardianPreferredName: null }),
+      authToken: 'signup-token',
+      isNew: true,
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/auth']}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '회원가입' }));
+    fireEvent.change(await screen.findByPlaceholderText('010-0000-0000'), {
+      target: { value: '010-2222-3333' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
+    fireEvent.change(screen.getByLabelText('인증번호'), {
+      target: { value: '123456' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
+    fireEvent.change(screen.getByPlaceholderText('예: 민준, 김민준'), {
+      target: { value: '김보호' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('예: 1997-07-04'), {
+      target: { value: '1997-07-04' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '다음' }));
+    expect(await screen.findByText('동의 안내')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /서비스 이용약관 동의/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /개인정보 처리방침 동의/ }));
+    fireEvent.click(screen.getByRole('button', { name: /기록 시작하기/ }));
+
+    await waitFor(() => {
+      expect(localServerMocks.updateLocalUserProfile).toHaveBeenCalledWith({
+        userId: 'guardian-1',
+        role: 'guardian',
         name: '김보호',
+        birthDate: '1997-07-04',
+        preferredName: '보호자',
         relationship: '자녀',
-        preferredName: '딸',
-      },
+      });
+    });
+    expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
+    expect(useAuthStore.getState()).toMatchObject({
+      role: 'child',
+      phoneNumber: '01022223333',
+      authToken: 'profile-token',
+    });
+  });
+
+  it('auto logs in from an invitation token and opens the parent welcome step', async () => {
+    render(
+      <MemoryRouter initialEntries={['/parent/autologin?token=invite-123']}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('반갑습니다, 어르신!', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(localServerMocks.loginWithInvitationToken).toHaveBeenCalledWith('invite-123');
+    expect(useAuthStore.getState()).toMatchObject({
+      role: 'parent',
+      userId: 'senior-1',
+      authToken: 'invite-token',
     });
   });
 });

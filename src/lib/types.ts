@@ -10,32 +10,6 @@ export interface ChatMessage {
   text: string;
 }
 
-export interface SessionContext {
-  emotionState: EmotionClassification;
-  silenceState: SilenceState;
-  speechProfile: SpeechProfile | null;
-}
-
-// ─── Emotion ─────────────────────────────────────────────────────────────────
-
-export interface EmotionClassification {
-  current: EmotionLevel;
-  trajectory: EmotionLevel[]; // last 3 messages
-  confidence: number;
-}
-
-export type EmotionLevel = 'positive' | 'neutral' | 'sensitive' | 'distressed';
-
-// ─── Silence Detection ───────────────────────────────────────────────────────
-
-export interface SilenceState {
-  isActive: boolean;
-  silenceDuration: number; // seconds
-  phase: SilencePhase;
-}
-
-export type SilencePhase = 'normal' | 'waiting' | 'encouraging' | 'offering_options';
-
 // ─── Verification & Confidence ───────────────────────────────────────────────
 
 export type ConfidenceLabel = '확인됨' | '추정' | '추가 확인 필요';
@@ -50,40 +24,10 @@ export interface ContradictionReport {
 
 // ─── RAG ─────────────────────────────────────────────────────────────────────
 
-export interface SearchResult {
-  memoryId: string;
-  score: number; // cosine similarity 0-1
-  text: string;
-}
-
 export interface VectorEntry {
   memoryId: string;
   embedding: number[];
   text: string;
-}
-
-// ─── Tag Database ───────────────────────────────────────────────────────────
-
-export type TagCategory = 'person' | 'place' | 'emotion' | 'time' | 'event' | 'object';
-
-export interface TagRecord {
-  id: string;
-  label: string;
-  category: TagCategory;
-  usageCount: number;
-  source: 'memory' | 'photo' | 'derived';
-}
-
-export interface MemoryTagLink {
-  memoryId: string;
-  tagId: string;
-  confidence: number;
-  source: 'memory' | 'photo' | 'derived';
-}
-
-export interface TagDatabase {
-  tags: TagRecord[];
-  memoryTagLinks: MemoryTagLink[];
 }
 
 // ─── Tone Calibrator ─────────────────────────────────────────────────────────
@@ -98,21 +42,13 @@ export interface SpeechProfile {
   lastUpdated: string;
 }
 
-export type ProfileStatus = 'insufficient_data' | 'active';
-
 // ─── Consent & Access Control ────────────────────────────────────────────────
 
-export type ConsentStatus = 'granted' | 'revoked';
+export type ConsentStatus = 'granted' | 'revoked' | 'needs_review';
 
 export type AccessTier = '본인만' | '지정 가족' | '전체 가족';
 
-export type PosthumousPolicy = 'full_release' | 'maintain_current' | 'delete_all';
-
 export type UserRole = 'senior' | 'guardian';
-
-export type AccessTierV2 = 'NO_ACCESS' | 'SUMMARY' | 'FULL_READ' | 'FULL_ACCESS';
-
-export type ConsentCategoryV2 = '출판' | '가족열람' | '챗봇' | '사후공개' | '민감정보';
 
 export interface ConsentSettingsV2 {
   출판: ConsentStatus;
@@ -159,71 +95,6 @@ export interface Autobiography {
   title: string;
   chapters: ChapterNarrative[];
   generatedAt: string;
-}
-
-export type AutobiographyStyle = 'memoir' | 'news' | 'letter' | 'interview' | 'diary';
-
-// ─── Agent Pipeline ──────────────────────────────────────────────────────────
-
-export interface AgentError {
-  agent: AgentName;
-  error: string;
-  skipped: boolean;
-}
-
-export type AgentName =
-  | 'interviewer'
-  | 'archivist'
-  | 'verification'
-  | 'ghostwriter'
-  | 'tone_calibrator'
-  | 'persona'
-  | 'emotion_analyzer'
-  | 'family_question_queue'
-  | 'calendar_trigger'
-  | 'photo_recall'
-  | 'digital_twin'
-  | 'consent_access';
-
-export interface ProcessingResult {
-  memory: Memory;
-  embedding: number[];
-  contradictions: ContradictionReport[];
-  confidenceLabel: ConfidenceLabel;
-  errors: AgentError[];
-}
-
-// ─── Archivist v2: NER, Emotion, Diff, Timeline ─────────────────────────────
-
-export type NERCategory = 'event' | 'person' | 'place' | 'time';
-
-export interface NERTag {
-  text: string;
-  category: NERCategory;
-  startIndex: number;
-  endIndex: number;
-}
-
-export type EmotionTag = '자부심' | '후회' | '상실' | '감사';
-
-export interface DiffChange {
-  type: 'addition' | 'deletion' | 'modification';
-  position: number;
-  original: string;
-  modified: string;
-}
-
-export interface DiffRecord {
-  original: string;
-  refined: string;
-  changes: DiffChange[];
-}
-
-export interface TimelineEntry {
-  memoryId: string;
-  timePeriod: string;
-  date: string;
-  summary: string;
 }
 
 // ─── Verification v2: Conflict Types & JSON ──────────────────────────────────
@@ -286,6 +157,10 @@ export type PriorityTag = 'high' | 'normal' | 'low';
 export interface FamilyQuestion {
   id: string;
   questionText: string;
+  category?: string | null;
+  chapterId?: string | null;
+  photoId?: string | null;
+  photoUrl?: string | null;
   submittedBy: string;
   anonymous: boolean;
   priority: PriorityTag;
@@ -352,12 +227,6 @@ export interface PhotoMetadata {
   gpsLongitude?: number | null;
 }
 
-export interface PhotoRecallResult {
-  analysis: PhotoAnalysisResult;
-  interviewQuestions: string[];
-  linkedMemoryId: string | null;
-}
-
 export interface StoredPhoto {
   id: string;
   url: string;
@@ -413,14 +282,4 @@ export interface Memory {
   consent: MemoryConsent;
   consentSettings?: ConsentSettingsV2;
   embedding: number[] | null; // stored for incremental updates
-}
-
-// ─── Memory v2 (Extended with NER, Emotion, Diff, Photo, Session) ────────────
-
-export interface MemoryV2 extends Memory {
-  nerTags: NERTag[];
-  emotionTags: EmotionTag[];
-  diffRecord: DiffRecord | null;
-  linkedPhotoIds: string[];
-  sourceSessionId: string;
 }

@@ -1,5 +1,10 @@
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
-import { cn } from './Layout';
+import clsx from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: Parameters<typeof clsx>) {
+  return twMerge(clsx(inputs));
+}
 
 export type StatusNoticeTone = 'success' | 'error' | 'info';
 
@@ -11,9 +16,9 @@ interface StatusNoticeProps {
 }
 
 const toneClass: Record<StatusNoticeTone, string> = {
-  success: 'bg-white/86 border-emerald-200/70 text-emerald-800 shadow-sm',
-  error: 'bg-white/86 border-red-200/70 text-red-800 shadow-sm',
-  info: 'bg-white/86 border-border/80 text-text-muted shadow-sm',
+  success: 'border-[#E0DBE8] bg-white text-[#2A2830]',
+  error: 'border-[#FF3B30]/20 bg-[#FF3B30]/10 text-[#FF3B30]',
+  info: 'border-[#E0DBE8] bg-[rgba(237,232,240,0.68)] text-[#7A767F]',
 };
 
 const icons = {
@@ -29,18 +34,18 @@ export default function StatusNotice({ tone, title, message, onDismiss }: Status
     <div
       role={tone === 'error' ? 'alert' : 'status'}
       aria-live={tone === 'error' ? 'assertive' : 'polite'}
-      className={cn('flex items-start gap-3 rounded-2xl border px-4.5 py-3.5 backdrop-blur', toneClass[tone])}
+      className={cn('flex items-start gap-3 rounded-[14px] border px-4 py-4', toneClass[tone])}
     >
       <Icon className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <p className="text-[14px] font-black text-text">{title}</p>
-        {message && <p className="mt-1 text-[13px] font-medium leading-relaxed opacity-85">{message}</p>}
+        <p className="text-[13px] font-medium leading-[1.6]">{title}</p>
+        {message && <p className="mt-1 text-[12px] leading-[1.7] opacity-85">{message}</p>}
       </div>
       {onDismiss && (
         <button
           type="button"
           onClick={onDismiss}
-          className="rounded-lg p-1 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:bg-surface-alt"
+          className="rounded-[8px] p-1 text-[#7A767F] transition active:bg-[#EDE8F0]"
           aria-label="상태 메시지 닫기"
         >
           <X className="w-4 h-4" aria-hidden="true" />

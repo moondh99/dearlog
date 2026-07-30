@@ -21,6 +21,12 @@ const TIFF_TYPE_SIZE: Record<number, number> = {
   5: 8,
 };
 
+/**
+ * 원본 GPS 좌표 대신 화면/태그/PDF에 노출하는 마스킹 문구.
+ * (기술설명서 7절 · ArchivePage/tag-db/pdf 에서 쓰는 문구와 동일)
+ */
+export const GPS_MASK_LABEL = '공개 전 확인 필요';
+
 function toIsoDate(year: string, month: string, day: string): string {
   return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00.000Z`;
 }
@@ -214,6 +220,11 @@ export function extractExifMetadata(arrayBuffer: ArrayBuffer): PartialExifMetada
   return {};
 }
 
+function isJpegFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return file.type === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg');
+}
+
 export async function extractPhotoMetadata(photoData: string | File, now: Date = new Date()): Promise<PhotoMetadata> {
   if (typeof photoData === 'string') {
     return {
@@ -235,7 +246,7 @@ export async function extractPhotoMetadata(photoData: string | File, now: Date =
     ? new Date(photoData.lastModified).toISOString()
     : now.toISOString();
   const fileNameCapturedAt = inferCapturedAtFromFileName(photoData.name);
-  const exif: PartialExifMetadata = photoData.type === 'image/jpeg' || photoData.name.toLowerCase().endsWith('.jpg') || photoData.name.toLowerCase().endsWith('.jpeg')
+  const exif: PartialExifMetadata = isJpegFile(photoData)
     ? extractExifMetadata(await photoData.arrayBuffer())
     : {};
   const capturedAt = exif.capturedAt ?? fileNameCapturedAt;
@@ -252,5 +263,131 @@ export async function extractPhotoMetadata(photoData: string | File, now: Date =
     cameraModel: exif.cameraModel ?? null,
     gpsLatitude: exif.gpsLatitude ?? null,
     gpsLongitude: exif.gpsLongitude ?? null,
+  };
+}
+
+// ─── 민감정보(GPS) 마스킹 ─────────────────────────────────────────────────────
+
+export type MaskedPhotoMetadata = PhotoMetadata & {
+  /** 원본 사진에 GPS 좌표가 있었고 마스킹으로 제거했는지 여부 */
+  gpsMasked: boolean;
+  /** 화면/태그/PDF에 노출할 위치 문구 (좌표가 있었다면 마스킹 문구) */
+  locationLabel: string | null;
+};
+
+export function hasGpsCoordinates(metadata: Pick<PhotoMetadata, 'gpsLatitude' | 'gpsLongitude'>): boolean {
+  return typeof metadata.gpsLatitude === 'number' && typeof metadata.gpsLongitude === 'number';
+}
+
+/**
+ * 원본 좌표를 지우고 `공개 전 확인 필요` 문구로 대체한다.
+ * 좌표가 없던 사진은 문구 없이 그대로 통과시킨다.
+ */
+export function maskSensitivePhotoMetadata(metadata: PhotoMetadata): MaskedPhotoMetadata {
+  const gpsMasked = hasGpsCoordinates(metadata);
+  return {
+    ...metadata,
+    gpsLatitude: null,
+    gpsLongitude: null,
+    gpsMasked,
+    locationLabel: gpsMasked ? GPS_MASK_LABEL : null,
+  };
+}
+
+/**
+ * 사용자가 입력한 장소 텍스트와 마스킹 문구를 합친다.
+ * (PDF 생성기의 `장소 · GPS 공개 전 확인 필요` 표기 규칙과 동일한 형태)
+ */
+export function buildMaskedLocationText(userLocation: string | null | undefined, gpsMasked: boolean): string {
+  const location = (userLocation ?? '').trim();
+  if (!gpsMasked) return location;
+  if (!location) return GPS_MASK_LABEL;
+  return location.includes(GPS_MASK_LABEL) ? location : `${location} · ${GPS_MASK_LABEL}`;
+}
+
+export function isGpsMaskedLocationText(value: unknown): boolean {
+  return typeof value === 'string' && value.includes(GPS_MASK_LABEL);
+}
+
+/**
+ * JPEG 바이트열에서 EXIF(APP1 `Exif\0\0`) 세그먼트를 제거한다.
+ * 제거할 세그먼트가 없으면 `null` 을 반환한다(원본을 그대로 쓰라는 뜻).
+ */
+export function stripJpegExifSegments(arrayBuffer: ArrayBuffer): ArrayBuffer | null {
+  const view = new DataView(arrayBuffer);
+  if (view.byteLength < 4 || view.getUint16(0) !== 0xffd8) return null;
+
+  const source = new Uint8Array(arrayBuffer);
+  const keptRanges: Array<[number, number]> = [];
+  let keepFrom = 0;
+  let offset = 2;
+  let removed = false;
+
+  while (offset + 4 <= view.byteLength) {
+    if (view.getUint8(offset) !== 0xff) break;
+    const marker = view.getUint8(offset + 1);
+    if (marker === 0xda || marker === 0xd9) break; // SOS / EOI 이후는 이미지 데이터
+    const segmentLength = view.getUint16(offset + 2);
+    if (segmentLength < 2) break;
+    const segmentEnd = offset + 2 + segmentLength;
+    if (segmentEnd > view.byteLength) break;
+
+    if (marker === 0xe1 && readAscii(view, offset + 4, 6) === 'Exif') {
+      keptRanges.push([keepFrom, offset]);
+      keepFrom = segmentEnd;
+      removed = true;
+    }
+
+    offset = segmentEnd;
+  }
+
+  if (!removed) return null;
+  keptRanges.push([keepFrom, view.byteLength]);
+
+  const totalLength = keptRanges.reduce((sum, [start, end]) => sum + (end - start), 0);
+  const output = new Uint8Array(totalLength);
+  let written = 0;
+  for (const [start, end] of keptRanges) {
+    output.set(source.subarray(start, end), written);
+    written += end - start;
+  }
+  return output.buffer as ArrayBuffer;
+}
+
+export type SanitizedPhotoUpload = {
+  /** 업로드에 사용할 파일. EXIF 를 지운 경우 새 File, 지울 것이 없으면 원본 File */
+  file: File;
+  /** 좌표가 제거된 메타데이터 */
+  metadata: MaskedPhotoMetadata;
+  /** 좌표가 있어서 마스킹했는지 여부 */
+  gpsMasked: boolean;
+};
+
+/**
+ * 업로드 직전에 호출한다. 원본 GPS 좌표가 서버로 올라가지 않도록
+ * (1) 메타데이터의 좌표를 마스킹하고 (2) JPEG 바이트열의 EXIF 세그먼트를 제거한다.
+ */
+export async function sanitizePhotoForUpload(file: File, now: Date = new Date()): Promise<SanitizedPhotoUpload> {
+  const metadata = maskSensitivePhotoMetadata(await extractPhotoMetadata(file, now));
+  let sanitizedFile = file;
+
+  if (isJpegFile(file)) {
+    try {
+      const stripped = stripJpegExifSegments(await file.arrayBuffer());
+      if (stripped) {
+        sanitizedFile = new File([stripped], file.name, {
+          type: file.type || 'image/jpeg',
+          lastModified: file.lastModified,
+        });
+      }
+    } catch (error) {
+      console.error('Photo metadata: EXIF 제거 실패', error);
+    }
+  }
+
+  return {
+    file: sanitizedFile,
+    metadata: { ...metadata, fileSize: sanitizedFile.size },
+    gpsMasked: metadata.gpsMasked,
   };
 }

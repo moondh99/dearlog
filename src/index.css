@@ -1,113 +1,56 @@
-@import url('https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700;800&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Noto+Serif+KR:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
-  /* Brand - Classic Warm (Sepia Brown & Muted Olive) */
-  --color-primary:          #5C3420;
-  --color-primary-light:    #7D4D35;
-  --color-primary-pale:     #FDFBF8;
+  --font-family-sans: 'Noto Sans KR', sans-serif;
+  --font-family-serif: 'Noto Serif KR', serif;
 
-  /* Surface */
-  --color-bg:               #FAF6F0;
-  --color-surface:          #FCFAF7;
-  --color-surface-alt:      #F4EFE6;
-  --color-border:           #E8DEC9;
-  --color-border-strong:    #D3C3A4;
-
-  /* Text */
-  --color-text:             #2B241F;
-  --color-text-muted:       #63554D;
-  --color-text-subtle:      #9C8E84;
-
-  /* Semantic */
-  --color-secondary:        #6E7A5A;
-  --color-secondary-pale:   #F1F3ED;
-  --color-success:          #4B6344;
-  --color-error:            #9B3A3A;
-
-  /* Font */
-  --font-serif: 'Playfair Display', 'Nanum Myeongjo', 'KoPub Batang', serif;
-  --font-sans: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+  --color-dearlog-background: #F8F6F9;
+  --color-dearlog-surface: #FFFFFF;
+  --color-dearlog-primary: #2A2830;
+  --color-dearlog-primary-dark: #1F1D24;
+  --color-dearlog-peach-accent: #EDE8F0;
+  --color-dearlog-peach-light: #F3EFF5;
+  --color-dearlog-pale-sage: #EEE9F2;
+  --color-dearlog-muted-sage: #E0DBE8;
+  --color-dearlog-text-primary: #2A2830;
+  --color-dearlog-text-secondary: #7A767F;
+  --color-dearlog-border: #E0DBE8;
+  --color-dearlog-amber-clay: #9485BE;
+  --color-dearlog-sage: #9485BE;
+  --color-dearlog-sepia-tint: #EDE8F0;
 }
 
-body {
-  background:
-    radial-gradient(circle at top left, rgba(252, 250, 247, 0.98), transparent 34rem),
-    linear-gradient(180deg, #FCFAF7 0%, var(--color-bg) 44%, #F4EFE6 100%);
-  color: var(--color-text);
-  font-family: var(--font-serif);
-  font-feature-settings: "tnum";
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+* {
+  font-family: 'Noto Sans KR', sans-serif;
+  box-sizing: border-box;
 }
 
 html {
-  background: var(--color-bg);
+  background-color: #F2F0F4;
 }
 
-::selection {
-  background: color-mix(in srgb, var(--color-primary) 12%, white);
-}
-
-button,
-a,
-input,
-select,
-textarea {
-  -webkit-tap-highlight-color: transparent;
+body {
+  margin: 0;
+  background-color: #F2F0F4;
+  color: #2A2830;
 }
 
 button,
-a {
-  letter-spacing: 0;
-  transition-property: color, background-color, border-color, opacity, box-shadow, transform;
-  transition-duration: 300ms;
-  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-}
-
 input,
-select,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
-*:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--color-primary) 18%, transparent);
-  outline-offset: 3px;
+button {
+  cursor: pointer;
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+button:disabled {
+  cursor: not-allowed;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border: 3px solid var(--color-bg);
-  border-radius: 999px;
+#root {
+  min-height: 100dvh;
 }
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-@layer components {
-  .premium-panel {
-    border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-    background:
-      linear-gradient(180deg, rgba(252, 250, 247, 0.96), rgba(252, 250, 247, 0.88)),
-      var(--color-surface);
-    box-shadow: 0 18px 50px rgba(92, 52, 32, 0.045);
-    backdrop-filter: blur(18px);
-  }
-
-  .premium-panel-soft {
-    border: 1px solid color-mix(in srgb, var(--color-border) 66%, transparent);
-    background:
-      linear-gradient(180deg, rgba(252, 250, 247, 0.82), rgba(244, 239, 230, 0.9)),
-      var(--color-surface-alt);
-    box-shadow: 0 10px 30px rgba(92, 52, 32, 0.03);
-  }
-}
-

@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { extractExifMetadata, extractPhotoMetadata, inferCapturedAtFromFileName, inferPlaceFromFileName } from './metadata';
+import {
+  GPS_MASK_LABEL,
+  buildMaskedLocationText,
+  extractExifMetadata,
+  extractPhotoMetadata,
+  inferCapturedAtFromFileName,
+  inferPlaceFromFileName,
+  isGpsMaskedLocationText,
+  maskSensitivePhotoMetadata,
+  sanitizePhotoForUpload,
+  stripJpegExifSegments,
+} from './metadata';
 
 function writeAscii(view: DataView, offset: number, value: string) {
   [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
@@ -116,5 +127,96 @@ describe('photo metadata helpers', () => {
       gpsLatitude: 37.5,
       gpsLongitude: 127,
     });
+  });
+});
+
+describe('photo GPS masking', () => {
+  it('replaces raw coordinates with the 공개 전 확인 필요 label', async () => {
+    const raw = await extractPhotoMetadata(
+      new File([createJpegWithExif()], 'gps.jpg', { type: 'image/jpeg' })
+    );
+    expect(raw.gpsLatitude).toBe(37.5);
+
+    const masked = maskSensitivePhotoMetadata(raw);
+    expect(masked.gpsMasked).toBe(true);
+    expect(masked.gpsLatitude).toBeNull();
+    expect(masked.gpsLongitude).toBeNull();
+    expect(masked.locationLabel).toBe(GPS_MASK_LABEL);
+    // 좌표가 아닌 메타데이터는 유지한다.
+    expect(masked.capturedAt).toBe('2020-01-02T03:04:05.000Z');
+    expect(masked.cameraModel).toBe('EOS 80D');
+  });
+
+  it('leaves photos without coordinates untouched', async () => {
+    const raw = await extractPhotoMetadata(new File(['hello'], 'no-gps.png', { type: 'image/png' }));
+    const masked = maskSensitivePhotoMetadata(raw);
+    expect(masked.gpsMasked).toBe(false);
+    expect(masked.locationLabel).toBeNull();
+  });
+
+  it('combines user typed location with the mask label', () => {
+    expect(buildMaskedLocationText('외할머니 댁 마당', true)).toBe(`외할머니 댁 마당 · ${GPS_MASK_LABEL}`);
+    expect(buildMaskedLocationText('', true)).toBe(GPS_MASK_LABEL);
+    expect(buildMaskedLocationText('외할머니 댁 마당', false)).toBe('외할머니 댁 마당');
+    expect(buildMaskedLocationText(undefined, false)).toBe('');
+    expect(buildMaskedLocationText(`서울 ${GPS_MASK_LABEL}`, true)).toBe(`서울 ${GPS_MASK_LABEL}`);
+    expect(isGpsMaskedLocationText(`외할머니 댁 마당 · ${GPS_MASK_LABEL}`)).toBe(true);
+    expect(isGpsMaskedLocationText('외할머니 댁 마당')).toBe(false);
+    expect(isGpsMaskedLocationText(undefined)).toBe(false);
+  });
+
+  it('strips the EXIF segment from JPEG bytes so coordinates never leave the device', () => {
+    const original = createJpegWithExif();
+    const stripped = stripJpegExifSegments(original);
+
+    expect(stripped).not.toBeNull();
+    expect(stripped!.byteLength).toBeLessThan(original.byteLength);
+    expect(new DataView(stripped!).getUint16(0)).toBe(0xffd8);
+    expect(extractExifMetadata(stripped!)).toEqual({});
+  });
+
+  it('keeps non-EXIF files as-is when stripping', () => {
+    const plain = new ArrayBuffer(8);
+    const view = new DataView(plain);
+    view.setUint16(0, 0xffd8);
+    view.setUint16(2, 0xffdb);
+    view.setUint16(4, 4);
+    expect(stripJpegExifSegments(plain)).toBeNull();
+    expect(stripJpegExifSegments(new ArrayBuffer(2))).toBeNull();
+  });
+
+  it('sanitizes an upload file: masked metadata plus EXIF-free bytes', async () => {
+    const file = new File([createJpegWithExif()], 'family-trip.jpg', {
+      type: 'image/jpeg',
+      lastModified: Date.parse('2024-03-04T00:00:00.000Z'),
+    });
+
+    const sanitized = await sanitizePhotoForUpload(file);
+
+    expect(sanitized.gpsMasked).toBe(true);
+    expect(sanitized.metadata.gpsLatitude).toBeNull();
+    expect(sanitized.metadata.gpsLongitude).toBeNull();
+    expect(sanitized.metadata.locationLabel).toBe(GPS_MASK_LABEL);
+    expect(sanitized.file).not.toBe(file);
+    expect(sanitized.file.name).toBe('family-trip.jpg');
+    expect(sanitized.file.type).toBe('image/jpeg');
+    expect(sanitized.file.size).toBeLessThan(file.size);
+    expect(sanitized.metadata.fileSize).toBe(sanitized.file.size);
+
+    // 업로드될 실제 바이트열에 좌표가 남아있지 않아야 한다.
+    const uploadedBytes = await sanitized.file.arrayBuffer();
+    expect(extractExifMetadata(uploadedBytes)).toEqual({});
+    await expect(extractPhotoMetadata(sanitized.file)).resolves.toMatchObject({
+      gpsLatitude: null,
+      gpsLongitude: null,
+    });
+  });
+
+  it('reuses the original file when there is no EXIF segment to strip', async () => {
+    const file = new File(['hello'], 'scan.png', { type: 'image/png' });
+    const sanitized = await sanitizePhotoForUpload(file);
+
+    expect(sanitized.file).toBe(file);
+    expect(sanitized.gpsMasked).toBe(false);
   });
 });
