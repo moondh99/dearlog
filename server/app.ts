@@ -1,15 +1,27 @@
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
 import twilio from 'twilio';
-import { attachLocalUser, assertGuardianCanAccessSenior, requireRole } from './auth';
+import {
+  getFactChatClient,
+  getOpenAIClient,
+  normalizeFactChatChatCompletionInput,
+} from './ai-clients';
+import { attachLocalUser, assertGuardianCanAccessSenior, issueAuthToken, requireRole } from './auth';
 import { sendAppInterviewCall } from './app-call';
 import { config } from './config';
 import { prisma } from './db';
-import { decideCoverDesign } from './domain/cover-agent';
+import { buildCoverDecisionCandidates, decideCoverDesign } from './domain/cover-agent';
 import { isFreeSpeech } from './domain/free-speech';
 import { analyzePhotoAndCreateQuestions } from './domain/photo-agent';
-import { generateLocalPrintPdf } from './publication';
+import {
+  generateLocalPrintPdf,
+  getLocalPublicationPreviewJob,
+  resetRunningPublicationPreviewJobs,
+  startLocalPublicationPreviewJob,
+} from './publication';
 import { sendWebPush } from './push';
 import { audioUpload, photoUpload, resolveLocalFileKey } from './storage';
 
@@ -17,11 +29,78 @@ function normalizePhoneNumber(value: unknown) {
   return String(value ?? '').replace(/[^\d]/g, '');
 }
 
+function normalizeBirthDate(value: unknown) {
+  const birthDate = String(value ?? '').trim();
+  if (!birthDate) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return undefined;
+  return birthDate;
+}
+
+function normalizeOptionalImageUrl(value: unknown) {
+  const imageUrl = String(value ?? '').trim();
+  if (!imageUrl) return null;
+  if (imageUrl.length > 2_500_000) return undefined;
+  if (/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(imageUrl)) return imageUrl;
+  try {
+    const parsed = new URL(imageUrl);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return imageUrl;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function normalizeOptionalText(value: unknown, maxLength = 80) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (text.length > maxLength) return undefined;
+  return text;
+}
+
+function normalizeToneProfile(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const name = normalizeOptionalText(record.name, 40);
+  if (!name) return null;
+  const patterns = Array.isArray(record.patterns)
+    ? record.patterns
+      .map((pattern) => normalizeOptionalText(pattern, 80))
+      .filter((pattern): pattern is string => Boolean(pattern))
+      .slice(0, 8)
+    : [];
+  return { name, patterns };
+}
+
+function normalizeToneProfileFromQuery(query: express.Request['query']) {
+  const name = normalizeOptionalText(query.toneName, 40);
+  if (!name) return null;
+  const rawPatterns = Array.isArray(query.tonePattern)
+    ? query.tonePattern
+    : query.tonePattern
+      ? [query.tonePattern]
+      : [];
+  const patterns = rawPatterns
+    .map((pattern) => normalizeOptionalText(pattern, 80))
+    .filter((pattern): pattern is string => Boolean(pattern))
+    .slice(0, 8);
+  return { name, patterns };
+}
+
+function normalizeOptionalBoolean(value: unknown) {
+  if (value === undefined) return null;
+  if (value === null || value === '') return null;
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
+
 function serializeUser(user: {
   id: string;
   name: string;
   phoneNumber: string | null;
   role: string;
+  birthDate?: string | null;
   birthDecade?: string | null;
   preferredName?: string | null;
   seniorName?: string | null;
@@ -30,12 +109,20 @@ function serializeUser(user: {
   guardianName?: string | null;
   guardianRelationship?: string | null;
   guardianPreferredName?: string | null;
+  profileImageUrl?: string | null;
+  recordSpaceName?: string | null;
+  recordSpaceCoverUrl?: string | null;
+  hasCurrentJob?: boolean | null;
+  occupation?: string | null;
+  hometown?: string | null;
+  schoolHistory?: string | null;
 }) {
   return {
     id: user.id,
     name: user.name,
     phoneNumber: user.phoneNumber,
     role: user.role,
+    birthDate: user.birthDate ?? null,
     birthDecade: user.birthDecade ?? null,
     preferredName: user.preferredName ?? null,
     seniorName: user.seniorName ?? user.name ?? null,
@@ -44,7 +131,154 @@ function serializeUser(user: {
     guardianName: user.guardianName ?? null,
     guardianRelationship: user.guardianRelationship ?? null,
     guardianPreferredName: user.guardianPreferredName ?? null,
+    profileImageUrl: user.profileImageUrl ?? null,
+    recordSpaceName: user.recordSpaceName ?? null,
+    recordSpaceCoverUrl: user.recordSpaceCoverUrl ?? null,
+    hasCurrentJob: user.hasCurrentJob ?? null,
+    occupation: user.occupation ?? null,
+    hometown: user.hometown ?? null,
+    schoolHistory: user.schoolHistory ?? null,
   };
+}
+
+function authRoleForUser(user: { role: string }) {
+  return user.role === 'senior' ? 'senior' : 'guardian';
+}
+
+function serializeAuthResponse(user: Parameters<typeof serializeUser>[0]) {
+  return {
+    user: serializeUser(user),
+    authToken: issueAuthToken({ id: user.id, role: authRoleForUser(user) }),
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function boundedInvitationTtlDays() {
+  return Math.max(1, boundedPositiveInt(Number(process.env.INVITATION_TTL_DAYS ?? config.invitation.ttlDays), 14, 365));
+}
+
+function createInvitationExpiry(now = new Date()) {
+  return new Date(now.getTime() + boundedInvitationTtlDays() * DAY_MS);
+}
+
+function getInvitationStatus(invitation: {
+  expiresAt?: Date | null;
+  revokedAt?: Date | null;
+  usedAt?: Date | null;
+}, now = new Date()) {
+  if (invitation.revokedAt) return 'revoked';
+  if (invitation.expiresAt && invitation.expiresAt.getTime() <= now.getTime()) return 'expired';
+  if (invitation.usedAt) return 'used';
+  return 'active';
+}
+
+function serializeInvitation(invitation: {
+  id: string;
+  token: string;
+  guardianId: string;
+  seniorId: string;
+  expiresAt?: Date | null;
+  revokedAt?: Date | null;
+  usedAt?: Date | null;
+  createdAt: Date;
+  updatedAt?: Date | null;
+}, options: { includeInactiveToken?: boolean } = {}) {
+  const status = getInvitationStatus(invitation);
+  return {
+    id: invitation.id,
+    token: status === 'active' || options.includeInactiveToken ? invitation.token : null,
+    guardianId: invitation.guardianId,
+    seniorId: invitation.seniorId,
+    status,
+    expiresAt: invitation.expiresAt ?? null,
+    revokedAt: invitation.revokedAt ?? null,
+    usedAt: invitation.usedAt ?? null,
+    createdAt: invitation.createdAt,
+    updatedAt: invitation.updatedAt ?? invitation.createdAt,
+  };
+}
+
+type LocalFileKind = 'audio' | 'photos' | 'pdfs';
+type LocalFileAccess = {
+  kind: LocalFileKind;
+  seniorId: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+};
+
+function fileAccessTokenTtlSeconds() {
+  return Math.max(60, boundedPositiveInt(Number(process.env.FILE_ACCESS_TOKEN_TTL_SECONDS ?? config.fileAccess.tokenTtlSeconds), 10 * 60, 60 * 60));
+}
+
+function fileAccessSecret() {
+  if (config.auth.tokenSecret) return config.auth.tokenSecret;
+  throw httpError('AUTH_TOKEN_SECRET이 설정되지 않았습니다.', 503);
+}
+
+function parseLocalFileKey(fileKey: string): { kind: LocalFileKind; fileName: string } {
+  const [kind, ...parts] = fileKey.split('/');
+  if ((kind !== 'audio' && kind !== 'photos' && kind !== 'pdfs') || parts.length === 0) {
+    throw httpError('파일을 찾을 수 없습니다.', 404);
+  }
+  return { kind, fileName: path.basename(parts.join('/')) };
+}
+
+function signLocalFileAccessToken(fileKey: string) {
+  const payload = Buffer.from(JSON.stringify({
+    fileKey,
+    exp: Math.floor(Date.now() / 1000) + fileAccessTokenTtlSeconds(),
+  })).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', fileAccessSecret())
+    .update(payload)
+    .digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifyLocalFileAccessToken(token: unknown, fileKey: string) {
+  if (typeof token !== 'string') return false;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return false;
+
+  const expectedSignature = crypto
+    .createHmac('sha256', fileAccessSecret())
+    .update(payload)
+    .digest('base64url');
+  const actual = Buffer.from(signature);
+  const expected = Buffer.from(expectedSignature);
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return false;
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { fileKey?: unknown; exp?: unknown };
+    return parsed.fileKey === fileKey
+      && typeof parsed.exp === 'number'
+      && parsed.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+function buildLocalFileUrl(fileKey: string) {
+  const encodedKey = fileKey.split('/').map(encodeURIComponent).join('/');
+  const token = encodeURIComponent(signLocalFileAccessToken(fileKey));
+  return `/api/files/${encodedKey}?token=${token}`;
+}
+
+function isPlayableAudioFileKey(fileKey: unknown): fileKey is string {
+  return typeof fileKey === 'string'
+    && /^audio\/[^/]+\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(fileKey.trim());
+}
+
+async function buildPlayableAudioUrl(fileKey: unknown) {
+  if (!isPlayableAudioFileKey(fileKey)) return null;
+  const normalizedFileKey = fileKey.trim();
+  try {
+    await fs.access(resolveLocalFileKey(normalizedFileKey));
+    return buildLocalFileUrl(normalizedFileKey);
+  } catch {
+    return null;
+  }
 }
 
 function serializeNotification(notification: {
@@ -73,6 +307,36 @@ function serializeNotification(notification: {
     readAt: notification.readAt,
     metadata,
   };
+}
+
+const MEMORY_CONSENT_STATUS_VALUES = new Set(['granted', 'revoked', 'needs_review']);
+const MEMORY_CONSENT_KEYS = ['출판', '가족열람', '챗봇', '사후공개', '민감정보'] as const;
+type MemoryConsentKey = typeof MEMORY_CONSENT_KEYS[number];
+type MemoryConsentSettingsInput = Partial<Record<MemoryConsentKey, string>>;
+
+function validateMemoryConsentSettings(value: unknown): MemoryConsentSettingsInput | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw httpError('기억 동의 설정은 객체여야 합니다.', 400);
+  }
+
+  const input = value as Record<string, unknown>;
+  const unknownKeys = Object.keys(input).filter(
+    (key) => !MEMORY_CONSENT_KEYS.includes(key as MemoryConsentKey)
+  );
+  if (unknownKeys.length > 0) {
+    throw httpError(`지원하지 않는 기억 동의 목적입니다: ${unknownKeys.join(', ')}`, 400);
+  }
+
+  return MEMORY_CONSENT_KEYS.reduce<MemoryConsentSettingsInput>((settings, key) => {
+    const status = input[key];
+    if (status === undefined) return settings;
+    if (typeof status !== 'string' || !MEMORY_CONSENT_STATUS_VALUES.has(status)) {
+      throw httpError(`${key} 동의 상태가 올바르지 않습니다.`, 400);
+    }
+    settings[key] = status;
+    return settings;
+  }, {});
 }
 
 function mapMemoryToResponse(m: any) {
@@ -144,7 +408,7 @@ function mapMemoryToResponse(m: any) {
 }
 
 function mapPhotoToResponse(p: any) {
-  let analysis = null;
+  let analysis: any = null;
   if (p.analysisJson) {
     try {
       analysis = JSON.parse(p.analysisJson);
@@ -169,9 +433,20 @@ function mapPhotoToResponse(p: any) {
     }
   }
 
+  const suggestedQuestions = Array.isArray(analysis?.questions)
+    ? analysis.questions.filter((q: unknown): q is string => typeof q === 'string' && q.trim().length > 0)
+    : [];
+  let registeredQuestions: string[] = [];
+  if (p.questions) {
+    registeredQuestions = p.questions
+      .map((q: any) => q.text)
+      .filter((q: unknown): q is string => typeof q === 'string' && q.trim().length > 0);
+  }
+  const generatedQuestions = Array.from(new Set([...suggestedQuestions, ...registeredQuestions]));
+
   return {
     id: p.id,
-    url: `/api/files/${p.fileKey}`,
+    url: buildLocalFileUrl(p.fileKey),
     uploadedAt: p.uploadedAt ? p.uploadedAt.toISOString() : new Date().toISOString(),
     analysis,
     metadata,
@@ -180,14 +455,23 @@ function mapPhotoToResponse(p: any) {
     fileName: p.fileName,
     mimeType: p.mimeType,
     metadataJson: p.metadataJson,
-    analysisJson: p.analysisJson
+    analysisJson: p.analysisJson,
+    generatedQuestions,
+    registeredQuestions
   };
 }
 
 function mapQuestionToResponse(q: any) {
+  const photoUrl = q.photo?.fileKey ? buildLocalFileUrl(q.photo.fileKey) : null;
   return {
     id: q.id,
+    seniorId: q.seniorId ?? null,
     questionText: q.text,
+    text: q.text,
+    category: q.category,
+    chapterId: q.chapterId ?? null,
+    photoId: q.photoId ?? null,
+    photoUrl,
     submittedBy: q.createdById || '',
     anonymous: q.anonymous,
     priority: q.priority,
@@ -271,18 +555,716 @@ async function ensureSelfGuardianSeniorLink(userId: string) {
   });
 }
 
+type RequestUser = NonNullable<express.Request['user']>;
+type AiProxyEndpoint = 'chat_completions' | 'embeddings' | 'speech';
+type AiProxyOutcome = 'success' | 'invalid_request' | 'rate_limited' | 'config_error' | 'provider_error';
+type AiProxyRateBucket = {
+  windowStartedAt: number;
+  requests: number;
+  units: number;
+};
+type AiProxyDashboardAlert = {
+  type: 'error_rate' | 'rate_limited' | 'config_error' | 'provider_error';
+  severity: 'warning' | 'critical';
+  message: string;
+  value: number;
+  threshold: number;
+};
+type AiProxyAlertRoutingResult = {
+  enabled: boolean;
+  alerts: AiProxyDashboardAlert[];
+  recipients: string[];
+  notified: number;
+  skipped: string[];
+};
+
+let lastAiProxyAuditPruneAt = 0;
+
+function httpError(message: string, statusCode: number) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+function pickOpenAIOptions(body: Record<string, unknown>, allowedKeys: string[]) {
+  return allowedKeys.reduce<Record<string, unknown>>((picked, key) => {
+    if (body[key] !== undefined) picked[key] = body[key];
+    return picked;
+  }, {});
+}
+
+function positiveInt(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function boundedPositiveInt(value: unknown, fallback: number, max: number) {
+  const parsed = positiveInt(Number(value), fallback);
+  return Math.min(parsed, max);
+}
+
+function aiProxyAuditRetentionDays() {
+  return positiveInt(Number(process.env.AI_PROXY_AUDIT_RETENTION_DAYS ?? config.aiProxy.auditRetentionDays), 30);
+}
+
+function aiProxyAlertErrorRatePercent() {
+  return positiveInt(Number(process.env.AI_PROXY_ALERT_ERROR_RATE_PERCENT ?? config.aiProxy.alertErrorRatePercent), 25);
+}
+
+function aiProxyAlertRateLimitedCount() {
+  return positiveInt(Number(process.env.AI_PROXY_ALERT_RATE_LIMITED_COUNT ?? config.aiProxy.alertRateLimitedCount), 10);
+}
+
+function aiProxyAlertMinRequests() {
+  return positiveInt(Number(process.env.AI_PROXY_ALERT_MIN_REQUESTS ?? config.aiProxy.alertMinRequests), 5);
+}
+
+function aiProxyAlertWindowMinutes() {
+  return boundedPositiveInt(process.env.AI_PROXY_ALERT_WINDOW_MINUTES ?? config.aiProxy.alertWindowMinutes, 60, 24 * 60);
+}
+
+function aiProxyAlertNotificationsEnabled() {
+  if (process.env.AI_PROXY_ALERT_NOTIFICATIONS_ENABLED === 'true') return true;
+  if (process.env.AI_PROXY_ALERT_NOTIFICATIONS_ENABLED === 'false') return false;
+  return config.aiProxy.alertNotificationsEnabled;
+}
+
+function aiProxyAlertNotificationCooldownMinutes() {
+  return boundedPositiveInt(
+    process.env.AI_PROXY_ALERT_NOTIFICATION_COOLDOWN_MINUTES ?? config.aiProxy.alertNotificationCooldownMinutes,
+    30,
+    24 * 60
+  );
+}
+
+function aiProxyAlertNotificationUserIds() {
+  const raw = process.env.AI_PROXY_ALERT_NOTIFICATION_USER_IDS ?? config.aiProxy.alertNotificationUserIds;
+  return Array.from(new Set(
+    raw
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  ));
+}
+
+function aiProxyAlertRunbookUrl() {
+  return process.env.AI_PROXY_ALERT_RUNBOOK_URL ?? config.aiProxy.alertRunbookUrl;
+}
+
+function aiProxyDashboardEnabled() {
+  if (process.env.AI_PROXY_DASHBOARD_ENABLED === 'true') return true;
+  if (process.env.AI_PROXY_DASHBOARD_ENABLED === 'false') return false;
+  return config.aiProxy.dashboardEnabled;
+}
+
+function aiProxyDashboardToken() {
+  return process.env.AI_PROXY_DASHBOARD_TOKEN ?? config.aiProxy.dashboardToken;
+}
+
+function estimateAiProxyUnits(endpoint: AiProxyEndpoint, body: Record<string, unknown>) {
+  if (endpoint === 'chat_completions') {
+    const messageChars = Array.isArray(body.messages)
+      ? body.messages.reduce((total, message) => total + JSON.stringify(message).length, 0)
+      : 0;
+    const outputLimit = Number(body.max_completion_tokens ?? body.max_tokens);
+    const requestedOutput = Number.isFinite(outputLimit) ? outputLimit * 4 : 0;
+    return Math.ceil((messageChars + requestedOutput) / 4);
+  }
+
+  if (endpoint === 'speech') {
+    const input = typeof body.input === 'string'
+      ? body.input
+      : typeof body.text === 'string'
+        ? body.text
+        : '';
+    return Math.ceil(input.length / 4);
+  }
+
+  const input = body.input;
+  const inputChars = typeof input === 'string'
+    ? input.length
+    : Array.isArray(input)
+      ? input.reduce((total, item) => total + (typeof item === 'string' ? item.length : 0), 0)
+      : 0;
+  return Math.ceil(inputChars / 4);
+}
+
+function checkAiProxyRateLimit(
+  buckets: Map<string, AiProxyRateBucket>,
+  user: RequestUser,
+  endpoint: AiProxyEndpoint,
+  units: number
+) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const requestLimit = positiveInt(Number(process.env.AI_PROXY_RATE_LIMIT_PER_MINUTE ?? config.aiProxy.requestLimitPerMinute), 60);
+  const unitLimit = positiveInt(Number(process.env.AI_PROXY_UNIT_LIMIT_PER_MINUTE ?? config.aiProxy.unitLimitPerMinute), 200000);
+  const key = `${user.id}:${endpoint}`;
+  let bucket = buckets.get(key);
+
+  if (!bucket || now - bucket.windowStartedAt >= windowMs) {
+    bucket = { windowStartedAt: now, requests: 0, units: 0 };
+    buckets.set(key, bucket);
+  }
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((windowMs - (now - bucket.windowStartedAt)) / 1000));
+  if (bucket.requests + 1 > requestLimit || bucket.units + units > unitLimit) {
+    return { allowed: false, retryAfterSeconds };
+  }
+
+  bucket.requests += 1;
+  bucket.units += units;
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function aiProviderTelemetry(error: unknown) {
+  const source = error as {
+    status?: unknown;
+    code?: unknown;
+    type?: unknown;
+    message?: unknown;
+    statusCode?: unknown;
+  };
+  const providerStatus = typeof source?.status === 'number'
+    ? source.status
+    : typeof source?.statusCode === 'number'
+      ? source.statusCode
+      : undefined;
+  const providerCode = typeof source?.code === 'string'
+    ? source.code
+    : typeof source?.type === 'string'
+      ? source.type
+      : undefined;
+  const message = error instanceof Error
+    ? error.message
+    : typeof source?.message === 'string'
+      ? source.message
+      : 'AI provider request failed';
+
+  return {
+    providerStatus,
+    providerCode,
+    message: message.slice(0, 500),
+  };
+}
+
+const INTERVIEW_TTS_VOICES = new Set([
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'fable',
+  'nova',
+  'onyx',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+]);
+const INTERVIEW_TTS_FORMATS = new Set(['mp3', 'wav', 'opus', 'aac']);
+const DEFAULT_INTERVIEW_TTS_INSTRUCTIONS = [
+  'Speak Korean like a warm human interviewer calling an older parent.',
+  'Use a gentle, unhurried pace with natural pauses and soft intonation.',
+  'Sound caring and conversational, not like an announcement, navigation system, or customer-service bot.',
+].join(' ');
+
+async function recordAiProxyAuditLog(input: {
+  user: RequestUser;
+  endpoint: AiProxyEndpoint;
+  model?: string;
+  outcome: AiProxyOutcome;
+  statusCode: number;
+  estimatedUnits: number;
+  latencyMs: number;
+  providerStatus?: number;
+  providerCode?: string;
+  errorMessage?: string;
+}) {
+  try {
+    await prisma.aiProxyAuditLog.create({
+      data: {
+        userId: input.user.id,
+        role: input.user.role,
+        endpoint: input.endpoint,
+        model: input.model,
+        outcome: input.outcome,
+        statusCode: input.statusCode,
+        estimatedUnits: input.estimatedUnits,
+        latencyMs: input.latencyMs,
+        providerStatus: input.providerStatus,
+        providerCode: input.providerCode,
+        errorMessage: input.errorMessage?.slice(0, 500),
+      },
+    });
+    await maybePruneAiProxyAuditLogs();
+    if (input.outcome === 'rate_limited' || input.outcome === 'config_error' || input.outcome === 'provider_error') {
+      await routeAiProxyAlertNotifications().catch((error) => {
+        console.warn('AI proxy alert notification routing failed:', error);
+      });
+    }
+  } catch (error) {
+    console.warn('AI proxy audit logging failed:', error);
+  }
+}
+
+async function pruneAiProxyAuditLogs(now = new Date()) {
+  const retentionDays = aiProxyAuditRetentionDays();
+  const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+  const result = await prisma.aiProxyAuditLog.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+  return { retentionDays, cutoff, deletedOldLogs: result.count };
+}
+
+async function maybePruneAiProxyAuditLogs() {
+  const now = Date.now();
+  if (now - lastAiProxyAuditPruneAt < 60 * 60 * 1000) return;
+  lastAiProxyAuditPruneAt = now;
+  try {
+    await pruneAiProxyAuditLogs(new Date(now));
+  } catch (error) {
+    console.warn('AI proxy audit retention cleanup failed:', error);
+  }
+}
+
+function assertAiProxyDashboardAccess(req: express.Request) {
+  if (!aiProxyDashboardEnabled()) {
+    throw httpError('AI 프록시 대시보드가 비활성화되어 있습니다.', 404);
+  }
+  const expectedToken = aiProxyDashboardToken();
+  if (!expectedToken) return;
+
+  const providedToken = req.header('x-ai-proxy-dashboard-token') ?? '';
+  const provided = Buffer.from(providedToken);
+  const expected = Buffer.from(expectedToken);
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+    throw httpError('AI 프록시 대시보드 접근 권한이 없습니다.', 403);
+  }
+}
+
+function summarizeAiProxyAuditLogs(logs: Array<{
+  id: string;
+  userId: string;
+  role: string;
+  endpoint: string;
+  model: string | null;
+  outcome: string;
+  statusCode: number;
+  estimatedUnits: number;
+  latencyMs: number;
+  providerStatus: number | null;
+  providerCode: string | null;
+  errorMessage: string | null;
+  createdAt: Date;
+}>) {
+  const totals = {
+    requests: logs.length,
+    success: 0,
+    invalidRequest: 0,
+    rateLimited: 0,
+    configError: 0,
+    providerError: 0,
+    estimatedUnits: 0,
+    avgLatencyMs: 0,
+    errorRatePercent: 0,
+  };
+  let totalLatencyMs = 0;
+  const byEndpoint = new Map<string, {
+    endpoint: string;
+    requests: number;
+    success: number;
+    errors: number;
+    rateLimited: number;
+    estimatedUnits: number;
+    avgLatencyMs: number;
+    totalLatencyMs: number;
+  }>();
+  const byUser = new Map<string, {
+    userId: string;
+    role: string;
+    requests: number;
+    estimatedUnits: number;
+    errors: number;
+    rateLimited: number;
+    lastSeenAt: Date;
+  }>();
+
+  for (const log of logs) {
+    totals.estimatedUnits += log.estimatedUnits;
+    totalLatencyMs += log.latencyMs;
+    if (log.outcome === 'success') totals.success += 1;
+    if (log.outcome === 'invalid_request') totals.invalidRequest += 1;
+    if (log.outcome === 'rate_limited') totals.rateLimited += 1;
+    if (log.outcome === 'config_error') totals.configError += 1;
+    if (log.outcome === 'provider_error') totals.providerError += 1;
+
+    const endpoint = byEndpoint.get(log.endpoint) ?? {
+      endpoint: log.endpoint,
+      requests: 0,
+      success: 0,
+      errors: 0,
+      rateLimited: 0,
+      estimatedUnits: 0,
+      avgLatencyMs: 0,
+      totalLatencyMs: 0,
+    };
+    endpoint.requests += 1;
+    endpoint.estimatedUnits += log.estimatedUnits;
+    endpoint.totalLatencyMs += log.latencyMs;
+    if (log.outcome === 'success') endpoint.success += 1;
+    if (log.outcome === 'rate_limited') endpoint.rateLimited += 1;
+    if (log.outcome === 'config_error' || log.outcome === 'provider_error') endpoint.errors += 1;
+    byEndpoint.set(log.endpoint, endpoint);
+
+    const user = byUser.get(log.userId) ?? {
+      userId: log.userId,
+      role: log.role,
+      requests: 0,
+      estimatedUnits: 0,
+      errors: 0,
+      rateLimited: 0,
+      lastSeenAt: log.createdAt,
+    };
+    user.requests += 1;
+    user.estimatedUnits += log.estimatedUnits;
+    if (log.outcome === 'rate_limited') user.rateLimited += 1;
+    if (log.outcome === 'config_error' || log.outcome === 'provider_error') user.errors += 1;
+    if (log.createdAt > user.lastSeenAt) user.lastSeenAt = log.createdAt;
+    byUser.set(log.userId, user);
+  }
+
+  const errorCount = totals.configError + totals.providerError;
+  totals.avgLatencyMs = totals.requests ? Math.round(totalLatencyMs / totals.requests) : 0;
+  totals.errorRatePercent = totals.requests ? Math.round((errorCount / totals.requests) * 1000) / 10 : 0;
+
+  const endpointRows = Array.from(byEndpoint.values()).map((row) => ({
+    endpoint: row.endpoint,
+    requests: row.requests,
+    success: row.success,
+    errors: row.errors,
+    rateLimited: row.rateLimited,
+    estimatedUnits: row.estimatedUnits,
+    avgLatencyMs: row.requests ? Math.round(row.totalLatencyMs / row.requests) : 0,
+  })).sort((a, b) => b.requests - a.requests);
+
+  const userRows = Array.from(byUser.values())
+    .sort((a, b) => b.estimatedUnits - a.estimatedUnits || b.requests - a.requests)
+    .map((row) => ({
+      ...row,
+      lastSeenAt: row.lastSeenAt.toISOString(),
+    }));
+
+  const recentErrors = logs
+    .filter((log) => log.outcome === 'rate_limited' || log.outcome === 'config_error' || log.outcome === 'provider_error')
+    .slice(0, 10)
+    .map((log) => ({
+      id: log.id,
+      createdAt: log.createdAt.toISOString(),
+      userId: log.userId,
+      endpoint: log.endpoint,
+      outcome: log.outcome,
+      statusCode: log.statusCode,
+      providerStatus: log.providerStatus,
+      providerCode: log.providerCode,
+      errorMessage: log.errorMessage,
+    }));
+
+  return { totals, byEndpoint: endpointRows, byUser: userRows, recentErrors };
+}
+
+function buildAiProxyDashboardAlerts(summary: ReturnType<typeof summarizeAiProxyAuditLogs>) {
+  const alerts: AiProxyDashboardAlert[] = [];
+  const errorRateThreshold = aiProxyAlertErrorRatePercent();
+  const minRequests = aiProxyAlertMinRequests();
+  const rateLimitedThreshold = aiProxyAlertRateLimitedCount();
+
+  if (summary.totals.requests >= minRequests && summary.totals.errorRatePercent >= errorRateThreshold) {
+    alerts.push({
+      type: 'error_rate',
+      severity: 'critical',
+      message: `AI provider/config error rate is ${summary.totals.errorRatePercent}% in the selected window.`,
+      value: summary.totals.errorRatePercent,
+      threshold: errorRateThreshold,
+    });
+  }
+  if (summary.totals.rateLimited >= rateLimitedThreshold) {
+    alerts.push({
+      type: 'rate_limited',
+      severity: 'warning',
+      message: `AI proxy rate-limited ${summary.totals.rateLimited} requests in the selected window.`,
+      value: summary.totals.rateLimited,
+      threshold: rateLimitedThreshold,
+    });
+  }
+  if (summary.totals.configError > 0) {
+    alerts.push({
+      type: 'config_error',
+      severity: 'critical',
+      message: 'AI proxy configuration errors were recorded.',
+      value: summary.totals.configError,
+      threshold: 0,
+    });
+  }
+  if (summary.totals.providerError > 0) {
+    alerts.push({
+      type: 'provider_error',
+      severity: 'warning',
+      message: 'AI provider errors were recorded.',
+      value: summary.totals.providerError,
+      threshold: 0,
+    });
+  }
+  return alerts;
+}
+
+async function resolveAiProxyAlertNotificationRecipients() {
+  const configuredIds = aiProxyAlertNotificationUserIds();
+  if (configuredIds.length === 0) return [];
+
+  const users = await prisma.user.findMany({
+    where: {
+      id: { in: configuredIds },
+      role: 'guardian',
+    },
+    select: { id: true },
+  });
+  return users.map((user) => user.id);
+}
+
+function parseAiProxyAlertTypes(metadataJson: string | null) {
+  try {
+    const parsed = metadataJson ? JSON.parse(metadataJson) : {};
+    return Array.isArray(parsed.alertTypes)
+      ? parsed.alertTypes.map(String)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function hasRecentAiProxyAlertNotification(userId: string, alertTypes: string[], since: Date) {
+  const recent = await prisma.notification.findMany({
+    where: {
+      userId,
+      type: 'ai_proxy_alert',
+      createdAt: { gte: since },
+    },
+    select: { metadataJson: true },
+  });
+
+  return recent.some((notification) => {
+    const recentAlertTypes = parseAiProxyAlertTypes(notification.metadataJson);
+    return recentAlertTypes.some((type) => alertTypes.includes(type));
+  });
+}
+
+function aiProxyAlertNotificationBody(alerts: AiProxyDashboardAlert[], summary: ReturnType<typeof summarizeAiProxyAuditLogs>) {
+  const criticalCount = alerts.filter((alert) => alert.severity === 'critical').length;
+  const prefix = criticalCount > 0 ? '긴급 점검 필요' : '주의 점검 필요';
+  return `${prefix}: 최근 ${summary.totals.requests}건 중 오류율 ${summary.totals.errorRatePercent}%, 제한 ${summary.totals.rateLimited}건입니다.`;
+}
+
+async function routeAiProxyAlertNotifications(now = new Date()): Promise<AiProxyAlertRoutingResult> {
+  const result: AiProxyAlertRoutingResult = {
+    enabled: aiProxyAlertNotificationsEnabled(),
+    alerts: [],
+    recipients: [],
+    notified: 0,
+    skipped: [],
+  };
+
+  if (!result.enabled) {
+    result.skipped.push('disabled');
+    return result;
+  }
+
+  const windowMinutes = aiProxyAlertWindowMinutes();
+  const from = new Date(now.getTime() - windowMinutes * 60 * 1000);
+  const logs = await prisma.aiProxyAuditLog.findMany({
+    where: { createdAt: { gte: from } },
+    orderBy: { createdAt: 'desc' },
+    take: 1000,
+  });
+  const summary = summarizeAiProxyAuditLogs(logs);
+  const alerts = buildAiProxyDashboardAlerts(summary);
+  result.alerts = alerts;
+
+  if (alerts.length === 0) {
+    result.skipped.push('no_alerts');
+    return result;
+  }
+
+  const recipients = await resolveAiProxyAlertNotificationRecipients();
+  result.recipients = recipients;
+  if (recipients.length === 0) {
+    result.skipped.push('no_recipients');
+    return result;
+  }
+
+  const alertTypes = alerts.map((alert) => alert.type);
+  const cooldownStartedAt = new Date(now.getTime() - aiProxyAlertNotificationCooldownMinutes() * 60 * 1000);
+  const topSeverity = alerts.some((alert) => alert.severity === 'critical') ? 'critical' : 'warning';
+
+  for (const userId of recipients) {
+    if (await hasRecentAiProxyAlertNotification(userId, alertTypes, cooldownStartedAt)) {
+      result.skipped.push(`cooldown:${userId}`);
+      continue;
+    }
+
+    const pushResult = await sendWebPush(userId, {
+      type: 'ai_proxy_alert',
+      title: topSeverity === 'critical' ? 'AI 프록시 긴급 점검' : 'AI 프록시 운영 주의',
+      body: aiProxyAlertNotificationBody(alerts, summary),
+      url: '/child/mypage',
+      alertTypes,
+      severity: topSeverity,
+      windowMinutes,
+      runbookUrl: aiProxyAlertRunbookUrl(),
+      totals: summary.totals,
+      recentErrors: summary.recentErrors.slice(0, 3),
+    });
+    result.notified += pushResult.notification ? 1 : 0;
+  }
+
+  return result;
+}
+
+async function assertCurrentUserCanAccessSenior(user: RequestUser, seniorId: string) {
+  if (user.role === 'senior') {
+    if (user.id !== seniorId) {
+      throw httpError('권한이 없습니다.', 403);
+    }
+    return;
+  }
+  await assertGuardianCanAccessSenior(user.id, seniorId);
+}
+
+async function assertCurrentUserCanAccessQuestion(user: RequestUser, questionId: string) {
+  const question = await prisma.question.findUnique({
+    where: { id: questionId },
+    include: { photo: true },
+  });
+  if (!question) {
+    throw httpError('질문을 찾을 수 없습니다.', 404);
+  }
+
+  if (question.category === 'common_questions') {
+    if (user.role !== 'senior') {
+      throw httpError('공통 질문은 부모님만 답변 상태를 변경할 수 있습니다.', 403);
+    }
+    return question;
+  }
+
+  if (question.seniorId) {
+    await assertCurrentUserCanAccessSenior(user, question.seniorId);
+    return question;
+  }
+
+  if (question.photo?.userId) {
+    await assertCurrentUserCanAccessSenior(user, question.photo.userId);
+    return question;
+  }
+
+  if (question.createdById) {
+    if (user.role === 'guardian') {
+      if (question.createdById !== user.id) {
+        throw httpError('권한이 없습니다.', 403);
+      }
+      return question;
+    }
+
+    const link = await prisma.guardianSeniorLink.findUnique({
+      where: { guardianId_seniorId: { guardianId: question.createdById, seniorId: user.id } },
+    });
+    if (!link) {
+      throw httpError('권한이 없습니다.', 403);
+    }
+    return question;
+  }
+
+  throw httpError('권한이 없습니다.', 403);
+}
+
+async function assertCurrentUserCanAccessCoverDesign(user: RequestUser, coverDesignId: string) {
+  const coverDesign = await prisma.coverDesign.findUnique({
+    where: { id: coverDesignId },
+    select: { id: true, userId: true },
+  });
+  if (!coverDesign) {
+    throw httpError('표지 디자인을 찾을 수 없습니다.', 404);
+  }
+  await assertCurrentUserCanAccessSenior(user, coverDesign.userId);
+  return coverDesign;
+}
+
+async function resolveLocalFileAccess(fileKey: string): Promise<LocalFileAccess> {
+  const { kind } = parseLocalFileKey(fileKey);
+
+  if (kind === 'photos') {
+    const photo = await prisma.photo.findFirst({
+      where: { fileKey },
+      select: { userId: true, fileName: true, mimeType: true },
+    });
+    if (!photo) throw httpError('파일을 찾을 수 없습니다.', 404);
+    return {
+      kind,
+      seniorId: photo.userId,
+      fileName: photo.fileName,
+      mimeType: photo.mimeType,
+    };
+  }
+
+  if (kind === 'audio') {
+    const record = await prisma.interviewRecord.findFirst({
+      where: { audioFileKey: fileKey },
+      select: { userId: true },
+    });
+    if (record) return { kind, seniorId: record.userId };
+
+    const freeSpeech = await prisma.freeSpeechRecord.findFirst({
+      where: { audioFileKey: fileKey },
+      select: { userId: true },
+    });
+    if (freeSpeech) return { kind, seniorId: freeSpeech.userId };
+
+    throw httpError('파일을 찾을 수 없습니다.', 404);
+  }
+
+  const publication = await prisma.publicationRequest.findFirst({
+    where: { pdfFileKey: fileKey },
+    select: { userId: true, id: true },
+  });
+  if (!publication) throw httpError('파일을 찾을 수 없습니다.', 404);
+  return {
+    kind,
+    seniorId: publication.userId,
+    fileName: `dearlog-${publication.id}.pdf`,
+    mimeType: 'application/pdf',
+  };
+}
+
+async function assertCurrentUserCanAccessLocalFile(user: RequestUser, fileKey: string) {
+  const access = await resolveLocalFileAccess(fileKey);
+  await assertCurrentUserCanAccessSenior(user, access.seniorId);
+  return access;
+}
+
 export function createApp() {
+  void resetRunningPublicationPreviewJobs().catch((error) => {
+    console.warn('Publication preview job recovery failed:', error);
+  });
+
   const app = express();
   const distDir = path.join(config.serverDir, '..', 'dist');
+  const aiProxyRateBuckets = new Map<string, AiProxyRateBucket>();
   app.use((req, res, next) => {
     // 로컬 앱은 Vite(:3000)와 API(:8787)가 다른 origin이라 Web Push/업로드 API 호출에 CORS 허용이 필요합니다.
     const origin = req.header('origin');
-    if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    if (origin && /^(https?|capacitor|ionic):\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       res.header('Access-Control-Allow-Origin', origin);
       res.header('Vary', 'Origin');
     }
-    res.header('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-user-role');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, x-user-id, x-user-role');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
       return;
@@ -301,6 +1283,262 @@ export function createApp() {
     res.json({ user: req.user ?? null });
   });
 
+  app.get('/api/ai/audit-summary', requireRole('guardian'), async (req, res, next) => {
+    try {
+      assertAiProxyDashboardAccess(req);
+      const now = new Date();
+      const windowMinutes = boundedPositiveInt(req.query.windowMinutes, 60, 24 * 60);
+      const userLimit = boundedPositiveInt(req.query.userLimit, 5, 25);
+      const retention = await pruneAiProxyAuditLogs(now);
+      const from = new Date(now.getTime() - windowMinutes * 60 * 1000);
+      const logs = await prisma.aiProxyAuditLog.findMany({
+        where: { createdAt: { gte: from } },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      });
+      const summary = summarizeAiProxyAuditLogs(logs);
+      const alerts = buildAiProxyDashboardAlerts(summary);
+
+      res.json({
+        window: {
+          from: from.toISOString(),
+          to: now.toISOString(),
+          minutes: windowMinutes,
+        },
+        totals: summary.totals,
+        byEndpoint: summary.byEndpoint,
+        byUser: summary.byUser.slice(0, userLimit),
+        recentErrors: summary.recentErrors,
+        alerts,
+        alertThresholds: {
+          errorRatePercent: aiProxyAlertErrorRatePercent(),
+          rateLimitedCount: aiProxyAlertRateLimitedCount(),
+          minRequests: aiProxyAlertMinRequests(),
+        },
+        alertRouting: {
+          enabled: aiProxyAlertNotificationsEnabled(),
+          windowMinutes: aiProxyAlertWindowMinutes(),
+          cooldownMinutes: aiProxyAlertNotificationCooldownMinutes(),
+          recipientCount: aiProxyAlertNotificationUserIds().length,
+          runbookUrl: aiProxyAlertRunbookUrl(),
+        },
+        retention: {
+          days: retention.retentionDays,
+          cutoff: retention.cutoff.toISOString(),
+          deletedOldLogs: retention.deletedOldLogs,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/ai/chat-completions', requireRole('senior', 'guardian'), async (req, res, next) => {
+    const startedAt = Date.now();
+    const endpoint: AiProxyEndpoint = 'chat_completions';
+    const user = req.user!;
+    let estimatedUnits = 0;
+    let providerModel: string | undefined;
+    try {
+      const body = req.body as Record<string, unknown>;
+      if (typeof body.model !== 'string' || !Array.isArray(body.messages)) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          outcome: 'invalid_request',
+          statusCode: 400,
+          estimatedUnits: 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'model과 messages가 필요합니다.',
+        });
+        res.status(400).json({ error: 'model과 messages가 필요합니다.' });
+        return;
+      }
+      if (body.stream === true) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          model: body.model,
+          outcome: 'invalid_request',
+          statusCode: 400,
+          estimatedUnits: 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: '스트리밍 응답은 지원하지 않습니다.',
+        });
+        res.status(400).json({ error: '스트리밍 응답은 지원하지 않습니다.' });
+        return;
+      }
+
+      const factChatPurpose = body.purpose === 'writing' || body.purpose === 'vision'
+        ? body.purpose
+        : 'chat';
+      const providerInput = normalizeFactChatChatCompletionInput({
+        model: body.model,
+        messages: body.messages as any,
+        ...pickOpenAIOptions(body, [
+          'temperature',
+          'max_tokens',
+          'max_completion_tokens',
+          'response_format',
+          'top_p',
+          'presence_penalty',
+          'frequency_penalty',
+          'seed',
+          'tools',
+          'tool_choice',
+          'reasoning_effort',
+        ]),
+      }, factChatPurpose);
+      providerModel = String(providerInput.model);
+      estimatedUnits = estimateAiProxyUnits(endpoint, providerInput);
+
+      const rateLimit = checkAiProxyRateLimit(aiProxyRateBuckets, user, endpoint, estimatedUnits);
+      if (!rateLimit.allowed) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          model: providerModel,
+          outcome: 'rate_limited',
+          statusCode: 429,
+          estimatedUnits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'AI 프록시 요청 한도를 초과했습니다.',
+        });
+        res.header('Retry-After', String(rateLimit.retryAfterSeconds));
+        res.status(429).json({ error: 'AI 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      const client = getFactChatClient();
+      const response = await client.chat.completions.create(providerInput as any);
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model: providerModel,
+        outcome: 'success',
+        statusCode: 200,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+      });
+      res.json(response);
+    } catch (error) {
+      const statusCode = typeof error === 'object' && error && 'statusCode' in error
+        ? Number((error as { statusCode?: number }).statusCode)
+        : 502;
+      const outcome: AiProxyOutcome = statusCode === 503 ? 'config_error' : 'provider_error';
+      const telemetry = aiProviderTelemetry(error);
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model: providerModel ?? (typeof req.body?.model === 'string' ? req.body.model : undefined),
+        outcome,
+        statusCode: Number.isFinite(statusCode) ? statusCode : 502,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+        errorMessage: telemetry.message,
+      });
+      if (outcome === 'config_error') {
+        next(error);
+        return;
+      }
+      console.warn('AI provider chat completion failed:', {
+        userId: user.id,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+      });
+      res.status(502).json({ error: 'AI 제공자 요청에 실패했습니다.' });
+    }
+  });
+
+  app.post('/api/ai/embeddings', requireRole('senior', 'guardian'), async (req, res, next) => {
+    const startedAt = Date.now();
+    const endpoint: AiProxyEndpoint = 'embeddings';
+    const user = req.user!;
+    let estimatedUnits = 0;
+    try {
+      const body = req.body as Record<string, unknown>;
+      const validInput = typeof body.input === 'string' || (Array.isArray(body.input) && body.input.every((item) => typeof item === 'string'));
+      if (typeof body.model !== 'string' || !validInput) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          outcome: 'invalid_request',
+          statusCode: 400,
+          estimatedUnits: 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'model과 input이 필요합니다.',
+        });
+        res.status(400).json({ error: 'model과 input이 필요합니다.' });
+        return;
+      }
+
+      estimatedUnits = estimateAiProxyUnits(endpoint, body);
+      const rateLimit = checkAiProxyRateLimit(aiProxyRateBuckets, user, endpoint, estimatedUnits);
+      if (!rateLimit.allowed) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          model: body.model,
+          outcome: 'rate_limited',
+          statusCode: 429,
+          estimatedUnits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'AI 프록시 요청 한도를 초과했습니다.',
+        });
+        res.header('Retry-After', String(rateLimit.retryAfterSeconds));
+        res.status(429).json({ error: 'AI 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      const client = getOpenAIClient();
+      const response = await client.embeddings.create({
+        model: body.model,
+        input: body.input as any,
+        ...pickOpenAIOptions(body, ['dimensions', 'encoding_format', 'user']),
+      } as any);
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model: body.model,
+        outcome: 'success',
+        statusCode: 200,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+      });
+      res.json(response);
+    } catch (error) {
+      const statusCode = typeof error === 'object' && error && 'statusCode' in error
+        ? Number((error as { statusCode?: number }).statusCode)
+        : 502;
+      const outcome: AiProxyOutcome = statusCode === 503 ? 'config_error' : 'provider_error';
+      const telemetry = aiProviderTelemetry(error);
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+        outcome,
+        statusCode: Number.isFinite(statusCode) ? statusCode : 502,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+        errorMessage: telemetry.message,
+      });
+      if (outcome === 'config_error') {
+        next(error);
+        return;
+      }
+      console.warn('AI provider embedding request failed:', {
+        userId: user.id,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+      });
+      res.status(502).json({ error: 'AI 제공자 요청에 실패했습니다.' });
+    }
+  });
+
   app.post('/api/auth/phone', async (req, res, next) => {
     try {
       const phoneNumber = normalizePhoneNumber(req.body.phoneNumber);
@@ -309,21 +1547,436 @@ export function createApp() {
         return;
       }
 
-      const existing = await prisma.user.findUnique({ where: { phoneNumber } });
-      if (existing) {
-        res.json({ user: serializeUser(existing), isNew: false });
+      const isLogin = req.body.isLogin !== undefined ? !!req.body.isLogin : undefined;
+      const name = req.body.name ? String(req.body.name).trim() : '';
+      const birthDate = normalizeBirthDate(req.body.birthDate);
+      if (birthDate === undefined) {
+        res.status(400).json({ error: '생년월일은 YYYY-MM-DD 형식으로 입력해 주세요.' });
         return;
       }
 
-      // SMS 인증 없이 휴대폰 번호 자체를 계정 키로 저장합니다.
-      const user = await prisma.user.create({
+      const existing = await prisma.user.findUnique({ where: { phoneNumber } });
+
+      if (isLogin === undefined) {
+        // Legacy find-or-create behavior
+        if (existing) {
+          res.json({ ...serializeAuthResponse(existing), isNew: false });
+          return;
+        }
+        const user = await prisma.user.create({
+          data: {
+            phoneNumber,
+            role: 'guardian',
+            name: name || '보호자',
+            birthDate,
+            preferredName: '보호자',
+            guardianName: name || '보호자',
+            guardianPreferredName: '보호자',
+          },
+        });
+        res.status(201).json({ ...serializeAuthResponse(user), isNew: true });
+        return;
+      }
+
+      if (isLogin) {
+        if (!existing) {
+          res.status(404).json({ error: '가입되지 않은 휴대폰 번호입니다. 회원가입을 진행해 주세요.' });
+          return;
+        }
+        if (!name) {
+          res.status(400).json({ error: '이름을 입력해 주세요.' });
+          return;
+        }
+        if (existing.name.trim() !== name) {
+          res.status(400).json({ error: '이름이 일치하지 않습니다. 다시 입력해 주세요.' });
+          return;
+        }
+        res.json({ ...serializeAuthResponse(existing), isNew: false });
+      } else {
+        // Signup
+        if (existing) {
+          res.status(400).json({ error: '이미 가입된 휴대폰 번호입니다. 로그인해 주세요.' });
+          return;
+        }
+        if (!name) {
+          res.status(400).json({ error: '이름을 입력해 주세요.' });
+          return;
+        }
+        const user = await prisma.user.create({
+          data: {
+            phoneNumber,
+            role: 'guardian',
+            name,
+            birthDate,
+            preferredName: '보호자',
+            guardianName: name,
+            guardianPreferredName: '보호자',
+          },
+        });
+        res.status(201).json({ ...serializeAuthResponse(user), isNew: true });
+      }
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/invitations', requireRole('guardian'), async (req, res, next) => {
+    try {
+      const guardianId = req.user!.id;
+      const guardian = await prisma.user.findUnique({ where: { id: guardianId } });
+      const guardianName = guardian?.name || '자녀';
+      const body = req.body ?? {};
+      const seniorName = body.seniorName ? String(body.seniorName).trim() : null;
+      const requestedSeniorId = body.seniorId ? String(body.seniorId).trim() : null;
+      const profileImageUrl = normalizeOptionalImageUrl(body.profileImageUrl);
+      const recordSpaceCoverUrl = normalizeOptionalImageUrl(body.recordSpaceCoverUrl);
+      const recordSpaceName = normalizeOptionalText(body.recordSpaceName, 80);
+      const relationship = normalizeOptionalText(body.relationship, 24);
+      const hasCurrentJobProvided = Object.prototype.hasOwnProperty.call(body, 'hasCurrentJob');
+      const hasCurrentJob = normalizeOptionalBoolean(body.hasCurrentJob);
+      const occupation = normalizeOptionalText(body.occupation, 120);
+      const hometown = normalizeOptionalText(body.hometown, 120);
+      const schoolHistory = normalizeOptionalText(body.schoolHistory, 160);
+      const birthDateProvided = Object.prototype.hasOwnProperty.call(body, 'birthDate');
+      const birthDate = normalizeBirthDate(body.birthDate);
+      if (profileImageUrl === undefined || recordSpaceCoverUrl === undefined) {
+        res.status(400).json({ error: '이미지는 JPG, PNG, WebP 형식의 URL 또는 data URL이어야 합니다.' });
+        return;
+      }
+      if (recordSpaceName === undefined || relationship === undefined || occupation === undefined || hometown === undefined || schoolHistory === undefined) {
+        res.status(400).json({ error: '기록 공간 이름, 관계, 생활 정보는 너무 길게 입력할 수 없습니다.' });
+        return;
+      }
+      if (hasCurrentJob === undefined) {
+        res.status(400).json({ error: '현재 직업 유무 값이 올바르지 않습니다.' });
+        return;
+      }
+      if (birthDate === undefined) {
+        res.status(400).json({ error: '생년월일은 YYYY-MM-DD 형식이어야 합니다.' });
+        return;
+      }
+      const seniorAssetData = {
+        ...(profileImageUrl ? { profileImageUrl } : {}),
+        ...(recordSpaceName ? { recordSpaceName } : {}),
+        ...(recordSpaceCoverUrl ? { recordSpaceCoverUrl } : {}),
+        ...(birthDateProvided ? { birthDate } : {}),
+        ...(hasCurrentJobProvided ? { hasCurrentJob } : {}),
+        ...(occupation ? { occupation } : {}),
+        ...(hometown ? { hometown } : {}),
+        ...(schoolHistory ? { schoolHistory } : {}),
+      };
+      let seniorId: string;
+
+      if (requestedSeniorId) {
+        await assertGuardianCanAccessSenior(guardianId, requestedSeniorId);
+        const senior = await prisma.user.findUnique({ where: { id: requestedSeniorId } });
+        if (!senior || senior.role !== 'senior') {
+          res.status(404).json({ error: '초대할 부모님 계정을 찾을 수 없습니다.' });
+          return;
+        }
+        seniorId = requestedSeniorId;
+      } else if (seniorName) {
+        // If a specific seniorName is provided, we ALWAYS create a new senior and link them.
+        const senior = await prisma.user.create({
+          data: {
+            name: seniorName,
+            role: 'senior',
+            preferredName: seniorName,
+            seniorName: seniorName,
+            seniorPreferredName: seniorName,
+            guardianName: guardianName,
+            ...seniorAssetData,
+          }
+        });
+        seniorId = senior.id;
+        await prisma.guardianSeniorLink.create({
+          data: { guardianId, seniorId, ...(relationship ? { relationship } : {}) }
+        });
+      } else {
+        // Fallback/Default initial flow when no name is provided
+        const existingLink = await prisma.guardianSeniorLink.findFirst({
+          where: { guardianId }
+        });
+
+        if (existingLink) {
+          // 초대받은 시니어 계정이 데이터베이스에 실제 존재하는지 교차 검증합니다.
+          const seniorExists = await prisma.user.findUnique({
+            where: { id: existingLink.seniorId }
+          });
+          if (seniorExists) {
+            seniorId = existingLink.seniorId;
+          } else {
+            // 기존 링크가 끊어지거나 없는 시니어를 가리키고 있다면(Orphaned Link), 링크를 제거하고 새로 생성합니다.
+            await prisma.guardianSeniorLink.delete({
+              where: { id: existingLink.id }
+            });
+            const senior = await prisma.user.create({
+              data: {
+                name: '어르신',
+                role: 'senior',
+                preferredName: '어르신',
+                seniorName: '어르신',
+                seniorPreferredName: '어르신',
+                guardianName: guardianName,
+                ...seniorAssetData,
+              }
+            });
+            seniorId = senior.id;
+            await prisma.guardianSeniorLink.create({
+              data: { guardianId, seniorId, ...(relationship ? { relationship } : {}) }
+            });
+          }
+        } else {
+          const senior = await prisma.user.create({
+            data: {
+              name: '어르신',
+              role: 'senior',
+              preferredName: '어르신',
+              seniorName: '어르신',
+              seniorPreferredName: '어르신',
+              guardianName: guardianName,
+              ...seniorAssetData,
+            }
+          });
+          seniorId = senior.id;
+          await prisma.guardianSeniorLink.create({
+            data: { guardianId, seniorId, ...(relationship ? { relationship } : {}) }
+          });
+        }
+      }
+
+      if (Object.keys(seniorAssetData).length > 0) {
+        await prisma.user.update({
+          where: { id: seniorId },
+          data: seniorAssetData,
+        });
+      }
+      if (relationship) {
+        await prisma.guardianSeniorLink.update({
+          where: { guardianId_seniorId: { guardianId, seniorId } },
+          data: { relationship },
+        });
+      }
+
+      const token = crypto.randomUUID().replace(/-/g, '');
+      const expiresAt = createInvitationExpiry();
+      const invitation = await prisma.invitation.upsert({
+        where: { seniorId },
+        update: { token, guardianId, expiresAt, revokedAt: null, usedAt: null },
+        create: { token, guardianId, seniorId, expiresAt }
+      });
+
+      res.status(201).json({ invitation: serializeInvitation(invitation) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/invitations/:id/rotate', requireRole('guardian'), async (req, res, next) => {
+    try {
+      const guardianId = req.user!.id;
+      const invitation = await prisma.invitation.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!invitation) {
+        res.status(404).json({ error: '초대 링크를 찾을 수 없습니다.' });
+        return;
+      }
+
+      await assertGuardianCanAccessSenior(guardianId, invitation.seniorId);
+
+      const updated = await prisma.invitation.update({
+        where: { id: invitation.id },
         data: {
-          phoneNumber,
-          role: 'pending',
-          name: `사용자 ${phoneNumber.slice(-4)}`,
+          token: crypto.randomUUID().replace(/-/g, ''),
+          guardianId,
+          expiresAt: createInvitationExpiry(),
+          revokedAt: null,
+          usedAt: null,
         },
       });
-      res.status(201).json({ user: serializeUser(user), isNew: true });
+
+      res.json({ invitation: serializeInvitation(updated) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/invitations/:id', requireRole('guardian'), async (req, res, next) => {
+    try {
+      const guardianId = req.user!.id;
+      const invitation = await prisma.invitation.findUnique({
+        where: { id: req.params.id },
+      });
+
+      if (!invitation) {
+        res.status(404).json({ error: '초대 링크를 찾을 수 없습니다.' });
+        return;
+      }
+
+      await assertGuardianCanAccessSenior(guardianId, invitation.seniorId);
+
+      const updated = await prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { revokedAt: new Date() },
+      });
+
+      res.json({ invitation: serializeInvitation(updated) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/family-members', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const currentUserId = req.user!.id;
+      const currentUserRole = req.user!.role;
+
+      let seniorIds: string[] = [];
+      let guardianIds: string[] = [];
+      const seniorRelationshipMap = new Map<string, string>();
+
+      if (currentUserRole === 'senior') {
+        seniorIds = [currentUserId];
+        const links = await prisma.guardianSeniorLink.findMany({
+          where: { seniorId: currentUserId }
+        });
+        guardianIds = links.map(l => l.guardianId);
+      } else {
+        const links = await prisma.guardianSeniorLink.findMany({
+          where: { guardianId: currentUserId }
+        });
+        seniorIds = links.map(l => l.seniorId);
+        links.forEach(l => {
+          if (l.relationship) seniorRelationshipMap.set(l.seniorId, l.relationship);
+        });
+        guardianIds = [currentUserId];
+
+        if (seniorIds.length > 0) {
+          const siblingLinks = await prisma.guardianSeniorLink.findMany({
+            where: { seniorId: { in: seniorIds } }
+          });
+          siblingLinks.forEach(l => {
+            if (!guardianIds.includes(l.guardianId)) {
+              guardianIds.push(l.guardianId);
+            }
+          });
+        }
+      }
+
+      const allUserIds = Array.from(new Set([...seniorIds, ...guardianIds]));
+      const users = await prisma.user.findMany({
+        where: { id: { in: allUserIds } },
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          guardianRelationship: true,
+          birthDate: true,
+          birthDecade: true,
+          profileImageUrl: true,
+          recordSpaceName: true,
+          recordSpaceCoverUrl: true,
+          hasCurrentJob: true,
+          occupation: true,
+          hometown: true,
+          schoolHistory: true,
+        }
+      });
+
+      const invitations = await prisma.invitation.findMany({
+        where: { seniorId: { in: seniorIds } }
+      });
+      const invitationMap = new Map(invitations.map(i => [i.seniorId, serializeInvitation(i)]));
+
+      const members = users.map(u => {
+        const isParent = u.role === 'senior';
+        const invitation = isParent ? invitationMap.get(u.id) ?? null : null;
+        return {
+          id: u.id,
+          name: u.name,
+          role: isParent ? 'parent' as const : 'child' as const,
+          relationship: isParent ? (seniorRelationshipMap.get(u.id) || '부모님') : (u.guardianRelationship || '자녀'),
+          isMe: u.id === currentUserId,
+          birthDate: u.birthDate ?? null,
+          profileImageUrl: u.profileImageUrl ?? null,
+          recordSpaceName: u.recordSpaceName ?? null,
+          recordSpaceCoverUrl: u.recordSpaceCoverUrl ?? null,
+          hasCurrentJob: u.hasCurrentJob ?? null,
+          occupation: u.occupation ?? null,
+          hometown: u.hometown ?? null,
+          schoolHistory: u.schoolHistory ?? null,
+          token: invitation?.token ?? null,
+          invitation,
+          invitationId: invitation?.id ?? null,
+          invitationStatus: invitation?.status ?? null,
+          invitationExpiresAt: invitation?.expiresAt ?? null,
+          invitationRevokedAt: invitation?.revokedAt ?? null,
+          invitationUsedAt: invitation?.usedAt ?? null,
+          hasRegistered: isParent ? (u.birthDecade !== null && u.birthDecade !== '') : false,
+        };
+      });
+
+      res.json({ members });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+
+  app.post('/api/auth/token-login', async (req, res, next) => {
+    try {
+      const { token } = req.body;
+      if (!token) {
+        res.status(400).json({ error: '토큰이 필요합니다.' });
+        return;
+      }
+
+      const invitation = await prisma.invitation.findUnique({
+        where: { token }
+      });
+
+      if (!invitation) {
+        res.status(404).json({ error: '유효하지 않은 초대 링크입니다.' });
+        return;
+      }
+
+      const invitationStatus = getInvitationStatus(invitation);
+      if (invitationStatus === 'revoked') {
+        res.status(410).json({ error: '폐기된 초대 링크입니다. 보호자에게 새 링크를 요청해 주세요.' });
+        return;
+      }
+      if (invitationStatus === 'expired') {
+        res.status(410).json({ error: '만료된 초대 링크입니다. 보호자에게 새 링크를 요청해 주세요.' });
+        return;
+      }
+      if (invitationStatus === 'used') {
+        res.status(410).json({ error: '이미 사용된 초대 링크입니다. 보호자에게 새 링크를 요청해 주세요.' });
+        return;
+      }
+
+      const senior = await prisma.user.findUnique({
+        where: { id: invitation.seniorId }
+      });
+
+      if (!senior) {
+        res.status(404).json({ error: '초대받은 계정을 찾을 수 없습니다.' });
+        return;
+      }
+
+      const link = await prisma.guardianSeniorLink.findFirst({
+        where: { seniorId: senior.id },
+        include: { guardian: true }
+      });
+      const guardianName = link?.guardian?.name || '자녀';
+
+      await prisma.invitation.update({
+        where: { id: invitation.id },
+        data: { usedAt: new Date() },
+      });
+
+      res.json({ ...serializeAuthResponse({ ...senior, guardianName }) });
     } catch (error) {
       next(error);
     }
@@ -331,6 +1984,10 @@ export function createApp() {
 
   app.patch('/api/auth/users/:id/role', async (req, res, next) => {
     try {
+      if (!req.user || req.user.id !== req.params.id) {
+        res.status(403).json({ error: '권한이 없습니다.' });
+        return;
+      }
       const role = req.body.role === 'guardian' ? 'guardian' : req.body.role === 'senior' ? 'senior' : null;
       if (!role) {
         res.status(400).json({ error: '역할을 다시 선택해 주세요.' });
@@ -354,7 +2011,7 @@ export function createApp() {
         },
       });
       await ensureSelfGuardianSeniorLink(user.id);
-      res.json({ user: serializeUser(user) });
+      res.json(serializeAuthResponse(user));
     } catch (error) {
       next(error);
     }
@@ -362,6 +2019,10 @@ export function createApp() {
 
   app.patch('/api/auth/users/:id/profile', async (req, res, next) => {
     try {
+      if (!req.user || req.user.id !== req.params.id) {
+        res.status(403).json({ error: '권한이 없습니다.' });
+        return;
+      }
       const name = String(req.body.name ?? '').trim();
       const preferredName = String(req.body.preferredName ?? '').trim();
       if (!name || !preferredName) {
@@ -370,6 +2031,13 @@ export function createApp() {
       }
       const role = req.body.role === 'guardian' ? 'guardian' : 'senior';
       const relationship = String(req.body.relationship ?? '').trim();
+      const birthDateProvided = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'birthDate');
+      const birthDate = normalizeBirthDate(req.body.birthDate);
+      if (birthDate === undefined) {
+        res.status(400).json({ error: '생년월일은 YYYY-MM-DD 형식으로 입력해 주세요.' });
+        return;
+      }
+      const birthDateData = birthDateProvided ? { birthDate } : {};
       if (role === 'guardian' && !relationship) {
         res.status(400).json({ error: '어르신과의 관계를 입력해 주세요.' });
         return;
@@ -380,6 +2048,7 @@ export function createApp() {
           ? {
               role,
               name,
+              ...birthDateData,
               preferredName,
               guardianName: name,
               guardianRelationship: relationship,
@@ -388,6 +2057,7 @@ export function createApp() {
           : {
               role,
               name,
+              ...birthDateData,
               preferredName,
               birthDecade: String(req.body.birthDecade ?? '1950년대'),
               seniorName: name,
@@ -396,7 +2066,7 @@ export function createApp() {
             },
       });
       await ensureSelfGuardianSeniorLink(user.id);
-      res.json({ user: serializeUser(user) });
+      res.json(serializeAuthResponse(user));
     } catch (error) {
       next(error);
     }
@@ -418,14 +2088,37 @@ export function createApp() {
     try {
       const category = req.query.category?.toString();
       const chapterId = req.query.chapterId?.toString();
+      const seniorId = req.user
+        ? req.user.role === 'senior'
+          ? req.user.id
+          : await resolveGuardianSeniorId(req.user.id, req.query.seniorId?.toString())
+        : null;
+
+      if (category && category !== 'common_questions' && !seniorId) {
+        res.status(403).json({ error: '권한이 없습니다.' });
+        return;
+      }
+
+      const where = category
+        ? {
+            category,
+            ...(chapterId ? { chapterId } : {}),
+            ...(category !== 'common_questions' ? { seniorId } : {}),
+          }
+        : {
+            ...(chapterId ? { chapterId } : {}),
+            OR: [
+              { category: 'common_questions' },
+              ...(seniorId ? [{ seniorId }] : []),
+            ],
+          };
+
       const questions = await prisma.question.findMany({
-        where: {
-          ...(category ? { category } : {}),
-          ...(chapterId ? { chapterId } : {}),
-        },
+        where,
+        include: { photo: true },
         orderBy: { createdAt: 'asc' },
       });
-      res.json({ questions });
+      res.json({ questions: questions.map(mapQuestionToResponse) });
     } catch (error) {
       next(error);
     }
@@ -433,17 +2126,48 @@ export function createApp() {
 
   app.post('/api/questions', requireRole('guardian'), async (req, res, next) => {
     try {
-      const { text, chapterId } = req.body;
-      await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const { text, chapterId, category, photoId } = req.body;
+      const trimmedText = String(text ?? '').trim();
+      if (!trimmedText) {
+        res.status(400).json({ error: '질문 내용을 입력해 주세요.' });
+        return;
+      }
+      let seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      let resolvedCategory = 'guardian_questions';
+      let resolvedChapterId = chapterId || 'messages';
+      let resolvedPhotoId: string | undefined;
+
+      if (category === 'photo_questions') {
+        const photo = photoId
+          ? await prisma.photo.findUnique({ where: { id: String(photoId) }, select: { id: true, userId: true } })
+          : null;
+        if (!photo) {
+          res.status(404).json({ error: '사진을 찾을 수 없습니다.' });
+          return;
+        }
+        await assertCurrentUserCanAccessSenior(req.user!, photo.userId);
+        if (req.body.seniorId && String(req.body.seniorId) !== photo.userId) {
+          res.status(400).json({ error: '사진과 질문 대상 부모님이 일치하지 않습니다.' });
+          return;
+        }
+        seniorId = photo.userId;
+        resolvedCategory = 'photo_questions';
+        resolvedChapterId = chapterId || 'childhood';
+        resolvedPhotoId = photo.id;
+      }
+      // Fallback to 'messages' chapter if not provided, to ensure the question appears on the parent's select view
       const question = await prisma.question.create({
         data: {
-          text: String(text ?? '').trim(),
-          chapterId,
-          category: 'guardian_questions',
+          text: trimmedText,
+          chapterId: resolvedChapterId,
+          seniorId,
+          category: resolvedCategory,
+          ...(resolvedPhotoId ? { photoId: resolvedPhotoId } : {}),
           createdById: req.user!.id,
         },
+        include: { photo: true },
       });
-      res.status(201).json({ question });
+      res.status(201).json({ question: mapQuestionToResponse(question) });
     } catch (error) {
       next(error);
     }
@@ -457,10 +2181,17 @@ export function createApp() {
       }
       const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const fileKey = `photos/${path.basename(req.file.filename)}`;
+      const capturedDate = String(req.body.capturedDate ?? '').trim();
+      const photoLocation = String(req.body.location ?? '').trim();
+      const memo = String(req.body.memo ?? '').trim();
+      const linkedQuestion = String(req.body.linkedQuestion ?? '').trim();
       const result = await analyzePhotoAndCreateQuestions({
         filePath: req.file.path,
         mimeType: req.file.mimetype,
         chapterId: req.body.chapterId,
+      }, {
+        userId: req.user!.id,
+        role: req.user!.role,
       });
       const photo = await prisma.photo.create({
         data: {
@@ -468,23 +2199,36 @@ export function createApp() {
           fileKey,
           fileName: req.file.originalname,
           mimeType: req.file.mimetype,
-          metadataJson: JSON.stringify({ size: req.file.size }),
-          analysisJson: JSON.stringify(result.analysis),
+          metadataJson: JSON.stringify({
+            size: req.file.size,
+            ...(capturedDate ? { capturedDate } : {}),
+            ...(photoLocation ? { location: photoLocation } : {}),
+            ...(memo ? { memo } : {}),
+            ...(linkedQuestion ? { linkedQuestion } : {}),
+          }),
+          analysisJson: JSON.stringify({
+            ...result.analysis,
+            questions: [
+              ...(linkedQuestion ? [linkedQuestion] : []),
+              ...result.questions,
+            ],
+          }),
         },
       });
-      const questions = await Promise.all(result.questions.map((text) =>
-        prisma.question.create({
-          data: {
-            text,
-            category: 'photo_questions',
-            chapterId: req.body.chapterId || undefined,
-            photoId: photo.id,
-            createdById: req.user!.id,
-            status: 'active',
-          },
-        })
-      ));
-      res.status(201).json({ photo: mapPhotoToResponse(photo), questions: questions.map(mapQuestionToResponse) });
+      const suggestions = [
+        ...(linkedQuestion ? [linkedQuestion] : []),
+        ...result.questions,
+      ].filter((text, index, all) => text && all.indexOf(text) === index);
+      res.status(201).json({
+        photo: mapPhotoToResponse(photo),
+        questions: suggestions.map((questionText) => ({
+          text: questionText,
+          questionText,
+          category: 'photo_question_suggestions',
+          chapterId: req.body.chapterId || 'childhood',
+          photoId: photo.id,
+        })),
+      });
     } catch (error) {
       next(error);
     }
@@ -498,6 +2242,139 @@ export function createApp() {
       }
       const fileKey = `audio/${path.basename(req.file.filename)}`;
       res.status(201).json({ fileKey, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/audio/speech', requireRole('senior', 'guardian'), async (req, res, next) => {
+    const startedAt = Date.now();
+    const endpoint: AiProxyEndpoint = 'speech';
+    const user = req.user!;
+    let estimatedUnits = 0;
+    const model = String(process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts');
+    const requestedVoice = String(req.body?.voice ?? process.env.OPENAI_TTS_VOICE ?? 'marin').trim();
+    const voice = INTERVIEW_TTS_VOICES.has(requestedVoice) ? requestedVoice : 'marin';
+    const requestedFormat = String(req.body?.responseFormat ?? req.body?.response_format ?? 'mp3').trim();
+    const responseFormat = INTERVIEW_TTS_FORMATS.has(requestedFormat) ? requestedFormat : 'mp3';
+
+    try {
+      const text = String(req.body?.text ?? req.body?.input ?? '').trim();
+      if (!text || text.length > 800) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          model,
+          outcome: 'invalid_request',
+          statusCode: 400,
+          estimatedUnits: 0,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'text가 필요하며 800자 이하여야 합니다.',
+        });
+        res.status(400).json({ error: '읽을 질문 문장이 필요합니다.' });
+        return;
+      }
+
+      estimatedUnits = estimateAiProxyUnits(endpoint, { input: text });
+      const rateLimit = checkAiProxyRateLimit(aiProxyRateBuckets, user, endpoint, estimatedUnits);
+      if (!rateLimit.allowed) {
+        await recordAiProxyAuditLog({
+          user,
+          endpoint,
+          model,
+          outcome: 'rate_limited',
+          statusCode: 429,
+          estimatedUnits,
+          latencyMs: Date.now() - startedAt,
+          errorMessage: 'AI 프록시 요청 한도를 초과했습니다.',
+        });
+        res.header('Retry-After', String(rateLimit.retryAfterSeconds));
+        res.status(429).json({ error: 'AI 음성 생성 요청 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      const instructions = typeof req.body?.instructions === 'string' && req.body.instructions.trim()
+        ? req.body.instructions.trim().slice(0, 1000)
+        : DEFAULT_INTERVIEW_TTS_INSTRUCTIONS;
+      const client = getOpenAIClient();
+      const speech = await client.audio.speech.create({
+        model,
+        voice: voice as any,
+        input: text,
+        instructions,
+        response_format: responseFormat as any,
+      });
+      const buffer = Buffer.from(await speech.arrayBuffer());
+
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model,
+        outcome: 'success',
+        statusCode: 200,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+      });
+
+      res.header('Cache-Control', 'private, max-age=3600');
+      res.type(responseFormat === 'mp3' ? 'audio/mpeg' : `audio/${responseFormat}`);
+      res.send(buffer);
+    } catch (error) {
+      const statusCode = typeof error === 'object' && error && 'statusCode' in error
+        ? Number((error as { statusCode?: number }).statusCode)
+        : 502;
+      const outcome: AiProxyOutcome = statusCode === 503 ? 'config_error' : 'provider_error';
+      const telemetry = aiProviderTelemetry(error);
+      await recordAiProxyAuditLog({
+        user,
+        endpoint,
+        model,
+        outcome,
+        statusCode: Number.isFinite(statusCode) ? statusCode : 502,
+        estimatedUnits,
+        latencyMs: Date.now() - startedAt,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+        errorMessage: telemetry.message,
+      });
+      if (outcome === 'config_error') {
+        next(error);
+        return;
+      }
+      console.warn('AI provider speech generation failed:', {
+        userId: user.id,
+        providerStatus: telemetry.providerStatus,
+        providerCode: telemetry.providerCode,
+      });
+      res.status(502).json({ error: 'AI 음성 생성에 실패했습니다.' });
+    }
+  });
+
+  app.post('/api/audio/transcriptions', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const fileKey = String(req.body.fileKey ?? '');
+      const parsed = parseLocalFileKey(fileKey);
+      if (parsed.kind !== 'audio') {
+        res.status(400).json({ error: '음성 파일만 텍스트로 변환할 수 있습니다.' });
+        return;
+      }
+
+      const filePath = resolveLocalFileKey(fileKey);
+      await fs.access(filePath);
+
+      const client = getOpenAIClient();
+      const transcription = await client.audio.transcriptions.create({
+        file: createReadStream(filePath) as any,
+        model: process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1',
+        language: 'ko',
+      });
+      const text = typeof transcription.text === 'string' ? transcription.text.trim() : '';
+      if (!text) {
+        res.status(422).json({ error: '음성에서 텍스트를 인식하지 못했습니다. 직접 입력으로 저장해 주세요.' });
+        return;
+      }
+
+      res.json({ fileKey, text });
     } catch (error) {
       next(error);
     }
@@ -586,6 +2463,12 @@ export function createApp() {
 
   app.patch('/api/interview-sessions/:id/pause', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.interviewSession.findUnique({ where: { id: req.params.id } });
+      if (!existing) {
+        res.status(404).json({ error: '인터뷰 세션을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.seniorId);
       const session = await prisma.interviewSession.update({
         where: { id: req.params.id },
         data: { status: 'paused', pausedAt: new Date() },
@@ -598,6 +2481,12 @@ export function createApp() {
 
   app.patch('/api/interview-sessions/:id/accept', requireRole('senior'), async (req, res, next) => {
     try {
+      const existing = await prisma.interviewSession.findUnique({ where: { id: req.params.id } });
+      if (!existing) {
+        res.status(404).json({ error: '인터뷰 세션을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.seniorId);
       const session = await prisma.interviewSession.update({
         where: { id: req.params.id },
         data: { status: 'active' },
@@ -610,6 +2499,12 @@ export function createApp() {
 
   app.patch('/api/interview-sessions/:id/end', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.interviewSession.findUnique({ where: { id: req.params.id } });
+      if (!existing) {
+        res.status(404).json({ error: '인터뷰 세션을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.seniorId);
       const session = await prisma.interviewSession.update({
         where: { id: req.params.id },
         data: { status: req.body.status === 'missed' ? 'missed' : 'ended', endedAt: new Date() },
@@ -626,8 +2521,24 @@ export function createApp() {
         ? req.user!.id
         : await resolveGuardianSeniorId(req.user!.id, req.body.userId ? String(req.body.userId) : undefined);
       const question = req.body.questionId
-        ? await prisma.question.findUnique({ where: { id: req.body.questionId } })
+        ? await assertCurrentUserCanAccessQuestion(req.user!, String(req.body.questionId))
         : null;
+      if (question?.seniorId && question.seniorId !== userId) {
+        res.status(400).json({ error: '답변 대상과 질문 대상 부모님이 일치하지 않습니다.' });
+        return;
+      }
+      if (req.body.sessionId) {
+        const session = await prisma.interviewSession.findUnique({ where: { id: String(req.body.sessionId) } });
+        if (!session) {
+          res.status(404).json({ error: '인터뷰 세션을 찾을 수 없습니다.' });
+          return;
+        }
+        await assertCurrentUserCanAccessSenior(req.user!, session.seniorId);
+        if (session.seniorId !== userId) {
+          res.status(400).json({ error: '답변 대상과 인터뷰 세션의 부모님이 일치하지 않습니다.' });
+          return;
+        }
+      }
       const record = await prisma.interviewRecord.create({
         data: {
           userId,
@@ -636,8 +2547,11 @@ export function createApp() {
           sessionId: req.body.sessionId,
           audioFileKey: req.body.audioFileKey ?? 'audio/manual-entry.txt',
           transcriptText: String(req.body.transcriptText ?? ''),
+          aiSummary: req.body.aiSummary ? String(req.body.aiSummary) : undefined,
           mode: req.body.mode ?? 'photo',
           source: req.body.source ?? 'app',
+          publish: req.body.publish !== undefined ? Boolean(req.body.publish) : undefined,
+          chatbot: req.body.chatbot !== undefined ? Boolean(req.body.chatbot) : undefined,
         },
       });
 
@@ -654,6 +2568,17 @@ export function createApp() {
         });
       }
 
+      if (question && question.category !== 'common_questions') {
+        await prisma.question.update({
+          where: { id: question.id },
+          data: {
+            status: 'answered',
+            answeredAt: record.recordedAt,
+            answerRecordId: record.id,
+          },
+        });
+      }
+
       res.status(201).json({ record });
     } catch (error) {
       next(error);
@@ -662,11 +2587,133 @@ export function createApp() {
 
   app.patch('/api/interview-records/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.interviewRecord.findUnique({ where: { id: req.params.id } });
+      if (!existing) {
+        res.status(404).json({ error: '인터뷰 기록을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
+      const reviewStatus = req.body.reviewStatus !== undefined ? String(req.body.reviewStatus) : undefined;
+      if (reviewStatus && !['pending', 'applied', 'revision_requested'].includes(reviewStatus)) {
+        res.status(400).json({ error: '지원하지 않는 검수 상태입니다.' });
+        return;
+      }
       const record = await prisma.interviewRecord.update({
         where: { id: req.params.id },
-        data: { transcriptText: String(req.body.transcriptText ?? '') },
+        data: {
+          ...(req.body.transcriptText !== undefined ? { transcriptText: String(req.body.transcriptText) } : {}),
+          ...(req.body.aiSummary !== undefined ? { aiSummary: req.body.aiSummary ? String(req.body.aiSummary) : null } : {}),
+          ...(req.body.publish !== undefined ? { publish: Boolean(req.body.publish) } : {}),
+          ...(req.body.chatbot !== undefined ? { chatbot: Boolean(req.body.chatbot) } : {}),
+          ...(reviewStatus ? { reviewStatus } : {}),
+          ...(reviewStatus === 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: new Date() } : {}),
+          ...(reviewStatus && reviewStatus !== 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: null } : {}),
+          ...(req.body.reviewedAt !== undefined ? { reviewedAt: req.body.reviewedAt ? new Date(String(req.body.reviewedAt)) : null } : {}),
+          ...(req.body.reviewRequestText !== undefined ? { reviewRequestText: req.body.reviewRequestText ? String(req.body.reviewRequestText) : null } : {}),
+        },
       });
       res.json({ record });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/interview-records/bulk-consent', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const { ids, publish, chatbot } = req.body;
+      if (!Array.isArray(ids)) {
+        res.status(400).json({ error: 'ids는 배열이어야 합니다.' });
+        return;
+      }
+      const records = await prisma.interviewRecord.findMany({
+        where: { id: { in: ids.map(String) } },
+        select: { id: true, userId: true },
+      });
+      if (records.length !== ids.length) {
+        res.status(404).json({ error: '일부 인터뷰 기록을 찾을 수 없습니다.' });
+        return;
+      }
+      for (const record of records) {
+        await assertCurrentUserCanAccessSenior(req.user!, record.userId);
+      }
+      await prisma.interviewRecord.updateMany({
+        where: { id: { in: ids.map(String) } },
+        data: {
+          ...(publish !== undefined ? { publish: Boolean(publish) } : {}),
+          ...(chatbot !== undefined ? { chatbot: Boolean(chatbot) } : {}),
+        },
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/calendar-events', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const userId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+      const events = await prisma.calendarEvent.findMany({
+        where: { userId },
+        orderBy: { eventDate: 'asc' },
+      });
+      const mappedEvents = events.map(e => ({
+        eventId: e.id,
+        eventType: e.eventType,
+        eventDate: e.eventDate,
+        relatedPersons: JSON.parse(e.relatedPersons || '[]'),
+        recipientId: e.recipientId
+      }));
+      res.json({ events: mappedEvents });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/calendar-events', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const userId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId?.toString());
+      const { eventType, eventDate, relatedPersons, recipientId } = req.body;
+      const event = await prisma.calendarEvent.create({
+        data: {
+          userId,
+          eventType: String(eventType),
+          eventDate: String(eventDate),
+          relatedPersons: relatedPersons ? JSON.stringify(relatedPersons) : '[]',
+          recipientId: recipientId || 'family-group',
+        },
+      });
+      res.status(201).json({
+        event: {
+          eventId: event.id,
+          eventType: event.eventType,
+          eventDate: event.eventDate,
+          relatedPersons: JSON.parse(event.relatedPersons || '[]'),
+          recipientId: event.recipientId
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/calendar-events/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const event = await prisma.calendarEvent.findUnique({
+        where: { id: req.params.id }
+      });
+      if (!event) {
+        res.status(404).json({ error: '이벤트를 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, event.userId);
+      await prisma.calendarEvent.delete({
+        where: { id: req.params.id }
+      });
+      res.json({ ok: true });
     } catch (error) {
       next(error);
     }
@@ -692,6 +2739,7 @@ export function createApp() {
 
   app.get('/api/progress/:seniorId', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      await assertCurrentUserCanAccessSenior(req.user!, req.params.seniorId);
       const chapters = await prisma.chapter.findMany({ orderBy: { order: 'asc' } });
       const rows = await Promise.all(chapters.map(async (chapter) => {
         const count = await prisma.interviewRecord.count({ where: { userId: req.params.seniorId, chapterId: chapter.id } });
@@ -721,13 +2769,15 @@ export function createApp() {
       const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
       
       const filteredRecords = records.map(record => {
+        const audioUrl = buildLocalFileUrl(record.audioFileKey);
         if (isMasked) {
           return {
             ...record,
-            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]"
+            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            audioUrl,
           };
         }
-        return record;
+        return { ...record, audioUrl };
       });
       
       res.json({ records: filteredRecords });
@@ -810,28 +2860,44 @@ export function createApp() {
     }
   });
 
-  app.post('/api/cover-designs/generate', requireRole('guardian'), async (req, res, next) => {
+  app.post('/api/cover-designs/generate', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const records = await prisma.interviewRecord.findMany({ where: { userId: seniorId } });
-      const decision = await decideCoverDesign(records.map((record) => record.transcriptText));
-      const coverDesign = await prisma.coverDesign.create({
-        data: {
-          userId: seniorId,
-          palette: decision.palette,
-          template: decision.template,
-          font: decision.font,
-          analysisJson: JSON.stringify(decision.analysis),
-        },
+      const decision = await decideCoverDesign(records.map((record) => record.transcriptText), {
+        userId: req.user!.id,
+        role: req.user!.role,
       });
-      res.status(201).json({ coverDesign, analysis: decision.analysis });
+      const requestedCount = Math.max(1, Math.min(3, Number(req.body.count) || 1));
+      const decisions = buildCoverDecisionCandidates(decision, requestedCount);
+      const candidates = await Promise.all(decisions.map(async (candidate) => {
+        const coverDesign = await prisma.coverDesign.create({
+          data: {
+            userId: seniorId,
+            palette: candidate.palette,
+            template: candidate.template,
+            font: candidate.font,
+            analysisJson: JSON.stringify(candidate.analysis),
+          },
+        });
+        return { coverDesign, analysis: candidate.analysis };
+      }));
+      res.status(201).json({
+        coverDesign: candidates[0].coverDesign,
+        analysis: candidates[0].analysis,
+        coverDesigns: candidates.map((candidate) => candidate.coverDesign),
+        candidates,
+      });
     } catch (error) {
       next(error);
     }
   });
 
-  app.patch('/api/cover-designs/:id/confirm', requireRole('guardian'), async (req, res, next) => {
+  app.patch('/api/cover-designs/:id/confirm', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      await assertCurrentUserCanAccessCoverDesign(req.user!, req.params.id);
       const coverDesign = await prisma.coverDesign.update({
         where: { id: req.params.id },
         data: { confirmedAt: new Date() },
@@ -842,9 +2908,11 @@ export function createApp() {
     }
   });
 
-  app.post('/api/publication-requests', requireRole('guardian'), async (req, res, next) => {
+  app.post('/api/publication-requests', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const cover = await prisma.coverDesign.findFirst({
         where: { userId: seniorId, confirmedAt: { not: null } },
         orderBy: { confirmedAt: 'desc' },
@@ -858,16 +2926,143 @@ export function createApp() {
           status: 'generating',
         },
       });
-      const pdfFileKey = await generateLocalPrintPdf({
+      const result = await generateLocalPrintPdf({
         seniorId,
         coverDesignId: cover?.id,
         format: request.format as 'A5' | 'B5',
+        toneProfileOverride: normalizeToneProfile(req.body.toneProfile),
+        usageContext: {
+          userId: req.user!.id,
+          role: req.user!.role,
+        },
       });
       const updated = await prisma.publicationRequest.update({
         where: { id: request.id },
-        data: { status: 'ready', pdfFileKey },
+        data: {
+          status: 'ready',
+          pdfFileKey: result.pdfFileKey,
+          draftCacheId: result.draftCacheId,
+        },
       });
-      res.status(201).json({ publicationRequest: updated });
+      res.status(201).json({
+        publicationRequest: updated,
+        cacheStatus: result.cacheStatus,
+        sourceHash: result.sourceHash,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/publication-preview-jobs', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const cover = await prisma.coverDesign.findFirst({
+        where: { userId: seniorId, confirmedAt: { not: null } },
+        orderBy: { confirmedAt: 'desc' },
+      });
+      const job = await startLocalPublicationPreviewJob({
+        seniorId,
+        requestedById: req.user!.id,
+        coverDesignId: cover?.id,
+        forceRefresh: req.body.forceRefresh === true,
+        format: req.body.format === 'B5' ? 'B5' : 'A5',
+        toneProfileOverride: normalizeToneProfile(req.body.toneProfile),
+        usageContext: {
+          userId: req.user!.id,
+          role: req.user!.role,
+        },
+      });
+      res.header('Cache-Control', 'no-store');
+      res.status(job.status === 'ready' ? 200 : 202).json({
+        job,
+        ...(job.draft ? {
+          html: job.draft.html,
+          editorialPlan: job.draft.editorialPlan,
+          writingDraft: job.draft.writingDraft,
+          manifest: job.draft.manifest,
+          cacheStatus: job.cacheStatus,
+          draftCacheId: job.draftCacheId,
+          sourceHash: job.sourceHash,
+        } : {}),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/publication-preview-jobs/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const existing = await prisma.publicationPreviewJob.findUnique({
+        where: { id: req.params.id },
+        select: { userId: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: '기록집 미리보기 작업을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
+      const job = await getLocalPublicationPreviewJob(req.params.id);
+      if (!job) {
+        res.status(404).json({ error: '기록집 미리보기 작업을 찾을 수 없습니다.' });
+        return;
+      }
+      res.header('Cache-Control', 'no-store');
+      res.json({
+        job,
+        ...(job.draft ? {
+          html: job.draft.html,
+          editorialPlan: job.draft.editorialPlan,
+          writingDraft: job.draft.writingDraft,
+          manifest: job.draft.manifest,
+          cacheStatus: job.cacheStatus,
+          draftCacheId: job.draftCacheId,
+          sourceHash: job.sourceHash,
+        } : {}),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/publication-preview', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+      const cover = await prisma.coverDesign.findFirst({
+        where: { userId: seniorId, confirmedAt: { not: null } },
+        orderBy: { confirmedAt: 'desc' },
+      });
+      const job = await startLocalPublicationPreviewJob({
+        seniorId,
+        requestedById: req.user!.id,
+        coverDesignId: cover?.id,
+        forceRefresh: req.query.forceRefresh === 'true',
+        format: req.query.format === 'B5' ? 'B5' : 'A5',
+        toneProfileOverride: normalizeToneProfileFromQuery(req.query),
+        usageContext: {
+          userId: req.user!.id,
+          role: req.user!.role,
+        },
+      });
+      res.header('Cache-Control', 'no-store');
+      if (job.status !== 'ready' || !job.draft) {
+        res.status(202).json({ job });
+        return;
+      }
+      res.json({
+        job,
+        html: job.draft.html,
+        editorialPlan: job.draft.editorialPlan,
+        writingDraft: job.draft.writingDraft,
+        manifest: job.draft.manifest,
+        cacheStatus: job.cacheStatus,
+        draftCacheId: job.draftCacheId,
+        sourceHash: job.sourceHash,
+      });
     } catch (error) {
       next(error);
     }
@@ -891,15 +3086,17 @@ export function createApp() {
       
       const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
       
-      const filteredRecords = records.map(record => {
+      const filteredRecords = await Promise.all(records.map(async record => {
+        const audioUrl = isMasked ? null : await buildPlayableAudioUrl(record.audioFileKey);
         if (isMasked) {
           return {
             ...record,
-            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]"
+            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
+            audioUrl,
           };
         }
-        return record;
-      });
+        return { ...record, audioUrl };
+      }));
       
       res.json({ records: filteredRecords });
     } catch (error) {
@@ -959,9 +3156,10 @@ export function createApp() {
         privacy,
         confidenceLabel,
         contradictions,
-        consentSettings,
+        consentSettings: requestedConsentSettings,
         embedding
       } = req.body;
+      const consentSettings = validateMemoryConsentSettings(requestedConsentSettings);
 
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
@@ -1041,14 +3239,24 @@ export function createApp() {
 
   app.patch('/api/memories/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.memory.findUnique({
+        where: { id: req.params.id },
+        select: { userId: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: '기억을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
       const {
         privacy,
         publishVersion,
         confidenceLabel,
         contradictions,
-        consentSettings,
+        consentSettings: requestedConsentSettings,
         embedding
       } = req.body;
+      const consentSettings = validateMemoryConsentSettings(requestedConsentSettings);
 
       const parsedContradictions = contradictions ? JSON.stringify(contradictions) : undefined;
 
@@ -1116,6 +3324,15 @@ export function createApp() {
 
   app.delete('/api/memories/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.memory.findUnique({
+        where: { id: req.params.id },
+        select: { userId: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: '기억을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
       await prisma.memory.delete({
         where: { id: req.params.id }
       });
@@ -1134,6 +3351,7 @@ export function createApp() {
 
       const photos = await prisma.photo.findMany({
         where: { userId: seniorId },
+        include: { questions: true },
         orderBy: { uploadedAt: 'desc' }
       });
 
@@ -1147,6 +3365,26 @@ export function createApp() {
     try {
       const { linkedMemoryIds } = req.body;
       const parsedLinkedMemoryIds = linkedMemoryIds ? JSON.stringify(linkedMemoryIds) : undefined;
+      const existing = await prisma.photo.findUnique({
+        where: { id: req.params.id },
+        select: { userId: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: '사진을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
+
+      if (Array.isArray(linkedMemoryIds) && linkedMemoryIds.length > 0) {
+        const linkedMemories = await prisma.memory.findMany({
+          where: { id: { in: linkedMemoryIds.map(String) } },
+          select: { id: true, userId: true },
+        });
+        if (linkedMemories.length !== linkedMemoryIds.length || linkedMemories.some((m) => m.userId !== existing.userId)) {
+          res.status(400).json({ error: '사진과 같은 부모님의 기억만 연결할 수 있습니다.' });
+          return;
+        }
+      }
 
       const photo = await prisma.photo.update({
         where: { id: req.params.id },
@@ -1163,6 +3401,15 @@ export function createApp() {
 
   app.delete('/api/photos/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await prisma.photo.findUnique({
+        where: { id: req.params.id },
+        select: { userId: true },
+      });
+      if (!existing) {
+        res.status(404).json({ error: '사진을 찾을 수 없습니다.' });
+        return;
+      }
+      await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
       await prisma.photo.delete({
         where: { id: req.params.id }
       });
@@ -1181,8 +3428,10 @@ export function createApp() {
 
       const questions = await prisma.question.findMany({
         where: {
-          category: { in: ['guardian_questions', 'family_question'] }
+          category: { in: ['guardian_questions', 'family_question', 'photo_questions'] },
+          seniorId,
         },
+        include: { photo: true },
         orderBy: { createdAt: 'desc' }
       });
 
@@ -1195,6 +3444,22 @@ export function createApp() {
   app.patch('/api/questions/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
       const { text, priority, status, anonymous, answerMemoryId } = req.body;
+      const existing = await assertCurrentUserCanAccessQuestion(req.user!, req.params.id);
+      if (answerMemoryId) {
+        const memory = await prisma.memory.findUnique({
+          where: { id: String(answerMemoryId) },
+          select: { userId: true },
+        });
+        if (!memory) {
+          res.status(404).json({ error: '답변 기억을 찾을 수 없습니다.' });
+          return;
+        }
+        await assertCurrentUserCanAccessSenior(req.user!, memory.userId);
+        if (existing.seniorId && memory.userId !== existing.seniorId) {
+          res.status(400).json({ error: '질문 대상 부모님의 답변 기억만 연결할 수 있습니다.' });
+          return;
+        }
+      }
 
       const question = await prisma.question.update({
         where: { id: req.params.id },
@@ -1205,7 +3470,8 @@ export function createApp() {
           anonymous: anonymous !== undefined ? Boolean(anonymous) : undefined,
           answerMemoryId: answerMemoryId !== undefined ? answerMemoryId : undefined,
           answeredAt: status === 'answered' ? new Date() : undefined
-        }
+        },
+        include: { photo: true },
       });
 
       res.json({ question: mapQuestionToResponse(question) });
@@ -1216,6 +3482,11 @@ export function createApp() {
 
   app.delete('/api/questions/:id', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
+      const existing = await assertCurrentUserCanAccessQuestion(req.user!, req.params.id);
+      if (existing.category === 'common_questions') {
+        res.status(403).json({ error: '공통 질문은 삭제할 수 없습니다.' });
+        return;
+      }
       await prisma.question.delete({
         where: { id: req.params.id }
       });
@@ -1392,7 +3663,7 @@ export function createApp() {
         res.status(400).json({ error: '유산 금고가 아직 개설되지 않았습니다.' });
         return;
       }
-      
+
       const updatedVault = await prisma.legacyVault.update({
         where: { seniorId },
         data: {
@@ -1440,6 +3711,11 @@ export function createApp() {
       
       if (!vault || !vault.isVaultSetup) {
         res.status(400).json({ error: '유산 금고가 아직 개설되지 않았습니다.' });
+        return;
+      }
+
+      if (!vault.isDeceased || vault.deathVerificationStatus !== 'pending_verification') {
+        res.status(400).json({ error: '사망 심사 대기 상태에서만 승인할 수 있습니다.' });
         return;
       }
       
@@ -1524,11 +3800,26 @@ export function createApp() {
     }
   });
 
-  app.get('/api/files/*', requireRole('senior', 'guardian'), async (req, res, next) => {
+  app.get('/api/files/*', async (req, res, next) => {
     try {
       const fileKey = req.params[0];
+      parseLocalFileKey(fileKey);
+      const hasValidFileToken = verifyLocalFileAccessToken(req.query.token, fileKey);
+      const access = hasValidFileToken
+        ? await resolveLocalFileAccess(fileKey)
+        : req.user
+          ? await assertCurrentUserCanAccessLocalFile(req.user, fileKey)
+          : null;
+
+      if (!access) {
+        res.status(403).json({ error: '권한이 없습니다.' });
+        return;
+      }
+
       const filePath = resolveLocalFileKey(fileKey);
       await fs.access(filePath);
+      res.header('Cache-Control', 'private, max-age=300');
+      if (access.mimeType) res.type(access.mimeType);
       res.sendFile(filePath);
     } catch (error) {
       next(error);

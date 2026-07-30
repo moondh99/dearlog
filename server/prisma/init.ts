@@ -7,6 +7,7 @@ const statements = [
     "name" TEXT NOT NULL,
     "phoneNumber" TEXT,
     "role" TEXT NOT NULL,
+    "birthDate" TEXT,
     "birthDecade" TEXT,
     "preferredName" TEXT,
     "seniorName" TEXT,
@@ -15,6 +16,13 @@ const statements = [
     "guardianName" TEXT,
     "guardianRelationship" TEXT,
     "guardianPreferredName" TEXT,
+    "profileImageUrl" TEXT,
+    "recordSpaceName" TEXT,
+    "recordSpaceCoverUrl" TEXT,
+    "hasCurrentJob" BOOLEAN,
+    "occupation" TEXT,
+    "hometown" TEXT,
+    "schoolHistory" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
@@ -23,6 +31,7 @@ const statements = [
     "id" TEXT NOT NULL PRIMARY KEY,
     "guardianId" TEXT NOT NULL,
     "seniorId" TEXT NOT NULL,
+    "relationship" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "GuardianSeniorLink_guardianId_fkey" FOREIGN KEY ("guardianId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "GuardianSeniorLink_seniorId_fkey" FOREIGN KEY ("seniorId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
@@ -54,6 +63,7 @@ const statements = [
     "category" TEXT NOT NULL,
     "text" TEXT NOT NULL,
     "chapterId" TEXT,
+    "seniorId" TEXT,
     "photoId" TEXT,
     "createdById" TEXT,
     "status" TEXT NOT NULL DEFAULT 'pending',
@@ -64,9 +74,11 @@ const statements = [
     "priority" TEXT NOT NULL DEFAULT 'normal',
     "answerMemoryId" TEXT,
     CONSTRAINT "Question_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "Chapter" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "Question_seniorId_fkey" FOREIGN KEY ("seniorId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Question_photoId_fkey" FOREIGN KEY ("photoId") REFERENCES "Photo" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Question_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
   )`,
+  `CREATE INDEX IF NOT EXISTS "Question_seniorId_category_createdAt_idx" ON "Question"("seniorId", "category", "createdAt")`,
   `CREATE TABLE IF NOT EXISTS "InterviewSchedule" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "seniorId" TEXT NOT NULL,
@@ -103,9 +115,15 @@ const statements = [
     "sessionId" TEXT,
     "audioFileKey" TEXT NOT NULL,
     "transcriptText" TEXT NOT NULL,
+    "aiSummary" TEXT,
     "recordedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "source" TEXT NOT NULL DEFAULT 'app',
     "mode" TEXT NOT NULL DEFAULT 'photo',
+    "publish" BOOLEAN NOT NULL DEFAULT 1,
+    "chatbot" BOOLEAN NOT NULL DEFAULT 1,
+    "reviewStatus" TEXT NOT NULL DEFAULT 'pending',
+    "reviewedAt" DATETIME,
+    "reviewRequestText" TEXT,
     CONSTRAINT "InterviewRecord_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "InterviewRecord_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "Chapter" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "InterviewRecord_questionId_fkey" FOREIGN KEY ("questionId") REFERENCES "Question" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
@@ -149,6 +167,23 @@ const statements = [
     CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "Notification_relatedUserId_fkey" FOREIGN KEY ("relatedUserId") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS "AiProxyAuditLog" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "role" TEXT NOT NULL,
+    "endpoint" TEXT NOT NULL,
+    "model" TEXT,
+    "outcome" TEXT NOT NULL,
+    "statusCode" INTEGER NOT NULL,
+    "estimatedUnits" INTEGER NOT NULL DEFAULT 0,
+    "latencyMs" INTEGER NOT NULL DEFAULT 0,
+    "providerStatus" INTEGER,
+    "providerCode" TEXT,
+    "errorMessage" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS "AiProxyAuditLog_userId_createdAt_idx" ON "AiProxyAuditLog"("userId", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "AiProxyAuditLog_endpoint_outcome_createdAt_idx" ON "AiProxyAuditLog"("endpoint", "outcome", "createdAt")`,
   `CREATE TABLE IF NOT EXISTS "CoverDesign" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT NOT NULL,
@@ -160,11 +195,30 @@ const statements = [
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "CoverDesign_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS "PublicationDraftCache" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "coverDesignId" TEXT,
+    "format" TEXT NOT NULL DEFAULT 'A5',
+    "sourceHash" TEXT NOT NULL,
+    "editorialPlanJson" TEXT NOT NULL,
+    "writingDraftJson" TEXT NOT NULL,
+    "manifestJson" TEXT NOT NULL,
+    "html" TEXT NOT NULL,
+    "generatedBy" TEXT NOT NULL DEFAULT 'fallback',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "PublicationDraftCache_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PublicationDraftCache_coverDesignId_fkey" FOREIGN KEY ("coverDesignId") REFERENCES "CoverDesign" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "PublicationDraftCache_userId_format_sourceHash_generatedBy_key" ON "PublicationDraftCache"("userId", "format", "sourceHash", "generatedBy")`,
+  `CREATE INDEX IF NOT EXISTS "PublicationDraftCache_userId_format_sourceHash_generatedBy_idx" ON "PublicationDraftCache"("userId", "format", "sourceHash", "generatedBy")`,
   `CREATE TABLE IF NOT EXISTS "PublicationRequest" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT NOT NULL,
     "requestedById" TEXT NOT NULL,
     "coverDesignId" TEXT,
+    "draftCacheId" TEXT,
     "format" TEXT NOT NULL DEFAULT 'A5',
     "status" TEXT NOT NULL DEFAULT 'requested',
     "pdfFileKey" TEXT,
@@ -172,8 +226,34 @@ const statements = [
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "PublicationRequest_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "PublicationRequest_requestedById_fkey" FOREIGN KEY ("requestedById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "PublicationRequest_coverDesignId_fkey" FOREIGN KEY ("coverDesignId") REFERENCES "CoverDesign" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    CONSTRAINT "PublicationRequest_coverDesignId_fkey" FOREIGN KEY ("coverDesignId") REFERENCES "CoverDesign" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "PublicationRequest_draftCacheId_fkey" FOREIGN KEY ("draftCacheId") REFERENCES "PublicationDraftCache" ("id") ON DELETE SET NULL ON UPDATE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS "PublicationPreviewJob" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "requestedById" TEXT NOT NULL,
+    "coverDesignId" TEXT,
+    "draftCacheId" TEXT,
+    "format" TEXT NOT NULL DEFAULT 'A5',
+    "sourceHash" TEXT NOT NULL,
+    "toneProfileJson" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'queued',
+    "stage" TEXT NOT NULL DEFAULT 'cache_check',
+    "attemptCount" INTEGER NOT NULL DEFAULT 0,
+    "errorCode" TEXT,
+    "errorMessage" TEXT,
+    "startedAt" DATETIME,
+    "finishedAt" DATETIME,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "PublicationPreviewJob_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PublicationPreviewJob_requestedById_fkey" FOREIGN KEY ("requestedById") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PublicationPreviewJob_coverDesignId_fkey" FOREIGN KEY ("coverDesignId") REFERENCES "CoverDesign" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "PublicationPreviewJob_draftCacheId_fkey" FOREIGN KEY ("draftCacheId") REFERENCES "PublicationDraftCache" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "PublicationPreviewJob_userId_format_sourceHash_status_idx" ON "PublicationPreviewJob"("userId", "format", "sourceHash", "status")`,
+  `CREATE INDEX IF NOT EXISTS "PublicationPreviewJob_status_updatedAt_idx" ON "PublicationPreviewJob"("status", "updatedAt")`,
   `CREATE TABLE IF NOT EXISTS "LegacyVault" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "seniorId" TEXT NOT NULL UNIQUE,
@@ -234,6 +314,29 @@ const statements = [
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "AutobiographyDraft_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS "CalendarEvent" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "eventType" TEXT NOT NULL,
+    "eventDate" TEXT NOT NULL,
+    "relatedPersons" TEXT NOT NULL DEFAULT '[]',
+    "recipientId" TEXT NOT NULL DEFAULT 'family-group',
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "CalendarEvent_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`,
+  `CREATE TABLE IF NOT EXISTS "Invitation" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "token" TEXT NOT NULL,
+    "guardianId" TEXT NOT NULL,
+    "seniorId" TEXT NOT NULL,
+    "expiresAt" DATETIME,
+    "revokedAt" DATETIME,
+    "usedAt" DATETIME,
+    "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Invitation_token_key" ON "Invitation"("token")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Invitation_seniorId_key" ON "Invitation"("seniorId")`,
 ];
 
 export async function initLocalDatabase() {
@@ -246,6 +349,9 @@ export async function initLocalDatabase() {
   // 기존 로컬 DB에도 실사용자 가입 프로필 컬럼을 부드럽게 추가합니다.
   const userColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("User")');
   const columnNames = new Set(userColumns.map((column) => column.name));
+  if (!columnNames.has('birthDate')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "birthDate" TEXT');
+  }
   if (!columnNames.has('birthDecade')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "birthDecade" TEXT');
   }
@@ -270,12 +376,64 @@ export async function initLocalDatabase() {
   if (!columnNames.has('guardianPreferredName')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "guardianPreferredName" TEXT');
   }
+  if (!columnNames.has('profileImageUrl')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "profileImageUrl" TEXT');
+  }
+  if (!columnNames.has('recordSpaceName')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "recordSpaceName" TEXT');
+  }
+  if (!columnNames.has('recordSpaceCoverUrl')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "recordSpaceCoverUrl" TEXT');
+  }
+  if (!columnNames.has('hasCurrentJob')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "hasCurrentJob" BOOLEAN');
+  }
+  if (!columnNames.has('occupation')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "occupation" TEXT');
+  }
+  if (!columnNames.has('hometown')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "hometown" TEXT');
+  }
+  if (!columnNames.has('schoolHistory')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "schoolHistory" TEXT');
+  }
+
+  const linkColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("GuardianSeniorLink")');
+  const linkColumnNames = new Set(linkColumns.map((column) => column.name));
+  if (!linkColumnNames.has('relationship')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "GuardianSeniorLink" ADD COLUMN "relationship" TEXT');
+  }
 
   const notificationColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Notification")');
   const notificationColumnNames = new Set(notificationColumns.map((column) => column.name));
   if (!notificationColumnNames.has('metadataJson')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "Notification" ADD COLUMN "metadataJson" TEXT');
   }
+
+  const invitationColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Invitation")');
+  const invitationColumnNames = new Set(invitationColumns.map((column) => column.name));
+  if (!invitationColumnNames.has('expiresAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Invitation" ADD COLUMN "expiresAt" DATETIME');
+  }
+  if (!invitationColumnNames.has('revokedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Invitation" ADD COLUMN "revokedAt" DATETIME');
+  }
+  if (!invitationColumnNames.has('usedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Invitation" ADD COLUMN "usedAt" DATETIME');
+  }
+  if (!invitationColumnNames.has('updatedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Invitation" ADD COLUMN "updatedAt" DATETIME');
+  }
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Invitation"
+    SET "updatedAt" = COALESCE("updatedAt", "createdAt", CURRENT_TIMESTAMP)
+    WHERE "updatedAt" IS NULL
+  `);
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Invitation"
+    SET "expiresAt" = datetime("createdAt", '+14 days')
+    WHERE "expiresAt" IS NULL
+  `);
 
   // Photo linkedMemoryIds 컬럼 추가
   const photoColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Photo")');
@@ -295,6 +453,63 @@ export async function initLocalDatabase() {
   }
   if (!questionColumnNames.has('answerMemoryId')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "Question" ADD COLUMN "answerMemoryId" TEXT');
+  }
+  if (!questionColumnNames.has('seniorId')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Question" ADD COLUMN "seniorId" TEXT');
+  }
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Question"
+    SET "seniorId" = (
+      SELECT "userId" FROM "Photo" WHERE "Photo"."id" = "Question"."photoId"
+    )
+    WHERE "seniorId" IS NULL
+      AND "photoId" IS NOT NULL
+  `);
+  await prisma.$executeRawUnsafe(`
+    UPDATE "Question"
+    SET "seniorId" = (
+      SELECT "seniorId"
+      FROM "GuardianSeniorLink"
+      WHERE "GuardianSeniorLink"."guardianId" = "Question"."createdById"
+      LIMIT 1
+    )
+    WHERE "seniorId" IS NULL
+      AND "createdById" IS NOT NULL
+      AND "category" IN ('guardian_questions', 'family_question')
+      AND (
+        SELECT COUNT(*)
+        FROM "GuardianSeniorLink"
+        WHERE "GuardianSeniorLink"."guardianId" = "Question"."createdById"
+      ) = 1
+  `);
+  await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "Question_seniorId_category_createdAt_idx" ON "Question"("seniorId", "category", "createdAt")');
+
+  // InterviewRecord 추가 컬럼 마이그레이션
+  const recordColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("InterviewRecord")');
+  const recordColumnNames = new Set(recordColumns.map((column) => column.name));
+  if (!recordColumnNames.has('publish')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "publish" BOOLEAN NOT NULL DEFAULT 1');
+  }
+  if (!recordColumnNames.has('chatbot')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "chatbot" BOOLEAN NOT NULL DEFAULT 1');
+  }
+  if (!recordColumnNames.has('aiSummary')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "aiSummary" TEXT');
+  }
+  if (!recordColumnNames.has('reviewStatus')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "reviewStatus" TEXT NOT NULL DEFAULT \'pending\'');
+  }
+  if (!recordColumnNames.has('reviewedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "reviewedAt" DATETIME');
+  }
+  if (!recordColumnNames.has('reviewRequestText')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "reviewRequestText" TEXT');
+  }
+
+  const publicationRequestColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PublicationRequest")');
+  const publicationRequestColumnNames = new Set(publicationRequestColumns.map((column) => column.name));
+  if (!publicationRequestColumnNames.has('draftCacheId')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "PublicationRequest" ADD COLUMN "draftCacheId" TEXT');
   }
 }
 
