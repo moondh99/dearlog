@@ -556,7 +556,17 @@ export default function AutobiographyScreen() {
   const requestRole = role === 'parent' ? 'senior' : 'guardian'
 
   const chapters = useMemo(() => normalizeAutobiographyNarratives(rawChapters), [rawChapters])
-  const transcriptMemoryChunks = useMemo(() => buildMemoryChunksFromTranscripts(transcripts), [transcripts])
+  // 출판 동의를 철회한 기록은 초안 생성에서도 뺍니다. 서버 출판 파이프라인은 publish=true만
+  // 읽지만, 여기서 만든 초안은 autobiography/draft로 저장돼 다시 출판 입력으로 들어가므로
+  // 여기를 거르지 않으면 철회한 이야기가 초안을 통해 책에 되돌아옵니다.
+  const publishableTranscripts = useMemo(
+    () => transcripts.filter((transcript) => transcript.publish !== false),
+    [transcripts],
+  )
+  const transcriptMemoryChunks = useMemo(
+    () => buildMemoryChunksFromTranscripts(publishableTranscripts),
+    [publishableTranscripts],
+  )
   const draftMemoryChunks = useMemo(() => buildMemoryChunksFromDraftChapters(chapters), [chapters])
   const hasInterviewMaterial = transcriptMemoryChunks.length > 0 || draftMemoryChunks.length > 0
   const selectedTone = useMemo(

@@ -122,7 +122,10 @@ export default function ParentProgressScreen() {
 
   const handleGenerateAutobiography = async () => {
     setIsGenerating(true)
-    const memoryChunks = buildMemoryChunksFromTranscripts(transcripts)
+    // 출판 동의를 철회한 기록은 자서전 초안에 넣지 않습니다.
+    const memoryChunks = buildMemoryChunksFromTranscripts(
+      transcripts.filter((transcript) => transcript.publish !== false)
+    )
     try {
       const results = await Promise.all(
         chapters.map((ch) =>

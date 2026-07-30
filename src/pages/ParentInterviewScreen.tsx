@@ -728,7 +728,7 @@ function ActiveCallView({
       const extension = mimeType.includes('mp4') || mimeType.includes('aac') ? 'm4a' : 'webm'
       const upload = await uploadLocalAudio(audioBlob, `dearlog-call-${Date.now()}.${extension}`)
       setAudioFileKey(upload.fileKey)
-      const transcription = await transcribeLocalAudio(upload.fileKey)
+      const transcription = await transcribeLocalAudio(upload.fileKey, upload.uploadToken)
       setAnswerText(transcription.text)
       setRecordState('done')
     } catch (error) {
@@ -1152,7 +1152,7 @@ function VoiceView({
       const extension = mimeType.includes('mp4') || mimeType.includes('aac') ? 'm4a' : 'webm'
       const upload = await uploadLocalAudio(audioBlob, `dearlog-${Date.now()}.${extension}`)
       setAudioFileKey(upload.fileKey)
-      const transcription = await transcribeLocalAudio(upload.fileKey)
+      const transcription = await transcribeLocalAudio(upload.fileKey, upload.uploadToken)
       setDraftText(transcription.text)
       setRecordState('done')
     } catch (error) {
