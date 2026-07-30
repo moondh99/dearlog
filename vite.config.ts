@@ -9,12 +9,11 @@ export default defineConfig(({mode}) => {
     ?.split(',')
     .map((host) => host.trim())
     .filter(Boolean);
+  const localServerPort = env.LOCAL_SERVER_PORT || '8787';
+  const useNgrokHmr = env.VITE_USE_NGROK_HMR === 'true' && Boolean(env.VITE_NGROK_HOST);
 
   return {
     plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -24,11 +23,15 @@ export default defineConfig(({mode}) => {
       allowedHosts: allowedHosts?.length ? allowedHosts : true,
       proxy: {
         '/api': {
-          target: 'http://localhost:8787',
+          target: `http://localhost:${localServerPort}`,
           changeOrigin: true,
         },
       },
-      hmr: env.DISABLE_HMR !== 'true',
+      hmr: env.DISABLE_HMR === 'true'
+        ? false
+        : useNgrokHmr
+          ? { protocol: 'wss', host: env.VITE_NGROK_HOST, clientPort: 443 }
+          : true,
     },
   };
 });

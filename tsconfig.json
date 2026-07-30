@@ -26,6 +26,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    "Senior-Friendly Family Autobiography App"
+    "Senior-Friendly Family Autobiography App",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
   ]
 }
