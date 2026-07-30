@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useAuthStore } from '../store/authStore'
 import { useScheduledCallStore } from '../store/scheduledCallStore'
 import { useCalendarStore } from '../store/calendarStore'
 import { useInterviewStore } from '../store/interviewStore'
@@ -23,7 +24,10 @@ export function useScheduledCall() {
       const today = now.toISOString().split('T')[0]
 
       // Scheduled interview call check
+      // 예약 통화는 부모 역할에서만 띄웁니다. 역할이 없거나 자녀면 RoleGuard가
+      // 어차피 되돌려 보내면서 보고 있던 화면만 잃게 됩니다.
       if (
+        useAuthStore.getState().role === 'parent' &&
         !location.pathname.startsWith('/parent/interview') &&
         currentTime === scheduledTime &&
         scheduledDays.includes(now.getDay()) &&

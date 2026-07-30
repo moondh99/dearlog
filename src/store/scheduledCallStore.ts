@@ -23,7 +23,9 @@ export const useScheduledCallStore = create<ScheduledCallState>()(
     (set) => ({
       scheduledTime: nextMinuteTime(),
       scheduledDays: [0, 1, 2, 3, 4, 5, 6],
-      isEnabled: true,
+      // 기본값은 꺼짐입니다. 예전에는 켜짐 + "1분 뒤"가 기본이라, 앱을 처음 연 사람이
+      // 약 1분 뒤 인터뷰 화면으로 끌려가 회원가입 입력이 통째로 날아갔습니다.
+      isEnabled: false,
       lastCallDate: null,
       setScheduledTime: (scheduledTime) => set({ scheduledTime }),
       setScheduledDays: (scheduledDays) => set({ scheduledDays }),
@@ -31,7 +33,7 @@ export const useScheduledCallStore = create<ScheduledCallState>()(
       markCallMade: () =>
         set({ lastCallDate: new Date().toISOString().split('T')[0] }),
       resetForDemo: () =>
-        set({ scheduledTime: nextMinuteTime(), lastCallDate: null }),
+        set({ scheduledTime: nextMinuteTime(), lastCallDate: null, isEnabled: true }),
     }),
     { name: 'dearlog-scheduled-call' }
   )

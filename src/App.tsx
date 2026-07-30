@@ -87,6 +87,22 @@ function RoleGuard({ allowedRole, children }: { allowedRole: UserRole; children:
   return <>{children}</>
 }
 
+// 역할은 가리지 않고 로그인 여부만 확인합니다. 보호자와 부모가 모두 들어오는 화면용입니다.
+function AuthGuard({ children }: { children: ReactNode }) {
+  const { role } = useAuthStore()
+
+  if (!role) {
+    return <Navigate to="/auth" replace />
+  }
+
+  return <>{children}</>
+}
+
+// 발표용 데모 화면은 로그인 없이 역할을 바꿀 수 있어 기본적으로 막습니다.
+// 시연 빌드에서만 VITE_ENABLE_DEMO_SETTINGS=true 로 켭니다.
+const demoSettingsEnabled = import.meta.env.DEV
+  || import.meta.env.VITE_ENABLE_DEMO_SETTINGS === 'true'
+
 export function RouteFallback() {
   return (
     <div role="status" aria-live="polite" className="min-h-[100dvh] bg-[#F8F6F9] flex items-center justify-center text-[#7A767F]">
@@ -123,8 +139,8 @@ export function AppRoutes() {
             <Route path="/parent/mypage" element={<RoleGuard allowedRole="parent"><MyPageScreen /></RoleGuard>} />
             <Route path="/parent/consent-settings" element={<RoleGuard allowedRole="parent"><ConsentSettingsScreen /></RoleGuard>} />
             <Route path="/mypage" element={<MyPageRedirect />} />
-            <Route path="/settings" element={<DemoSettingsScreen />} />
-            <Route path="/calendar" element={<CalendarScreen />} />
+            {demoSettingsEnabled && <Route path="/settings" element={<DemoSettingsScreen />} />}
+            <Route path="/calendar" element={<AuthGuard><CalendarScreen /></AuthGuard>} />
             <Route path="/child/chatbot" element={<RoleGuard allowedRole="child"><ChatbotScreen /></RoleGuard>} />
             <Route path="/child/autobiography" element={<RoleGuard allowedRole="child"><AutobiographyScreen /></RoleGuard>} />
             <Route path="/child/autobiography/preview" element={<RoleGuard allowedRole="child"><PublicationPreviewScreen /></RoleGuard>} />
