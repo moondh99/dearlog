@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dearlog.cloudflared</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/moondh/Downloads/디어로그/scripts/launchd/start-tunnel.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/moondh/Downloads/디어로그/scripts/launchd/logs/tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/moondh/Downloads/디어로그/scripts/launchd/logs/tunnel.err.log</string>
+</dict>
+</plist>
