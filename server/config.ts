@@ -2,7 +2,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 
-if (process.env.NODE_ENV !== 'test' && process.env.VITEST !== 'true') {
+const isTestRun = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+
+if (!isTestRun) {
   loadDotenv();
 }
 
@@ -27,10 +29,12 @@ export const config = {
     writingModel: process.env.FACTCHAT_WRITING_MODEL ?? process.env.FACTCHAT_CHAT_MODEL ?? 'gpt-5-mini',
   },
   auth: {
-    tokenSecret: process.env.AUTH_TOKEN_SECRET ?? (process.env.NODE_ENV === 'production' ? '' : 'dearlog-local-dev-secret'),
+    // 두 값 모두 fail-closed입니다. 예전에는 NODE_ENV가 'production'이 아니기만 하면
+    // 공개된 고정 시크릿과 x-user-* 헤더 우회가 함께 켜졌기 때문에, NODE_ENV를 설정하지 않고
+    // 띄운 서버는 누구나 토큰을 위조하거나 남의 계정으로 요청할 수 있었습니다.
+    tokenSecret: process.env.AUTH_TOKEN_SECRET ?? (isTestRun ? 'dearlog-test-secret' : ''),
     tokenTtlSeconds: Number(process.env.AUTH_TOKEN_TTL_SECONDS ?? 60 * 60 * 24 * 30),
-    allowDevHeaders: process.env.ALLOW_DEV_AUTH_HEADERS === 'true'
-      || (process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_AUTH_HEADERS !== 'false'),
+    allowDevHeaders: process.env.ALLOW_DEV_AUTH_HEADERS === 'true' || isTestRun,
   },
   invitation: {
     ttlDays: Number(process.env.INVITATION_TTL_DAYS ?? 14),

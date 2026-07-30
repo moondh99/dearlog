@@ -122,7 +122,9 @@ export async function attachLocalUser(req: Request, _res: Response, next: NextFu
       return;
     }
 
-    const requestedUserId = req.header('x-user-id') ?? req.query.userId?.toString();
+    // 쿼리 스트링은 인증 출처로 쓰지 않습니다. ?userId=... 는 링크나 <img> 태그만으로도
+    // 남의 계정으로 요청을 보낼 수 있어 헤더보다 훨씬 위험합니다.
+    const requestedUserId = req.header('x-user-id');
     const requestedRole = parseRole(req.header('x-user-role'));
     const fallbackId = requestedRole === 'senior' ? 'local_senior' : 'local_guardian';
     const userId = requestedUserId || fallbackId;

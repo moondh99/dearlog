@@ -316,6 +316,36 @@ async function findLatestPublicationDraftCache(input: {
   }) ?? caches[0] ?? null;
 }
 
+// 캐시된 초안이 인용한 InterviewRecord id를 모읍니다.
+function collectDraftSourceRecordIds(cache: { writingDraftJson: string }) {
+  const draft = parseJson(cache.writingDraftJson, null) as {
+    chapters?: Array<{ paragraphs?: Array<{ sourceRecordIds?: unknown }> }>;
+  } | null;
+  const ids = new Set<string>();
+  for (const chapter of draft?.chapters ?? []) {
+    for (const paragraph of chapter.paragraphs ?? []) {
+      if (!Array.isArray(paragraph.sourceRecordIds)) continue;
+      for (const id of paragraph.sourceRecordIds) {
+        if (typeof id === 'string') ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
+// 초안이 인용한 기록이 지금도 전부 출판 가능한 원본에 남아 있는지 확인합니다.
+// 하나라도 빠졌다면 그 사이 동의가 철회됐거나 기록이 지워진 것이므로 캐시를 다시 쓰지 않습니다.
+function draftUsesOnlyAvailableRecords(
+  cache: { writingDraftJson: string },
+  availableRecords: Array<{ id: string }>,
+) {
+  const availableIds = new Set(availableRecords.map((record) => record.id));
+  for (const id of collectDraftSourceRecordIds(cache)) {
+    if (!availableIds.has(id)) return false;
+  }
+  return true;
+}
+
 async function upsertPublicationDraftCache(input: {
   seniorId: string;
   coverDesignId?: string | null;
@@ -809,7 +839,10 @@ export async function startLocalPublicationPreviewJob(input: {
       format: input.format,
       toneProfileOverride: input.toneProfileOverride,
     });
-    if (latestDraft) {
+    // 기록이 추가돼 초안이 오래된 경우에는 예전처럼 즉시 보여 주고 isStale로 표시합니다.
+    // 다만 출판 동의 철회나 삭제로 원본에서 빠진 기록이 초안에 들어 있으면 재사용하지 않습니다.
+    // 그대로 두면 철회 직후 미리보기에 철회한 이야기가 계속 보입니다.
+    if (latestDraft && draftUsesOnlyAvailableRecords(latestDraft, publicationInput.records)) {
       const job = await prisma.publicationPreviewJob.create({
         data: {
           userId: input.seniorId,
