@@ -16,6 +16,7 @@ coverage/
 
 # Generated demo artifacts
 artifacts/
+backups/
 
 # Local Dearlog server data
 server/data/*.db
@@ -33,6 +34,18 @@ server/storage/pdfs/*
 .kiro/
 NEXT_AGENT_PROMPT.md
 
+# QA 산출물과 사업/발표 자료 (디스크에는 유지, 저장소에는 넣지 않는다)
+docs/dearlog_qa_news_article_*
+디어로그_*.docx
+디어로그_*.png
+디어로그_*.svg
+screenshot.png
+
+# 일회성 임시 파일 (삭제하지 않고 추적만 제외)
+server/.write-test-*
+remove_fake_statusbar.py
+scripts/launchd/logs/
+
 # Logs and temporary files
 *.log
 npm-debug.log*
@@ -41,3 +54,10 @@ yarn-error.log*
 pnpm-debug.log*
 *.tmp
 *.temp
+
+# Capacitor iOS build artifacts
+dist-mobile/
+ios/App/Pods/
+ios/App/build/
+ios/DerivedData/
+ios/.build/

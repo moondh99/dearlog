@@ -1,9 +1,12 @@
-import type { ReactNode, ButtonHTMLAttributes } from 'react'
+import type { ReactNode } from 'react'
 
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface ButtonProps {
   children: ReactNode
+  onClick?: () => void
   variant?: 'primary' | 'secondary' | 'ghost'
   fullWidth?: boolean
+  disabled?: boolean
+  type?: 'button' | 'submit'
 }
 
 export default function Button({
@@ -13,15 +16,13 @@ export default function Button({
   fullWidth = false,
   disabled = false,
   type = 'button',
-  className = '',
-  ...rest
 }: ButtonProps) {
-  const base = 'min-h-[48px] rounded-xl text-[16px] font-medium px-6 transition-opacity active:opacity-80 disabled:opacity-40'
+  const base = 'min-h-[51px] rounded-[14px] text-[14px] font-medium tracking-[0.04em] px-6 transition-all active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100'
 
   const variants = {
-    primary: 'bg-[#C8956C] text-white',
-    secondary: 'bg-[#F4DDD0] text-[#8B5E3C]',
-    ghost: 'bg-transparent text-[#7A6A5C] underline',
+    primary: 'bg-[#2A2830] text-[#F7F5FB] shadow-[0_12px_28px_rgba(42,40,48,0.16)]',
+    secondary: 'bg-white text-[#2A2830] border border-[#E0DBE8]',
+    ghost: 'bg-transparent text-[#7A767F]',
   }
 
   return (
@@ -29,8 +30,7 @@ export default function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`${base} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}
-      {...rest}
+      className={`${base} ${variants[variant]} ${fullWidth ? 'w-full' : ''}`}
     >
       {children}
     </button>

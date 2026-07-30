@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dearlog Proof and Safety</title>
+  <link rel="stylesheet" href="../assets/workflow.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../dearlog-workflow.html" aria-label="Dearlog Agent Workflow 홈">
+      <span class="brand-mark">D</span>
+      <span>
+        <strong>Dearlog Agent Workflow</strong>
+        <small>Dify-style workflow map</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="워크플로우 페이지">
+      <a class="nav-link" href="../../dearlog-workflow.html">개요</a>
+      <a class="nav-link" href="./01-service-flow.html">서비스 흐름</a>
+      <a class="nav-link" href="./02-agent-roles.html">에이전트 역할</a>
+      <a class="nav-link is-active" href="./03-safety-and-proof.html">근거와 안전장치</a>
+      <a class="nav-link" href="./04-output-workflow.html">산출물</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div class="eyebrow">03 Dify-style Guard Workflow</div>
+      <h1>AI 생성물이 가족에게 보이기 전, Guard 노드를 통과합니다.</h1>
+      <p>Dearlog의 안전장치는 Dify 워크플로우의 조건/검증 노드처럼 원문, 출처, 권한, fallback을 순서대로 확인합니다.</p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Safety Gate Canvas</p>
+        <h2>Raw Memory → Knowledge → Guard → Reader Output</h2>
+      </div>
+      <div class="dify-board">
+        <div class="dify-canvas">
+          <div class="dify-flow">
+            <div class="dify-node start">
+              <span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">S</div><div><div class="dify-node-title">부모님 원문</div><div class="dify-node-type">Start / Raw Input</div></div></div>
+              <div class="dify-node-body">raw transcript를 삭제하지 않고 품질관리의 기준으로 남깁니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node agent">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">A</div><div><div class="dify-node-title">Archivist</div><div class="dify-node-type">Structuring Node</div></div></div>
+              <div class="dify-node-body">clean text, tags, reliability, chapter hint가 있는 MemoryChunk로 정리합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node knowledge">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">K</div><div><div class="dify-node-title">Knowledge Retrieval</div><div class="dify-node-type">RAG / Graph RAG</div></div></div>
+              <div class="dify-node-body">대화와 책 생성에 사용할 실제 기억 근거를 검색합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node guard">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">IF</div><div><div class="dify-node-title">Safety Guard</div><div class="dify-node-type">Condition / Policy</div></div></div>
+              <div class="dify-node-body">출처 ID, 권한/동의, 금칙어, fallback 조건을 확인합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node end">
+              <span class="dify-port in"></span>
+              <div class="dify-node-header"><div class="dify-icon">E</div><div><div class="dify-node-title">Reader Output</div><div class="dify-node-type">End</div></div></div>
+              <div class="dify-node-body">가족이 보는 대화방/책/PDF에는 독자용 내용만 표시됩니다.</div>
+            </div>
+          </div>
+          <div class="dify-note">Dify의 조건 분기처럼, 근거가 부족하면 생성물이 바로 통과하지 않고 fallback 또는 추가 질문으로 이동합니다.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Internal vs Reader Branch</p>
+        <h2>내부 메타데이터와 독자용 출력 분리</h2>
+      </div>
+      <div class="dify-board">
+        <div class="dify-canvas">
+          <div class="dify-flow">
+            <div class="dify-node knowledge">
+              <span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">M</div><div><div class="dify-node-title">Publication Manifest</div><div class="dify-node-type">Structured JSON</div></div></div>
+              <div class="dify-node-body">sourceRecordIds, reliability, missingSections를 내부에 보존합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node guard">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">F</div><div><div class="dify-node-title">Reader Filter</div><div class="dify-node-type">Transform Node</div></div></div>
+              <div class="dify-node-body">독자용 책에 들어갈 필드만 통과시키고 QA/테스트 문구를 제거합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node end">
+              <span class="dify-port in"></span>
+              <div class="dify-node-header"><div class="dify-icon">PDF</div><div><div class="dify-node-title">Final A5 PDF</div><div class="dify-node-type">Reader-facing Output</div></div></div>
+              <div class="dify-node-body">표지, 목차, 본문, 사진, 캡션, 마무리 글만 가족에게 보입니다.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../data/agents.js"></script>
+  <script src="../assets/workflow.js"></script>
+</body>
+</html>

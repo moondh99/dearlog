@@ -8,55 +8,71 @@ datasource db {
 }
 
 model User {
-  id                   String                  @id @default(uuid())
-  name                 String
-  phoneNumber          String?                 @unique
-  role                 String
-  birthDecade          String?
-  preferredName        String?
-  seniorName           String?
-  seniorBirthDecade    String?
-  seniorPreferredName  String?
-  guardianName         String?
-  guardianRelationship String?
-  guardianPreferredName String?
-  createdAt            DateTime                @default(now())
-  updatedAt            DateTime                @updatedAt
-  seniorLinks          GuardianSeniorLink[]    @relation("GuardianLinks")
-  guardianLinks        GuardianSeniorLink[]    @relation("SeniorLinks")
-  createdQuestions     Question[]              @relation("QuestionCreator")
-  seniorSchedules      InterviewSchedule[]     @relation("SeniorSchedules")
-  guardianSchedules    InterviewSchedule[]     @relation("GuardianSchedules")
-  interviewSessions    InterviewSession[]
-  interviewRecords     InterviewRecord[]
-  freeSpeechRecords    FreeSpeechRecord[]
-  photos               Photo[]
-  pushSubscriptions    PushSubscription[]
-  notifications        Notification[]          @relation("NotificationRecipient")
-  relatedNotifications Notification[]          @relation("NotificationRelatedUser")
-  coverDesigns         CoverDesign[]
-  publicationRequests  PublicationRequest[]    @relation("PublicationSenior")
-  requestedPublications PublicationRequest[]   @relation("PublicationRequester")
-  legacyVault          LegacyVault?
+  id                     String                  @id @default(uuid())
+  name                   String
+  phoneNumber            String?                 @unique
+  role                   String
+  birthDate              String?
+  birthDecade            String?
+  preferredName          String?
+  seniorName             String?
+  seniorBirthDecade      String?
+  seniorPreferredName    String?
+  guardianName           String?
+  guardianRelationship   String?
+  guardianPreferredName  String?
+  profileImageUrl        String?
+  recordSpaceName        String?
+  recordSpaceCoverUrl    String?
+  hasCurrentJob          Boolean?
+  occupation             String?
+  hometown               String?
+  schoolHistory          String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  seniorLinks            GuardianSeniorLink[]    @relation("GuardianLinks")
+  guardianLinks          GuardianSeniorLink[]    @relation("SeniorLinks")
+  createdQuestions       Question[]              @relation("QuestionCreator")
+  seniorQuestions        Question[]              @relation("QuestionSenior")
+  seniorSchedules        InterviewSchedule[]     @relation("SeniorSchedules")
+  guardianSchedules      InterviewSchedule[]     @relation("GuardianSchedules")
+  interviewSessions      InterviewSession[]
+  interviewRecords       InterviewRecord[]
+  freeSpeechRecords      FreeSpeechRecord[]
+  photos                 Photo[]
+  pushSubscriptions      PushSubscription[]
+  notifications          Notification[]          @relation("NotificationRecipient")
+  relatedNotifications   Notification[]          @relation("NotificationRelatedUser")
+  coverDesigns           CoverDesign[]
+  publicationDraftCaches PublicationDraftCache[] @relation("PublicationDraftSenior")
+  publicationRequests    PublicationRequest[]    @relation("PublicationSenior")
+  requestedPublications  PublicationRequest[]    @relation("PublicationRequester")
+  publicationPreviewJobs PublicationPreviewJob[] @relation("PublicationPreviewJobSenior")
+  requestedPreviewJobs   PublicationPreviewJob[] @relation("PublicationPreviewJobRequester")
+  legacyVault            LegacyVault?
+  memories               Memory[]
+  autobiographyDraft     AutobiographyDraft?
+  calendarEvents         CalendarEvent[]
 }
 
 model GuardianSeniorLink {
-  id         String   @id @default(uuid())
-  guardianId String
-  seniorId   String
-  createdAt  DateTime @default(now())
-  guardian   User     @relation("GuardianLinks", fields: [guardianId], references: [id], onDelete: Cascade)
-  senior     User     @relation("SeniorLinks", fields: [seniorId], references: [id], onDelete: Cascade)
+  id           String   @id @default(uuid())
+  guardianId   String
+  seniorId     String
+  relationship String?
+  createdAt    DateTime @default(now())
+  guardian     User     @relation("GuardianLinks", fields: [guardianId], references: [id], onDelete: Cascade)
+  senior       User     @relation("SeniorLinks", fields: [seniorId], references: [id], onDelete: Cascade)
 
   @@unique([guardianId, seniorId])
 }
 
 model Chapter {
-  id             String            @id
-  order          Int               @unique
+  id             String             @id
+  order          Int                @unique
   title          String
-  slug           String            @unique
-  minAnswerCount Int               @default(15)
+  slug           String             @unique
+  minAnswerCount Int                @default(15)
   questions      Question[]
   sessions       InterviewSession[]
   records        InterviewRecord[]
@@ -64,34 +80,44 @@ model Chapter {
 }
 
 model Question {
-  id          String            @id @default(uuid())
-  category    String
-  text        String
-  chapterId   String?
-  photoId     String?
-  createdById String?
-  status      String            @default("pending")
-  createdAt   DateTime          @default(now())
-  answeredAt  DateTime?
+  id             String    @id @default(uuid())
+  category       String
+  text           String
+  chapterId      String?
+  seniorId       String?
+  photoId        String?
+  createdById    String?
+  status         String    @default("pending")
+  createdAt      DateTime  @default(now())
+  answeredAt     DateTime?
   answerRecordId String?
-  chapter     Chapter?          @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  photo       Photo?            @relation(fields: [photoId], references: [id], onDelete: SetNull)
-  createdBy   User?             @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  records     InterviewRecord[]
-  sessions    InterviewSession[]
+
+  anonymous      Boolean @default(false)
+  priority       String  @default("normal")
+  answerMemoryId String?
+
+  chapter   Chapter?           @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  senior    User?              @relation("QuestionSenior", fields: [seniorId], references: [id], onDelete: SetNull)
+  photo     Photo?             @relation(fields: [photoId], references: [id], onDelete: SetNull)
+  createdBy User?              @relation("QuestionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  records   InterviewRecord[]
+  sessions  InterviewSession[]
+
+  @@index([seniorId, category, createdAt])
 }
 
 model Photo {
-  id           String     @id @default(uuid())
-  userId       String
-  fileKey      String
-  fileName     String
-  mimeType     String
-  metadataJson String     @default("{}")
-  analysisJson String     @default("{}")
-  uploadedAt   DateTime   @default(now())
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  questions    Question[]
+  id              String     @id @default(uuid())
+  userId          String
+  fileKey         String
+  fileName        String
+  mimeType        String
+  metadataJson    String     @default("{}")
+  analysisJson    String     @default("{}")
+  linkedMemoryIds String     @default("[]")
+  uploadedAt      DateTime   @default(now())
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questions       Question[]
 }
 
 model InterviewSchedule {
@@ -110,37 +136,43 @@ model InterviewSchedule {
 }
 
 model InterviewSession {
-  id                String            @id @default(uuid())
+  id                String             @id @default(uuid())
   seniorId          String
   chapterId         String
   mode              String
-  status            String            @default("active")
+  status            String             @default("active")
   currentQuestionId String?
-  startedAt         DateTime          @default(now())
+  startedAt         DateTime           @default(now())
   endedAt           DateTime?
   pausedAt          DateTime?
-  senior            User              @relation(fields: [seniorId], references: [id], onDelete: Cascade)
-  chapter           Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
-  currentQuestion   Question?         @relation(fields: [currentQuestionId], references: [id], onDelete: SetNull)
+  senior            User               @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  chapter           Chapter            @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  currentQuestion   Question?          @relation(fields: [currentQuestionId], references: [id], onDelete: SetNull)
   records           InterviewRecord[]
   freeSpeech        FreeSpeechRecord[]
 }
 
 model InterviewRecord {
-  id             String            @id @default(uuid())
-  userId         String
-  chapterId      String
-  questionId     String?
-  sessionId      String?
-  audioFileKey   String
-  transcriptText String
-  recordedAt     DateTime          @default(now())
-  source         String            @default("app")
-  mode           String            @default("photo")
-  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chapter        Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
-  question       Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
-  session        InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  id                String            @id @default(uuid())
+  userId            String
+  chapterId         String
+  questionId        String?
+  sessionId         String?
+  audioFileKey      String
+  transcriptText    String
+  aiSummary         String?
+  recordedAt        DateTime          @default(now())
+  source            String            @default("app")
+  mode              String            @default("photo")
+  publish           Boolean           @default(true)
+  chatbot           Boolean           @default(true)
+  reviewStatus      String            @default("pending")
+  reviewedAt        DateTime?
+  reviewRequestText String?
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapter           Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  question          Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  session           InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 }
 
 model FreeSpeechRecord {
@@ -185,51 +217,198 @@ model Notification {
   relatedUser   User?     @relation("NotificationRelatedUser", fields: [relatedUserId], references: [id], onDelete: SetNull)
 }
 
+model AiProxyAuditLog {
+  id             String   @id @default(uuid())
+  userId         String
+  role           String
+  endpoint       String
+  model          String?
+  outcome        String
+  statusCode     Int
+  estimatedUnits Int      @default(0)
+  latencyMs      Int      @default(0)
+  providerStatus Int?
+  providerCode   String?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([endpoint, outcome, createdAt])
+}
+
 model CoverDesign {
-  id           String    @id @default(uuid())
-  userId       String
-  palette      String
-  template     String
-  font         String
-  analysisJson String    @default("{}")
-  confirmedAt  DateTime?
-  createdAt    DateTime  @default(now())
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  publicationRequests PublicationRequest[]
+  id                     String                  @id @default(uuid())
+  userId                 String
+  palette                String
+  template               String
+  font                   String
+  analysisJson           String                  @default("{}")
+  confirmedAt            DateTime?
+  createdAt              DateTime                @default(now())
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationDraftCaches PublicationDraftCache[]
+  publicationRequests    PublicationRequest[]
+  publicationPreviewJobs PublicationPreviewJob[]
 }
 
 model PublicationRequest {
-  id            String      @id @default(uuid())
+  id            String                 @id @default(uuid())
   userId        String
   requestedById String
   coverDesignId String?
-  format        String      @default("A5")
-  status        String      @default("requested")
+  draftCacheId  String?
+  format        String                 @default("A5")
+  status        String                 @default("requested")
   pdfFileKey    String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  user          User        @relation("PublicationSenior", fields: [userId], references: [id], onDelete: Cascade)
-  requestedBy   User        @relation("PublicationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
-  coverDesign   CoverDesign? @relation(fields: [coverDesignId], references: [id], onDelete: SetNull)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  user          User                   @relation("PublicationSenior", fields: [userId], references: [id], onDelete: Cascade)
+  requestedBy   User                   @relation("PublicationRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  coverDesign   CoverDesign?           @relation(fields: [coverDesignId], references: [id], onDelete: SetNull)
+  draftCache    PublicationDraftCache? @relation(fields: [draftCacheId], references: [id], onDelete: SetNull)
+}
+
+model PublicationDraftCache {
+  id                  String               @id @default(uuid())
+  userId              String
+  coverDesignId       String?
+  format              String               @default("A5")
+  sourceHash          String
+  editorialPlanJson   String
+  writingDraftJson    String
+  manifestJson        String
+  html                String
+  generatedBy         String               @default("fallback")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  user                User                 @relation("PublicationDraftSenior", fields: [userId], references: [id], onDelete: Cascade)
+  coverDesign         CoverDesign?         @relation(fields: [coverDesignId], references: [id], onDelete: SetNull)
+  publicationRequests PublicationRequest[]
+  previewJobs         PublicationPreviewJob[]
+
+  @@unique([userId, format, sourceHash, generatedBy])
+  @@index([userId, format, sourceHash, generatedBy])
+}
+
+model PublicationPreviewJob {
+  id            String                 @id @default(uuid())
+  userId        String
+  requestedById String
+  coverDesignId String?
+  draftCacheId  String?
+  format        String                 @default("A5")
+  sourceHash    String
+  toneProfileJson String?
+  status        String                 @default("queued")
+  stage         String                 @default("cache_check")
+  attemptCount  Int                    @default(0)
+  errorCode     String?
+  errorMessage  String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  user          User                   @relation("PublicationPreviewJobSenior", fields: [userId], references: [id], onDelete: Cascade)
+  requestedBy   User                   @relation("PublicationPreviewJobRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+  coverDesign   CoverDesign?           @relation(fields: [coverDesignId], references: [id], onDelete: SetNull)
+  draftCache    PublicationDraftCache? @relation(fields: [draftCacheId], references: [id], onDelete: SetNull)
+
+  @@index([userId, format, sourceHash, status])
+  @@index([status, updatedAt])
 }
 
 model LegacyVault {
-  id                       String   @id @default(uuid())
-  seniorId                 String   @unique
-  isVaultSetup             Boolean  @default(false)
-  encryptedMemories        String?  // 암호화된 비공개 기억 백업 JSON
-  encryptedAutobiography   String?  // 암호화된 자서전 백업 JSON
-  serverShare              String?  // JSON string representing Share B
-  institutionShare         String?  // JSON string representing Share C
-  
-  isDeceased               Boolean  @default(false)
-  deathVerificationStatus  String   @default("alive") // "alive", "pending_verification", "released"
-  serverShareReleased      Boolean  @default(false)
-  institutionShareReleased Boolean  @default(false)
-  
-  createdAt                DateTime @default(now())
-  updatedAt                DateTime @updatedAt
-  
-  senior                   User     @relation(fields: [seniorId], references: [id], onDelete: Cascade)
+  id                     String  @id @default(uuid())
+  seniorId               String  @unique
+  isVaultSetup           Boolean @default(false)
+  encryptedMemories      String? // 암호화된 비공개 기억 백업 JSON
+  encryptedAutobiography String? // 암호화된 자서전 백업 JSON
+  serverShare            String? // JSON string representing Share B
+  institutionShare       String? // JSON string representing Share C
+
+  isDeceased               Boolean @default(false)
+  deathVerificationStatus  String  @default("alive") // "alive", "pending_verification", "released"
+  serverShareReleased      Boolean @default(false)
+  institutionShareReleased Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  senior User @relation(fields: [seniorId], references: [id], onDelete: Cascade)
 }
 
+model Memory {
+  id                 String   @id @default(uuid())
+  userId             String
+  date               DateTime @default(now())
+  topic              String
+  originalTranscript String
+  cleanedTranscript  String
+  publishVersion     String
+  privacy            String   @default("private")
+  confidenceLabel    String   @default("확인됨")
+  contradictions     String   @default("[]")
+
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tags            MemoryTag[]
+  consentSettings MemoryConsentSettings?
+  vectorEntry     MemoryVectorEntry?
+}
+
+model MemoryTag {
+  id       String @id @default(uuid())
+  memoryId String
+  category String // "people", "places", "emotions", "timePeriod"
+  value    String
+  memory   Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model MemoryConsentSettings {
+  memoryId   String @id
+  publish    String @default("granted")
+  familyRead String @default("granted")
+  chatbot    String @default("granted")
+  posthumous String @default("granted")
+  sensitive  String @default("granted")
+  memory     Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model MemoryVectorEntry {
+  memoryId      String @id
+  embeddingJson String
+  text          String
+  memory        Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+}
+
+model AutobiographyDraft {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  structureJson  String    @default("{}")
+  narrativesJson String    @default("[]")
+  lastGenerated  DateTime?
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CalendarEvent {
+  id             String   @id @default(uuid())
+  userId         String
+  eventType      String
+  eventDate      String
+  relatedPersons String   @default("[]")
+  recipientId    String   @default("family-group")
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id         String    @id @default(uuid())
+  token      String    @unique
+  guardianId String
+  seniorId   String    @unique
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}

@@ -12,12 +12,10 @@ import type {
   StoredPhoto,
   VectorEntry,
 } from '../types';
-import type { AuthState } from '../../store';
 
 export const DEMO_ID_PREFIX = 'demo_';
 
 export interface CapstoneDemoState {
-  auth: AuthState;
   memories: Memory[];
   photos: StoredPhoto[];
   familyQuestions: FamilyQuestion[];
@@ -837,25 +835,6 @@ export function buildDemoAutobiography(): Autobiography {
 
 export function buildCapstoneDemoState(): CapstoneDemoState {
   return {
-    auth: {
-      userId: 'local_senior',
-      phoneNumber: '01012345678',
-      isAuthenticated: true,
-      role: 'senior',
-      profile: {
-        name: '김영자',
-        birthDecade: '1950년대',
-        preferredName: '어르신',
-      },
-      guardianProfile: {
-        name: '김민수',
-        relationship: '자녀',
-        preferredName: '보호자',
-      },
-      onboardingCompleted: true,
-      familyInviteSkipped: true,
-      lastSignedInAt: now,
-    },
     memories,
     photos,
     familyQuestions,

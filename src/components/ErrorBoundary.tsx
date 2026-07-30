@@ -39,19 +39,19 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
     return (
       <div
         role="alert"
-        className="mx-auto flex min-h-[360px] max-w-xl flex-col items-center justify-center rounded-[28px] border border-red-200 bg-red-50 px-6 py-10 text-center"
+        className="mx-auto flex min-h-[100dvh] max-w-[390px] flex-col items-center justify-center bg-[#F8F6F9] px-6 py-10 text-center text-[#2A2830]"
       >
-        <AlertTriangle className="mb-4 h-10 w-10 text-error" aria-hidden="true" />
-        <h2 className="text-[22px] font-black text-error">
+        <AlertTriangle className="mb-4 h-10 w-10 text-[#9485BE]" aria-hidden="true" />
+        <h2 className="font-serif text-[22px] font-normal leading-[1.4] text-[#2A2830]">
           {this.props.fallbackTitle ?? '화면을 불러오지 못했습니다'}
         </h2>
-        <p className="mt-2 text-[15px] font-semibold leading-relaxed text-red-800/80">
+        <p className="mt-3 text-[13px] leading-[1.7] text-[#7A767F]">
           일시적인 문제가 발생했습니다. 다시 시도해도 문제가 계속되면 이전 화면으로 이동해 주세요.
         </p>
         <button
           type="button"
           onClick={this.handleRetry}
-          className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-error px-5 py-3 text-[15px] font-bold text-white transition-colors hover:bg-error/90"
+          className="mt-7 inline-flex min-h-[51px] items-center justify-center gap-2 rounded-[14px] bg-[#2A2830] px-6 text-[14px] font-medium tracking-[0.04em] text-[#F7F5FB] transition active:scale-[0.99]"
         >
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
           다시 시도

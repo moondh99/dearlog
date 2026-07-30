@@ -5,6 +5,26 @@ import { config } from './config';
 
 export type StorageKind = 'audio' | 'photos' | 'pdfs';
 
+const MEBIBYTE = 1024 * 1024;
+
+// Busboy emits partsLimit when it reaches the terminating multipart boundary,
+// so reserve one part beyond the maximum accepted fields + file.
+export const PHOTO_UPLOAD_LIMITS = {
+  fileSize: 20 * MEBIBYTE,
+  files: 1,
+  fields: 8,
+  parts: 10,
+  fieldNestingDepth: 0,
+} as const;
+
+export const AUDIO_UPLOAD_LIMITS = {
+  fileSize: 25 * MEBIBYTE,
+  files: 1,
+  fields: 1,
+  parts: 3,
+  fieldNestingDepth: 0,
+} as const;
+
 export function storageDir(kind: StorageKind) {
   return path.join(config.storageDir, kind);
 }
@@ -39,37 +59,50 @@ export async function writeLocalFile(kind: StorageKind, bytes: Uint8Array | Buff
   return buildLocalFileKey(kind, fileName);
 }
 
-export const photoUpload = multer({
-  storage: multer.diskStorage({
-    destination: async (_req, _file, callback) => {
-      try {
-        await ensureLocalStorage();
-        callback(null, storageDir('photos'));
-      } catch (error) {
-        callback(error as Error, storageDir('photos'));
-      }
-    },
-    filename: (_req, file, callback) => {
-      const ext = path.extname(file.originalname) || '.jpg';
-      callback(null, `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`);
-    },
-  }),
-});
+type LocalUploadOptions = {
+  destinationDir?: string;
+};
 
-export const audioUpload = multer({
-  storage: multer.diskStorage({
+function createLocalDiskStorage(
+  kind: 'photos' | 'audio',
+  fallbackExtension: string,
+  destinationDir?: string,
+) {
+  const targetDir = destinationDir ?? storageDir(kind);
+  return multer.diskStorage({
     destination: async (_req, _file, callback) => {
       try {
-        await ensureLocalStorage();
-        callback(null, storageDir('audio'));
+        if (destinationDir) {
+          await fs.mkdir(targetDir, { recursive: true });
+        } else {
+          await ensureLocalStorage();
+        }
+        callback(null, targetDir);
       } catch (error) {
-        callback(error as Error, storageDir('audio'));
+        callback(error as Error, targetDir);
       }
     },
     filename: (_req, file, callback) => {
-      // 앱 내 음성 인터뷰 원본 파일은 브라우저가 만든 webm/wav 등의 확장자를 유지해 로컬에 저장합니다.
-      const ext = path.extname(file.originalname) || '.webm';
+      const ext = path.extname(file.originalname) || fallbackExtension;
       callback(null, `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`);
     },
-  }),
-});
+  });
+}
+
+export function createPhotoUpload(options: LocalUploadOptions = {}) {
+  return multer({
+    storage: createLocalDiskStorage('photos', '.jpg', options.destinationDir),
+    limits: PHOTO_UPLOAD_LIMITS,
+  });
+}
+
+export function createAudioUpload(options: LocalUploadOptions = {}) {
+  return multer({
+    // 앱 내 음성 인터뷰 원본 파일은 브라우저가 만든 webm/wav 등의 확장자를 유지해 로컬에 저장합니다.
+    storage: createLocalDiskStorage('audio', '.webm', options.destinationDir),
+    limits: AUDIO_UPLOAD_LIMITS,
+  });
+}
+
+export const photoUpload = createPhotoUpload();
+export const audioUpload = createAudioUpload();

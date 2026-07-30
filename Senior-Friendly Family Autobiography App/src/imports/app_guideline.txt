@@ -1,0 +1,347 @@
+Create a premium, warm, senior-friendly Korean mobile app UI flow for an AI family autobiography service called “DEARLOG”.
+
+DEARLOG is a voice-based family memory archiving service. It helps parents record their life stories through phone-call style AI interviews, and helps children collect questions, upload family photos, review progress, check chapters, and help complete a family autobiography. When the interview progress reaches 100%, the app generates an autobiography PDF/book and a source-grounded family persona chatbot.
+
+The design should feel warm, calm, premium, trustworthy, emotional, and family-oriented. It should feel like a high-quality digital family album and autobiography archive, not a cold AI chatbot. Use Korean typography, large readable text, rounded cards, soft shadows, elegant spacing, family photo album visuals, book cover motifs, voice recording elements, and calm editorial layouts.
+
+Color palette:
+- Background / Parchment: #FAF3E8
+- Surface / Card: #FFFDF8
+- Primary Brown: #8B6A3E
+- Deep Ink Brown: #3D2C1E
+- Amber Clay: #C8956C
+- Sage: #6B8F71
+- Warm Gray: #E8E0D4
+- Sepia Tint: #F2D9B8
+- Text Primary: #3D2C1E
+- Text Secondary: #7A6A5C
+- Border: #E8E0D4
+
+Important design direction:
+- Parent mode must be extremely simple and accessible for older users.
+- Child mode should look more premium, detailed, and management-oriented.
+- Include a font size adjustment feature in parent mode.
+- Show both the normal text UI version and the large text UI version.
+- The large text UI version should use bigger typography, fewer elements per screen, larger buttons, and clearer contrast.
+- Use warm brown as the main CTA color.
+- Use sage for success, saved status, and trust indicators.
+- Use sepia or amber accents for memory cards and family archive elements.
+- Avoid cold blue AI styling, futuristic neon, complicated dashboards, tiny text, and childish illustrations.
+
+Create the following mobile screens in Korean, 390x844 frame size.
+
+1. Onboarding main screen
+Purpose: emotional introduction.
+Title: “가족의 이야기는, 목소리로 오래 남길 수 있어요”
+Subtitle: “DEARLOG는 부모님의 기억과 감정을 음성으로 기록하고, 가족이 다시 꺼내볼 수 있는 자서전과 챗봇으로 만들어드립니다.”
+CTA button: “시작하기”
+Visual: warm family album, autobiography book cover, old photo frame, subtle paper texture.
+
+2. Service introduction preview screen
+Purpose: introduce how DEARLOG works.
+Create a scrollable preview with 3 elegant cards:
+Card 1: “전화로 편하게 답변해요”
+Description: “AI가 정해진 시간에 전화를 걸고, 부모님은 말로 편하게 답합니다.”
+Card 2: “원문을 먼저 보존해요”
+Description: “녹음된 음성과 답변 원문을 기준으로 자서전이 만들어집니다.”
+Card 3: “가족이 함께 완성해요”
+Description: “자녀는 질문과 사진을 더하고, 완성된 기록을 챕터별로 확인합니다.”
+CTA button: “다음으로”
+
+3. Sign up / login screen
+Title: “DEARLOG에 오신 것을 환영해요”
+Login options:
+- “카카오로 시작하기”
+- “이메일로 시작하기”
+- “로그인하기”
+Keep it simple, warm, and spacious.
+
+4. Mode selection screen
+Title: “어떤 방식으로 시작할까요?”
+Two large premium cards:
+Card 1: “부모 모드”
+Description: “내 이야기를 직접 남기고 자서전으로 완성하고 싶어요.”
+Icon: book + microphone
+Card 2: “자녀 모드”
+Description: “부모님의 이야기를 모으고 가족 기록을 함께 완성하고 싶어요.”
+Icon: family album + question card
+CTA button: “선택하고 계속하기”
+
+5. Parent accessibility setup screen
+Purpose: allow older users to adjust text size before using the app.
+Title: “글씨 크기를 편하게 맞춰드릴게요”
+Subtitle: “부모님이 보기 편한 크기로 화면을 조절할 수 있어요.”
+Include a font size selector:
+- “기본”
+- “크게”
+- “아주 크게”
+Show a live preview card:
+Preview text: “오늘은 어떤 이야기를 남겨볼까요?”
+CTA button: “이 크기로 시작하기”
+Add small helper text: “설정은 언제든 다시 바꿀 수 있어요.”
+
+6. Parent home screen - normal text version
+Purpose: parent dashboard with normal font size.
+Title: “오늘은 어떤 이야기를 남겨볼까요?”
+Show 3 large action cards:
+1. “인터뷰 답변하기”
+Description: “AI가 전화를 걸어 천천히 질문해드려요.”
+Button: “전화 인터뷰 시작”
+2. “진행 상황 확인”
+Description: “자서전이 얼마나 완성되었는지 확인해요.”
+Button: “진행 보기”
+3. “내 기록 확인”
+Description: “녹음된 원문과 정리된 내용을 볼 수 있어요.”
+Button: “기록 보기”
+Bottom navigation:
+- 홈
+- 인터뷰
+- 기록
+- 설정
+
+7. Parent home screen - large text version
+Purpose: same parent dashboard, but redesigned for senior accessibility.
+Title: “오늘의 이야기”
+Use much larger typography and fewer words.
+Show 2 very large action cards only:
+1. “전화 인터뷰”
+Description: “전화를 받고 편하게 답하세요.”
+Button: “시작하기”
+2. “내 기록”
+Description: “남긴 이야기를 확인해요.”
+Button: “보기”
+Include a floating or top-right button:
+“글씨 크기”
+Design requirements:
+- Bigger title
+- Larger buttons
+- Higher contrast
+- Fewer cards on screen
+- Wider touch targets
+- Very simple layout
+- No dense text
+
+8. Parent normal vs large UI comparison screen
+Purpose: show the difference between normal UI and large text UI.
+Title: “부모님께 맞는 화면을 선택하세요”
+Create two side-by-side preview cards:
+Left card:
+Label: “기본 화면”
+Show small preview of normal parent home.
+Right card:
+Label: “큰 글씨 화면”
+Show preview with larger text and bigger buttons.
+Below:
+Text: “큰 글씨 화면은 버튼과 문구를 더 크게 보여드려요.”
+CTA button: “큰 글씨 화면으로 사용하기”
+Secondary button: “기본 화면으로 사용하기”
+
+9. Parent phone interview guide screen
+Title: “전화로 편하게 인터뷰해요”
+Body: “정해진 시간에 DEARLOG가 전화를 걸어드립니다. 부모님은 질문을 듣고 말로 답하기만 하면 됩니다.”
+Elements:
+- scheduled call card
+- phone icon
+- simple AI interviewer message bubble
+CTA button: “인터뷰 시간 정하기”
+
+10. Parent call scheduling screen
+Title: “언제 전화를 드릴까요?”
+Include:
+- date selector
+- large time chips
+- “오전 10:00”
+- “오후 2:00”
+- “오후 7:00”
+CTA button: “이 시간으로 예약하기”
+Helper text: “예약 시간은 나중에 변경할 수 있어요.”
+
+11. Parent progress screen
+Title: “자서전 완성까지”
+Progress: 65%
+Cards:
+- “완료한 질문 13개”
+- “남은 질문 7개”
+- “최근 이야기: 어린 시절”
+CTA button: “다음 인터뷰 이어하기”
+Use a simple progress bar with warm brown and sage.
+
+12. Parent voice record verification screen
+Title: “내가 남긴 이야기를 확인해요”
+Tabs:
+- “음성 원문”
+- “정리된 내용”
+- “수정 이력”
+Card:
+Question: “어릴 적 가장 기억에 남는 집은 어떤 모습이었나요?”
+Original transcript: “그때 우리 집은 마당이 넓었고…”
+Buttons:
+- “원문 듣기”
+- “수정 요청하기”
+Trust badge: “원문 보존 완료”
+
+13. Child home screen - premium dashboard
+Purpose: child mode should feel more detailed, premium, and archive-management oriented.
+Title: “부모님의 이야기를 함께 완성해요”
+Subtitle: “질문, 사진, 챕터를 모아 가족 자서전을 만들어갑니다.”
+Top section:
+- Parent profile card with progress percentage
+- “자서전 완성도 72%”
+- “최근 인터뷰: 청년 시절”
+Main premium cards:
+1. “질문 설계하기”
+Description: “부모님께 묻고 싶은 질문을 AI가 부드럽게 다듬어드려요.”
+2. “사진으로 기억 열기”
+Description: “가족사진을 올리면 관련 질문을 추천해드려요.”
+3. “챕터 검수하기”
+Description: “완성된 내용을 읽고 가족이 함께 확인할 수 있어요.”
+4. “원문 근거 확인”
+Description: “AI가 정리한 내용이 어떤 인터뷰에서 왔는지 확인해요.”
+Bottom navigation:
+- 홈
+- 질문
+- 사진
+- 챕터
+- 챗봇
+
+14. Child question management screen
+Purpose: manage questions in a more sophisticated way.
+Title: “부모님께 남길 질문”
+Create sections:
+- “추천 질문”
+- “내가 작성한 질문”
+- “답변 완료”
+Question cards:
+1. “처음 사회생활을 시작했을 때 가장 기억나는 일은 무엇인가요?”
+2. “결혼을 결심하게 된 순간은 언제였나요?”
+3. “자녀에게 꼭 남기고 싶은 말이 있나요?”
+Each card has status:
+- “대기 중”
+- “인터뷰 예정”
+- “답변 완료”
+CTA button: “새 질문 작성하기”
+
+15. Child question writing screen with AI rephrasing
+Title: “부모님께 묻고 싶은 질문이 있나요?”
+Input placeholder:
+“예: 엄마가 결혼을 결심했던 순간은 언제였어?”
+AI rephrasing card:
+Title: “부모님이 편하게 답할 수 있도록 다듬었어요”
+Original question:
+“엄마가 결혼을 결심했던 순간은 언제였어?”
+Rephrased question:
+“결혼을 결심하게 된 특별한 순간이나 마음이 있으셨나요?”
+Buttons:
+- “이 질문 보내기”
+- “다시 다듬기”
+- “직접 수정하기”
+
+16. Child photo archive screen
+Purpose: premium family photo upload and memory trigger.
+Title: “사진으로 기억을 열어보세요”
+Subtitle: “사진 한 장이 오래된 이야기를 다시 꺼내는 단서가 됩니다.”
+Upload area:
+“가족사진 업로드”
+After upload, show:
+- photo thumbnail card
+- date/place input fields
+- “사진 설명 추가”
+AI suggested questions:
+1. “이 사진은 언제 찍은 사진인가요?”
+2. “사진 속 장소는 어떤 의미가 있었나요?”
+3. “이때 가족들은 어떤 이야기를 나누고 있었나요?”
+CTA button: “사진과 질문 저장하기”
+
+17. Child parent progress detail screen
+Title: “인터뷰 진행 현황”
+Top progress:
+“자서전 완성도 72%”
+Chapter progress list:
+- “어린 시절” 완료
+- “청년 시절” 진행 중
+- “결혼과 가족” 대기
+- “일과 삶” 대기
+- “자녀에게 남기는 말” 대기
+Include:
+- upcoming call schedule
+- recently completed interview
+- suggested next action
+CTA button: “다음 질문 추가하기”
+
+18. Child chapter review screen
+Purpose: premium chapter verification.
+Title: “챕터를 확인해보세요”
+Subtitle: “완성된 이야기를 가족이 함께 읽고 확인할 수 있어요.”
+Chapter cards:
+1. “1장. 어린 시절의 집”
+Status: “검수 완료”
+Preview: “마당이 넓던 집과 동네 친구들에 대한 기억…”
+2. “2장. 청년 시절의 선택”
+Status: “검수 필요”
+Preview: “처음 서울에 올라왔던 순간과 혼자 견뎌야 했던 시간…”
+3. “3장. 가족을 이루던 순간”
+Status: “작성 중”
+Each card has:
+- “내용 보기”
+- “원문 근거 확인”
+- “수정 요청”
+
+19. Source verification screen for child mode
+Purpose: show premium trust and source-based AI.
+Title: “이 내용의 근거를 확인해요”
+Show generated paragraph:
+“어머니는 청년 시절 서울로 올라오며 외로움과 책임감을 크게 느꼈다고 회상했습니다.”
+Source card:
+- “근거 인터뷰: 청년 시절 인터뷰 03”
+- “녹음 날짜: 2026.05.12”
+- “원문 일부: ‘처음 서울에 올라왔을 때는…’”
+Buttons:
+- “원문 듣기”
+- “전체 인터뷰 보기”
+- “수정 요청하기”
+Use sage trust badge:
+“근거 확인됨”
+
+20. Family invitation screen
+Purpose: invite family members.
+Title: “가족과 함께 완성해보세요”
+Description: “형제, 자매, 손주도 질문을 남기고 챕터를 함께 확인할 수 있어요.”
+Invite options:
+- “링크로 초대하기”
+- “카카오톡으로 초대하기”
+Family member cards:
+- “나”
+- “동생”
+- “손녀”
+CTA button: “초대 보내기”
+
+21. Completion screen
+Title: “자서전이 완성되었어요”
+Body: “부모님의 목소리와 기억을 바탕으로 자서전과 가족 챗봇이 생성되었습니다.”
+Two premium output cards:
+1. “자서전 PDF / 책”
+Description: “완성된 자서전을 PDF로 확인하거나 책으로 제작할 수 있어요.”
+Button: “자서전 보기”
+2. “가족 페르소나 챗봇”
+Description: “기록된 원문을 바탕으로 부모님의 삶과 가치관에 대해 질문할 수 있어요.”
+Button: “챗봇 시작하기”
+
+22. Family persona chatbot screen
+Title: “부모님의 이야기에게 물어보세요”
+Chat example:
+User: “엄마는 청년 시절에 가장 힘들었던 순간이 언제였어?”
+Chatbot:
+“기록된 인터뷰에 따르면, 어머니는 서울로 처음 올라왔을 때 외로움과 책임감을 크게 느끼셨다고 말씀하셨어요.”
+Source badge:
+“근거: 청년 시절 인터뷰 03”
+Button:
+“원문 보기”
+Design as a warm, premium chat interface with cream background, rounded message bubbles, and source badges.
+
+Final design requirements:
+- Parent mode: simple, accessible, big typography option, senior-friendly.
+- Child mode: premium, detailed, organized, archive-management feeling.
+- Show normal text UI and large text UI comparison.
+- Use warm album/book/archive visual language.
+- Make the app feel trustworthy and emotionally valuable.
+- Make the UI look high-quality enough for a real product pitch.
