@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dearlog Service Flow</title>
+  <link rel="stylesheet" href="../assets/workflow.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../dearlog-workflow.html" aria-label="Dearlog Agent Workflow 홈">
+      <span class="brand-mark">D</span>
+      <span>
+        <strong>Dearlog Agent Workflow</strong>
+        <small>Dify-style workflow map</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="워크플로우 페이지">
+      <a class="nav-link" href="../../dearlog-workflow.html">개요</a>
+      <a class="nav-link is-active" href="./01-service-flow.html">서비스 흐름</a>
+      <a class="nav-link" href="./02-agent-roles.html">에이전트 역할</a>
+      <a class="nav-link" href="./03-safety-and-proof.html">근거와 안전장치</a>
+      <a class="nav-link" href="./04-output-workflow.html">산출물</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div class="eyebrow">01 Dify-style Service Workflow</div>
+      <h1>Dify 워크플로우로 구현한 것처럼, 입력과 에이전트 노드를 연결했습니다.</h1>
+      <p>가족 입력이 Router를 지나 각 에이전트 노드로 분기되고, 부모님 답변 후 DB와 Knowledge Retrieval을 거쳐 산출물로 이어지는 구조입니다.</p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Main Canvas</p>
+        <h2>Start → Router → Agent Branches → Store → Knowledge → Output</h2>
+      </div>
+      <div class="dify-board">
+        <div class="dify-canvas">
+          <div class="dify-flow align-start">
+            <div class="dify-node start">
+              <span class="dify-port out"></span>
+              <div class="dify-node-header">
+                <div class="dify-icon">S</div>
+                <div>
+                  <div class="dify-node-title">가족 입력 수신</div>
+                  <div class="dify-node-type">Start</div>
+                </div>
+              </div>
+              <div class="dify-node-body">부모님 답변, 자녀 질문, 사진, 일정이 워크플로우의 입력값으로 들어옵니다.</div>
+            </div>
+
+            <div class="dify-link"></div>
+
+            <div class="dify-node router">
+              <span class="dify-port in"></span>
+              <span class="dify-port out"></span>
+              <div class="dify-node-header">
+                <div class="dify-icon">IF</div>
+                <div>
+                  <div class="dify-node-title">입력 유형 라우터</div>
+                  <div class="dify-node-type">Condition Router</div>
+                </div>
+              </div>
+              <div class="dify-node-body">입력이 답변인지, 질문인지, 사진인지, 일정인지 판단해 알맞은 에이전트로 분기합니다.</div>
+            </div>
+
+            <div class="dify-link dashed"></div>
+
+            <div class="dify-branch-group">
+              <div class="dify-node agent is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">Q</div>
+                  <div>
+                    <div class="dify-node-title">Interviewer</div>
+                    <div class="dify-node-type">Follow-up Agent</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">부모님 답변 뒤 자연스러운 꼬리질문을 만듭니다.</div>
+              </div>
+              <div class="dify-node agent is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">QQ</div>
+                  <div>
+                    <div class="dify-node-title">Question Queue</div>
+                    <div class="dify-node-type">Question Rewrite</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">자녀 질문을 부모님이 답하기 쉬운 회상형 질문으로 바꿉니다.</div>
+              </div>
+              <div class="dify-node agent is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">V</div>
+                  <div>
+                    <div class="dify-node-title">Photo Agent</div>
+                    <div class="dify-node-type">Vision Node</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">사진을 분석해 질문 후보를 만들고, 자녀 등록 후 공개합니다.</div>
+              </div>
+              <div class="dify-node agent is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">T</div>
+                  <div>
+                    <div class="dify-node-title">Calendar Trigger</div>
+                    <div class="dify-node-type">Event Trigger</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">일정과 관련 기억을 찾거나 새 인터뷰 주제를 제안합니다.</div>
+              </div>
+            </div>
+
+            <div class="dify-link"></div>
+
+            <div class="dify-column">
+              <div class="dify-column-label">부모님 답변 후 실행</div>
+              <div class="dify-node agent is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">A</div>
+                  <div>
+                    <div class="dify-node-title">Archivist</div>
+                    <div class="dify-node-type">Structuring Node</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">원문을 보존하며 MemoryChunk로 구조화합니다.</div>
+              </div>
+              <div class="dify-node guard is-small">
+                <span class="dify-port in"></span>
+                <span class="dify-port out"></span>
+                <div class="dify-node-header">
+                  <div class="dify-icon">✓</div>
+                  <div>
+                    <div class="dify-node-title">Verification</div>
+                    <div class="dify-node-type">Guard Node</div>
+                  </div>
+                </div>
+                <div class="dify-node-body">충돌, 중복, 불확실성을 표시합니다.</div>
+              </div>
+            </div>
+
+            <div class="dify-link"></div>
+
+            <div class="dify-node knowledge">
+              <span class="dify-port in"></span>
+              <span class="dify-port out"></span>
+              <div class="dify-node-header">
+                <div class="dify-icon">DB</div>
+                <div>
+                  <div class="dify-node-title">InterviewRecord + RAG</div>
+                  <div class="dify-node-type">Database / Knowledge Retrieval</div>
+                </div>
+              </div>
+              <div class="dify-node-body">답변, 질문 연결, 검수 상태를 저장하고 이후 검색 가능한 기억으로 색인합니다.</div>
+            </div>
+
+            <div class="dify-link"></div>
+
+            <div class="dify-node output">
+              <span class="dify-port in"></span>
+              <span class="dify-port out"></span>
+              <div class="dify-node-header">
+                <div class="dify-icon">O</div>
+                <div>
+                  <div class="dify-node-title">Output Router</div>
+                  <div class="dify-node-type">Answer / Book Output</div>
+                </div>
+              </div>
+              <div class="dify-node-body"><strong>Digital Twin</strong>은 대화방을, <strong>Publication Agent</strong>는 기록집 미리보기와 최종 PDF를 만듭니다.</div>
+            </div>
+          </div>
+
+          <div class="dify-note">Dify처럼 보이도록 노드 타입을 Start, Router, Agent, Guard, Knowledge Retrieval, Output으로 나눴습니다. 단, 노드 내용은 Dearlog 실제 서비스 흐름에 맞췄습니다.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Photo Question Sub-flow</p>
+        <h2>사진 질문 공개는 별도 승인 노드가 있습니다</h2>
+      </div>
+      <div class="dify-board">
+        <div class="dify-canvas">
+          <div class="dify-flow">
+            <div class="dify-node start is-small">
+              <span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">S</div><div><div class="dify-node-title">사진 업로드</div><div class="dify-node-type">Start</div></div></div>
+              <div class="dify-node-body">자녀가 가족 사진을 올립니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node agent is-small">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">V</div><div><div class="dify-node-title">Photo Agent</div><div class="dify-node-type">Vision LLM</div></div></div>
+              <div class="dify-node-body">사진 기반 질문 후보를 만듭니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node router is-small">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">IF</div><div><div class="dify-node-title">자녀 승인</div><div class="dify-node-type">Human Approval</div></div></div>
+              <div class="dify-node-body">등록한 후보만 부모님에게 공개됩니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node end is-small">
+              <span class="dify-port in"></span>
+              <div class="dify-node-header"><div class="dify-icon">E</div><div><div class="dify-node-title">부모님 질문 카드</div><div class="dify-node-type">End / UI Output</div></div></div>
+              <div class="dify-node-body">답변 후 InterviewRecord로 저장됩니다.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../data/agents.js"></script>
+  <script src="../assets/workflow.js"></script>
+</body>
+</html>

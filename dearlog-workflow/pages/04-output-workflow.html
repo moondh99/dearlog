@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dearlog Output Workflow</title>
+  <link rel="stylesheet" href="../assets/workflow.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../dearlog-workflow.html" aria-label="Dearlog Agent Workflow 홈">
+      <span class="brand-mark">D</span>
+      <span>
+        <strong>Dearlog Agent Workflow</strong>
+        <small>Dify-style workflow map</small>
+      </span>
+    </a>
+    <nav class="nav" aria-label="워크플로우 페이지">
+      <a class="nav-link" href="../../dearlog-workflow.html">개요</a>
+      <a class="nav-link" href="./01-service-flow.html">서비스 흐름</a>
+      <a class="nav-link" href="./02-agent-roles.html">에이전트 역할</a>
+      <a class="nav-link" href="./03-safety-and-proof.html">근거와 안전장치</a>
+      <a class="nav-link is-active" href="./04-output-workflow.html">산출물</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div class="eyebrow">04 Dify-style Output Workflow</div>
+      <h1>기억 검색 결과가 Output 노드를 거쳐 대화방과 기록집으로 나뉩니다.</h1>
+      <p>Dify의 Answer 노드처럼 바로 출력하지 않고, Dearlog는 초안, 편집 계획, 검수, 최종 PDF 단계를 거칩니다.</p>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Output Canvas</p>
+        <h2>Knowledge Retrieval → Generation Nodes → Review → Final Output</h2>
+      </div>
+      <div class="dify-board">
+        <div class="dify-canvas">
+          <div class="dify-flow align-start">
+            <div class="dify-node knowledge">
+              <span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">K</div><div><div class="dify-node-title">Memory Context</div><div class="dify-node-type">Knowledge Retrieval</div></div></div>
+              <div class="dify-node-body">MemoryChunk, RAG context, Photo context를 산출물 생성 노드에 전달합니다.</div>
+            </div>
+            <div class="dify-link dashed"></div>
+            <div class="dify-branch-group">
+              <div class="dify-node output is-small">
+                <span class="dify-port in"></span><span class="dify-port out"></span>
+                <div class="dify-node-header"><div class="dify-icon">D</div><div><div class="dify-node-title">Digital Twin</div><div class="dify-node-type">Answer Node</div></div></div>
+                <div class="dify-node-body">기억 기반 대화방 응답과 근거 배지</div>
+              </div>
+              <div class="dify-node output is-small">
+                <span class="dify-port in"></span><span class="dify-port out"></span>
+                <div class="dify-node-header"><div class="dify-icon">G</div><div><div class="dify-node-title">Ghostwriter</div><div class="dify-node-type">Draft Node</div></div></div>
+                <div class="dify-node-body">챕터별 자서전 초안과 source chunk</div>
+              </div>
+              <div class="dify-node output is-small">
+                <span class="dify-port in"></span><span class="dify-port out"></span>
+                <div class="dify-node-header"><div class="dify-icon">C</div><div><div class="dify-node-title">Cover Agent</div><div class="dify-node-type">Design Node</div></div></div>
+                <div class="dify-node-body">표지 팔레트와 템플릿 추천</div>
+              </div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node output">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">P</div><div><div class="dify-node-title">Publication Agent</div><div class="dify-node-type">Book Planning Node</div></div></div>
+              <div class="dify-node-body">편집 계획, 강한 장/약한 장, 사진 배치, 책 매니페스트를 만듭니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node guard">
+              <span class="dify-port in"></span><span class="dify-port out"></span>
+              <div class="dify-node-header"><div class="dify-icon">R</div><div><div class="dify-node-title">Family Review</div><div class="dify-node-type">Human Review</div></div></div>
+              <div class="dify-node-body">책 미리보기와 검수 탭에서 품질 체크, 추가 질문, 직접 인용 후보를 확인합니다.</div>
+            </div>
+            <div class="dify-link"></div>
+            <div class="dify-node end">
+              <span class="dify-port in"></span>
+              <div class="dify-node-header"><div class="dify-icon">E</div><div><div class="dify-node-title">Final Output</div><div class="dify-node-type">A5 PDF / Chat</div></div></div>
+              <div class="dify-node-body">가족 대화방과 최종 A5 기록집 PDF로 전달됩니다.</div>
+            </div>
+          </div>
+          <div class="dify-note">Dearlog의 Output은 Dify의 Answer 노드처럼 보이되, 실제 서비스에서는 가족 검수와 독자용 PDF 변환을 포함합니다.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../data/agents.js"></script>
+  <script src="../assets/workflow.js"></script>
+</body>
+</html>

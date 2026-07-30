@@ -5,7 +5,7 @@
 - `.env`, `.env.*`: 실제 API 키와 로컬 URL
 - `node_modules/`: 설치된 의존성
 - `dist/`, `build/`, `coverage/`, `.vite/`: 빌드와 테스트 산출물
-- `artifacts/`: `npm run demo:assets`로 다시 만들 수 있는 PDF/SVG 발표 산출물
+- `artifacts/`: 기존 PDF/SVG 발표 산출물과 로컬 QA 캡처. 자동 재생성 스크립트는 제거됐으므로 필요한 파일은 별도로 보관
 - `.claude/`, `.kiro/`, `.vscode/`: 로컬 도구와 개인 작업 상태
 - `NEXT_AGENT_PROMPT.md`: 로컬 경로와 작업 인수인계가 포함된 내부 문서
 - `.DS_Store`, 로그, 임시 파일
@@ -34,4 +34,6 @@ git push -u origin main
 
 ## 주의
 
-현재 앱은 프론트엔드 프로토타입이며 OpenAI API 키를 브라우저에서 사용하는 구조입니다. 실제 서비스 배포 전에는 API 호출을 서버/API route 뒤로 옮겨야 키가 사용자 브라우저에 노출되지 않습니다.
+현재 AI 호출은 서버의 `/api/ai/*` 프록시를 통하며 브라우저 번들에 API 키를 넣지 않습니다.
+실제 배포 전에는 강한 `AUTH_TOKEN_SECRET`, 운영자 접근 토큰, AI 제공자 키를 팀 비밀 저장소에
+설정하고 `ALLOW_DEV_AUTH_HEADERS`가 꺼져 있는지 확인합니다.
