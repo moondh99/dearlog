@@ -96,6 +96,10 @@ The post-consolidation follow-up was completed:
 | `npm test` | Passed: 30 files / 240 tests (measured 2026-07-31 00:58 KST) |
 | `npm run build` | Passed: 1,786 modules transformed with Vite 6.4.3 (measured 2026-07-31 00:58 KST) |
 | `git diff --check` | Passed (measured 2026-07-31 00:58 KST) |
+| Post-commit `npm run lint` | Passed (measured 2026-07-31 01:11 KST) |
+| Post-commit `npm test` | Passed: 30 files / 240 tests. One run reported a single failure that did not reproduce across six later runs, including two concurrent runs; the failing test name was not captured. Treat as a suspected port/timing flake in the Supertest-backed server tests and capture the name if it recurs |
+| Post-commit `npm run build` | Passed (measured 2026-07-31 01:11 KST) |
+| Tracked-asset check | Passed: every image/font path imported from `src/` and `server/` resolves to a tracked file, and `git status` is clean |
 | Mobile-width browser QA | Passed for demo seed, child questions/chatbot/autobiography, parent interview, Korean text answer, and save-complete screen; post-fix browser error/warning log was empty |
 | Current Browser-plugin pass | Not run: the in-app browser runtime reported zero available browsers. React consent-screen tests and the full suite passed instead |
 
@@ -118,6 +122,42 @@ Sandbox note:
 | Local server and persistence | `server/app.ts`, `server/prisma/schema.prisma`, `server/prisma/init.ts`, `src/lib/local-server.ts` |
 | Docs | `README.md`, `docs/technical-architecture.md`, `docs/current-work-status.md` |
 | Tests and config | `vitest.config.ts`, `vite.config.ts`, `tsconfig.json`, `package.json`, `package-lock.json` |
+
+## Working Tree Commit Split (2026-07-31)
+
+The consolidation working tree (167 tracked changes + 76 untracked paths, with a stale index where
+18 paths were `MM`, 18 were `AM`, and `src/components/AutobiographyPDF.tsx` was `AD`) was committed
+in eight logical commits on `integrate-upstream-ui`. Each commit used `git commit -- <paths>` so the
+working-tree content was recorded and the stale index could never leak into a commit. No
+`git reset`, `git checkout --`, or `git clean` was used, and no file was deleted from disk.
+
+| Commit | Scope |
+| --- | --- |
+| `b86b4d0` | `.gitignore`: exclude QA artifacts, business documents, and one-off temp files |
+| `86f4b5f` | Dependency upgrades and build/test config (`package.json`, lock, `tsconfig`, `vite`, `vitest`, `.env.example`) |
+| `7d0cf06` | `src/assets/` — 25 files including the 22 Figma images |
+| `e124662` | `src/` consolidation: legacy generation removed, live screens/stores/agents in (166 files) |
+| `4a519ce` | `server/`: publication pipeline, AI proxy, upload limits, consent validation (17 files) |
+| `531b41c` | Capacitor iOS project, icon/splash sources, `capacitor.config.ts` (30 files) |
+| `56653b8` | `scripts/`: pilot health checks, QA automation, backup, demo seeds, launchd |
+| `cbccbbb` | Docs rewrite plus operational docs, PRD, and the workflow presentation export |
+
+Defect found and fixed by this pass:
+
+- `src/assets/figma/` (22 images) was untracked while 13 live screens imported it. A fresh clone
+  could not build. It is now committed. Every asset and font path referenced from `src/` and
+  `server/` was re-verified as tracked afterwards.
+
+Checks before committing:
+
+- Untracked text files were scanned for API keys, Twilio SIDs, private keys, phone numbers, and
+  personal email addresses. None were found. `.env.example` contains only empty placeholders.
+- `.git/index.lock` was a stale 0-byte file from a crashed 2026-06-02 process with no live git
+  process; it was removed so commits could proceed.
+
+Known cosmetic residue: `git diff --check` reports trailing whitespace in
+`docs/service-cost-model.md` and `scripts/qa-automation.mjs`. Both are pre-existing in the newly
+tracked files and were not rewritten.
 
 ## Earlier QA (carried forward, 2026-05-31)
 
@@ -166,12 +206,12 @@ Notes:
 
 ## Recommended Next Steps
 
-1. Review the large consolidation working tree in logical groups before any commit. The index is stale:
-   many paths are `MM`/`AM`, and `src/components/AutobiographyPDF.tsx` is staged as added while
-   deleted in the working tree. A staged-only commit would be wrong. Do not reset existing work.
-2. Decide whether untracked one-off artifacts such as `server/.write-test-2`,
-   `remove_fake_statusbar.py`, generated QA PDFs/reports, and the workflow export belong in Git.
-   Do not delete them without confirming ownership.
+1. ~~Review the large consolidation working tree in logical groups before any commit.~~ Done
+   2026-07-31; see `Working Tree Commit Split` below. The working tree is now clean.
+2. ~~Decide whether untracked one-off artifacts belong in Git.~~ Done 2026-07-31. QA PDFs/JSON,
+   the business-plan documents, `screenshot.png`, `server/.write-test-*`,
+   `remove_fake_statusbar.py`, and `scripts/launchd/logs/` are excluded via `.gitignore`.
+   No file was deleted from disk.
 3. Run a signed-in, non-demo browser pass against the intended API target before a real family pilot.
 4. Define complete-delete semantics: references, publication/cache copies, `LegacyVault`, backups,
    retention period, guardian authority, and reauthentication.
