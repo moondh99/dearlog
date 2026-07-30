@@ -210,7 +210,7 @@ flowchart TD
 | 항목 | 구현 방식 | 상태 |
 | --- | --- | --- |
 | 답변별 동의 | 앱은 답변(`InterviewRecord`)마다 출판/챗봇 두 토글을 제공하고 전체·챕터·개별 일괄 적용을 지원한다. `PATCH /api/interview-records/:id`, `PATCH /api/interview-records/bulk-consent` | 구현 완료 |
-| 목적별 동의 5종 | 서버 `MemoryConsentSettings`가 `publish`, `familyRead`, `chatbot`, `posthumous`, `sensitive`를 저장한다 | 서버만. 앱 화면은 출판/챗봇 2종만 노출 |
+| 목적별 동의 5종 | 서버 `MemoryConsentSettings`가 5종을 저장하고 `ConsentSettingsScreen`이 모두 노출한다 | UI 완료. 집행은 `publish`/`familyRead`/`chatbot`까지이고 `posthumous`·`sensitive`는 미집행 |
 | 챗봇 근거 필터 | `buildMemoryChunksFromMemories`가 챗봇 동의 철회 기억을 chunk 단계에서 제외 | 구현 완료 |
 | 사진 GPS | `src/pages/ChildPhotosScreen.tsx`가 업로드 직전 `sanitizePhotoForUpload`를 호출한다. `maskSensitivePhotoMetadata`로 좌표를 `null`로 지우고 `gpsMasked`/`locationLabel`을 붙이며, `stripJpegExifSegments`로 JPEG의 APP1 `Exif` 세그먼트를 잘라낸 새 `File`을 업로드한다. 서버로 보내는 위치 텍스트는 `buildMaskedLocationText`가 `공개 전 확인 필요`를 붙이고, 사진 카드에는 `위치 정보 공개 전 확인 필요` 배지를 띄운다 | 구현 완료(라이브 업로드 경로에 배선됨) |
 | AI 왜곡 방지 | 원문(`raw`)은 수정하지 않고 보존한다. 분신 답변은 `evidenceBadge`와 `원문 보기`, 자서전 문단은 `sourceChunkIds`·`reliability`로 출처를 남긴다. `verifyChunk`는 충돌에 플래그만 달고 내용을 고치지 않는다 | 구현 완료 |
@@ -256,4 +256,4 @@ npm test         # vitest --run
 npm run build    # vite build
 ```
 
-`vitest.config.ts`에 아직 제외 목록이 남아 있어 실행되는 파일/케이스 수가 변한다. 수치는 문서에서 인용하지 말고 실행 출력으로 확인한다. 최근 측정값은 `docs/current-work-status.md`에 측정 시점과 함께 기록한다.
+테스트가 계속 추가되므로 파일/케이스 수는 문서에서 인용하지 말고 실행 출력으로 확인한다. 최근 측정값은 `docs/current-work-status.md`에 측정 시점과 함께 기록한다.

@@ -28,7 +28,7 @@
 | 구분 | 고객이 구매하는 것 | 지속 가치 |
 | --- | --- | --- |
 | 1회 제작 | AI 인터뷰 기반 자서전 PDF, 인쇄용 교정본, 실물 책 주문 준비 | 가족에게 건넬 수 있는 완성 결과물 |
-| 월 구독 | 기억 검색, AI 분신 대화, 가족 질문, 주간 가족 퀴즈, 기념일 알림, 다음 인터뷰 예약 | 저장된 기억을 가족 대화와 재방문으로 계속 연결 |
+| 월 구독 | 기억 검색, AI 분신 대화, 가족 질문, 기념일 알림, 다음 인터뷰 예약 (주간 가족 퀴즈는 기획 단계, 미구현) | 저장된 기억을 가족 대화와 재방문으로 계속 연결 |
 
 ## 5. 기록 범위 (질문 설계 기준)
 
@@ -59,17 +59,17 @@
 ### 6.3 검수 및 동의
 
 - 보호자가 답변/기억(`Memory`)을 검수, 태그(`MemoryTag`) 정리.
-- 시니어 또는 보호자가 공개 범위와 활용 동의를 `MemoryConsentSettings`에서 조정. 기억별로 활용 중지/완전 삭제 가능 (데이터 주권 보장).
+- 시니어 또는 보호자가 공개 범위와 활용 동의를 `MemoryConsentSettings`에서 조정. 기억별 활용 중지는 구현 완료. 완전 삭제는 미구현이며, 파생물·백업·보존 기간·재인증 정책을 정한 뒤 붙인다.
 
 ### 6.4 자서전 제작
 
 - 답변과 사진을 챕터(`Chapter`)별로 구성, 문체 선택 후 표지 디자인(`CoverDesign`) 확정.
 - `PublicationDraftCache` → `PublicationPreviewJob` → `PublicationRequest`로 이어지는 비동기 생성 파이프라인.
-- A5 인쇄용 PDF는 jsPDF/React PDF로 생성, 실물 책 주문 준비 단계까지 지원.
+- A5/B5 인쇄용 PDF는 서버에서 생성한다(`server/publication-html.ts` + `puppeteer-core`). 실물 책 주문 준비 단계까지 지원.
 
 ### 6.5 구독 재방문 루프
 
-- 저장된 기억 기반 AI 분신(`나의 분신`) 대화 — `Memory`/`MemoryVectorEntry` 기반 검색 후 응답.
+- 저장된 기억 기반 AI 분신(`나의 분신`) 대화 — `src/lib/agents/digitalTwin.ts`의 한국어 토큰 스코어링으로 chunk를 고른다. `MemoryVectorEntry`는 존재하지만 이 경로에서 사용하지 않는다.
 - 가족 질문, 주간 가족 퀴즈, 기념일/다음 인터뷰 알림(`Notification`, `PushSubscription`).
 - 캘린더(`CalendarEvent`)로 인터뷰 일정과 가족 이벤트 관리.
 
@@ -81,7 +81,7 @@
 
 핵심 엔티티: `User`(단일 테이블에 senior/guardian 속성 모두 포함), `GuardianSeniorLink`, `Invitation`, `Chapter`/`Question`, `Photo`, `InterviewSchedule`/`InterviewSession`/`InterviewRecord`/`FreeSpeechRecord`, `Memory`/`MemoryTag`/`MemoryConsentSettings`/`MemoryVectorEntry`, `AutobiographyDraft`, `CoverDesign`/`PublicationDraftCache`/`PublicationPreviewJob`/`PublicationRequest`, `CalendarEvent`, `Notification`/`PushSubscription`, `LegacyVault`, `AiProxyAuditLog`.
 
-가족 단위 데이터 소유권은 `seniorId`/`guardianId` 기준으로 분리되며, 모든 변경 라우트에 소유권 검사가 적용되어 있음(`docs/route-authorization-matrix.md` 참고).
+가족 단위 데이터 소유권은 `seniorId`/`guardianId` 기준으로 분리된다. 변경 라우트의 소유권 검사 현황은 `docs/route-authorization-matrix.md`를 기준으로 본다. 2026-07-31 감사에서 발견된 미검사 라우트와 자동 연결 경로는 수정했고 `server/auth-boundary.test.ts`로 회귀 테스트한다.
 
 ## 8. 기술 아키텍처
 
@@ -90,7 +90,7 @@
 - AI 연동: 브라우저에 API 키를 넣지 않고, 서버의 `/api/ai/*` 프록시를 통해 Mindlogic FactChat Gateway(주) / OpenAI(embeddings 등 일부)를 호출. 사용자·엔드포인트별 분당 요청/단위 rate limit과 감사 로그(`AiProxyAuditLog`) 운영.
 - 공개 접근: Cloudflare Named Tunnel로 구입 도메인 `dear-log.com` → 사용자 개인 Mac의 로컬 서버로 포워딩.
 - iOS 네이티브: Capacitor로 `dist/`를 패키징(`webDir: 'dist'`), 커스텀 URL 스킴 `dearlog://`로 딥링크 처리. Apple Developer Program 미가입 상태로 TestFlight/App Store 배포 및 Universal Link는 보류.
-- PDF 생성: jsPDF + React PDF, 초기 로드 성능을 위해 PDF 엔진은 내보내기 시점에만 지연 로드.
+- PDF 생성: 서버 렌더링 단일 경로. 클라이언트 번들에 PDF 엔진이 없다.
 
 ## 9. 비기능 요구사항 및 알려진 리스크
 
@@ -102,8 +102,8 @@
 | 운영 안정성 | 백엔드가 사용자 개인 Mac에서 구동, Mac 절전/재시작 시 서비스 중단 | 실 운영 전 클라우드 호스팅 이전 필요 (iOS 심사 거절 리스크와도 연결) |
 | AI 프록시 | rate limit, 감사 로그, 운영 대시보드, 알림 라우팅까지 구현됨 | 실 트래픽 관찰 후 임계값 재조정 |
 | 디지털 유산 금고 | 암호화 저장은 있으나 release policy 시뮬레이션 단계 | 법무/감사/키관리 검토 전 정식 출시 제외 |
-| 번들 크기 | 초기 JS 약 263KB, PDF 엔진(약 1.47MB)은 내보내기 시에만 로드 | 양호, 추가 경량화는 선택 사항 |
-| 테스트 | 44개 파일 / 264개 테스트 통과, 일부 구버전 데모 테스트 9개 제외 상태 | 구버전 테스트 재작성 또는 정리 |
+| 번들 크기 | 초기 JS 약 284KB(gzip 91KB). 클라이언트 PDF 엔진 없음 | 양호, 추가 경량화는 선택 사항 |
+| 테스트 | 수치는 `npm test` 실행 출력으로 확인한다. 최근 측정값은 `docs/current-work-status.md` 참고 | 구버전 제외 목록은 정리 완료 |
 
 ## 10. iOS 패키징 현황 (이번 작업분)
 
