@@ -521,6 +521,40 @@ function mapAutobiographyDraftToResponse(d: any) {
   };
 }
 
+const VAULT_LOCKED_TEXT = "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]";
+const FAMILY_READ_REVOKED_TEXT = "[가족 열람에 동의하지 않은 기록입니다.]";
+const POSTHUMOUS_REVOKED_TEXT = "[사후 공개에 동의하지 않은 기록입니다.]";
+
+type RecordConsentFlags = {
+  familyRead: boolean;
+  posthumous: boolean;
+};
+
+// 답변 본문을 이 요청자에게 보여줘도 되는지 한곳에서 판단한다.
+// 가릴 사유가 있으면 대체 문구를, 없으면 null을 돌려준다.
+// 소비 지점마다 조건을 흩어 두면 한 군데만 빠져도 그대로 유출된다.
+function transcriptMaskReason(
+  record: RecordConsentFlags,
+  context: { isSelf: boolean; vaultLocked: boolean; vaultReleased: boolean },
+) {
+  if (context.vaultLocked) return VAULT_LOCKED_TEXT;
+  // 본인은 자기 기록을 항상 볼 수 있어야 동의를 관리할 수 있다.
+  if (context.isSelf) return null;
+  if (!record.familyRead) return FAMILY_READ_REVOKED_TEXT;
+  // 사후 공개 미동의는 유산이 전수된 뒤에도 계속 가린다.
+  if (context.vaultReleased && !record.posthumous) return POSTHUMOUS_REVOKED_TEXT;
+  return null;
+}
+
+async function readVaultMaskContext(seniorId: string, isSelf: boolean) {
+  const vault = await prisma.legacyVault.findUnique({ where: { seniorId } });
+  return {
+    isSelf,
+    vaultLocked: Boolean(vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released'),
+    vaultReleased: Boolean(vault && vault.deathVerificationStatus === 'released'),
+  };
+}
+
 async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: string) {
   if (requestedSeniorId) {
     await assertGuardianCanAccessSenior(guardianId, requestedSeniorId);
@@ -2610,6 +2644,9 @@ export function createApp() {
           source: req.body.source ?? 'app',
           publish: req.body.publish !== undefined ? Boolean(req.body.publish) : undefined,
           chatbot: req.body.chatbot !== undefined ? Boolean(req.body.chatbot) : undefined,
+          familyRead: req.body.familyRead !== undefined ? Boolean(req.body.familyRead) : undefined,
+          posthumous: req.body.posthumous !== undefined ? Boolean(req.body.posthumous) : undefined,
+          sensitive: req.body.sensitive !== undefined ? Boolean(req.body.sensitive) : undefined,
         },
       });
 
@@ -2622,6 +2659,8 @@ export function createApp() {
             audioFileKey: record.audioFileKey,
             transcriptText: record.transcriptText,
             recordedAt: record.recordedAt,
+            // 동의는 원본 하나만 보면 되도록 연결해 둔다.
+            interviewRecordId: record.id,
           },
         });
       }
@@ -2663,6 +2702,9 @@ export function createApp() {
           ...(req.body.aiSummary !== undefined ? { aiSummary: req.body.aiSummary ? String(req.body.aiSummary) : null } : {}),
           ...(req.body.publish !== undefined ? { publish: Boolean(req.body.publish) } : {}),
           ...(req.body.chatbot !== undefined ? { chatbot: Boolean(req.body.chatbot) } : {}),
+          ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
+          ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
+          ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
           ...(reviewStatus ? { reviewStatus } : {}),
           ...(reviewStatus === 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: new Date() } : {}),
           ...(reviewStatus && reviewStatus !== 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: null } : {}),
@@ -2817,27 +2859,24 @@ export function createApp() {
       const records = await prisma.freeSpeechRecord.findMany({
         where: { userId: seniorId },
         orderBy: { recordedAt: 'desc' },
-        include: { chapter: true },
+        // 자유 발화는 InterviewRecord의 사본이라 동의를 원본에서 읽는다.
+        // 사본에 동의 컬럼을 따로 두면 한쪽만 철회되는 우회로가 그대로 남는다.
+        include: { chapter: true, interviewRecord: true },
       });
-      
-      const vault = await prisma.legacyVault.findUnique({
-        where: { seniorId }
-      });
-      
-      const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
-      
-      const filteredRecords = records.map(record => {
-        const audioUrl = buildLocalFileUrl(record.audioFileKey);
-        if (isMasked) {
-          return {
-            ...record,
-            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
-            audioUrl,
-          };
+
+      // 이 라우트는 보호자 전용이므로 본인 조회가 아니다.
+      const maskContext = await readVaultMaskContext(seniorId, false);
+
+      const filteredRecords = records.map(({ interviewRecord, ...record }) => {
+        // 원본을 되찾지 못한 예전 행은 가장 보수적으로 다룬다(철회로 간주).
+        const consent = interviewRecord ?? { familyRead: false, posthumous: false };
+        const maskReason = transcriptMaskReason(consent, maskContext);
+        if (maskReason) {
+          return { ...record, transcriptText: maskReason, audioUrl: null };
         }
-        return { ...record, audioUrl };
+        return { ...record, audioUrl: buildLocalFileUrl(record.audioFileKey) };
       });
-      
+
       res.json({ records: filteredRecords });
     } catch (error) {
       next(error);
@@ -2927,7 +2966,10 @@ export function createApp() {
         : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       // 출판 동의를 철회한 기록은 표지 분석에도 넘기지 않습니다.
       // 여기를 거르지 않으면 책에서 빠진 이야기가 AI 제공자에게는 그대로 전송됩니다.
-      const records = await prisma.interviewRecord.findMany({ where: { userId: seniorId, publish: true } });
+      // 민감정보 미동의 기록도 외부 AI 호출에서 제외합니다.
+      const records = await prisma.interviewRecord.findMany({
+        where: { userId: seniorId, publish: true, sensitive: true },
+      });
       const decision = await decideCoverDesign(records.map((record) => record.transcriptText), {
         userId: req.user!.id,
         role: req.user!.role,
@@ -3142,24 +3184,17 @@ export function createApp() {
         include: { chapter: true, question: true }
       });
       
-      const vault = await prisma.legacyVault.findUnique({
-        where: { seniorId }
-      });
-      
-      const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
-      
+      const maskContext = await readVaultMaskContext(seniorId, req.user!.role === 'senior');
+
       const filteredRecords = await Promise.all(records.map(async record => {
-        const audioUrl = isMasked ? null : await buildPlayableAudioUrl(record.audioFileKey);
-        if (isMasked) {
-          return {
-            ...record,
-            transcriptText: "[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]",
-            audioUrl,
-          };
+        const maskReason = transcriptMaskReason(record, maskContext);
+        if (maskReason) {
+          // 본문을 가릴 때는 음성도 함께 막는다. 텍스트만 가리면 오디오로 그대로 들을 수 있다.
+          return { ...record, transcriptText: maskReason, aiSummary: null, audioUrl: null };
         }
-        return { ...record, audioUrl };
+        return { ...record, audioUrl: await buildPlayableAudioUrl(record.audioFileKey) };
       }));
-      
+
       res.json({ records: filteredRecords });
     } catch (error) {
       next(error);

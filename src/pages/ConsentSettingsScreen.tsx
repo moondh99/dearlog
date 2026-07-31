@@ -3,37 +3,22 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { useConsentStore } from '../store/consentStore'
 import { useInterviewStore } from '../store/interviewStore'
-import { fetchLocalMemories, updateLocalMemory } from '../lib/local-server'
-import type { ConsentSettingsV2, ConsentStatus, Memory } from '../lib/types'
+import { DEFAULT_CONSENT, type ConsentPurpose } from '../store/consentStore'
 import type { Transcript } from '../types/interview'
 
-type MemoryConsentPurpose = keyof ConsentSettingsV2
-
-const MEMORY_CONSENT_PURPOSES: Array<{
-  key: MemoryConsentPurpose
+// 목적별 동의는 실제 답변(InterviewRecord)에 붙는다.
+// 예전에는 운영에서 생성되지 않는 Memory 테이블을 대상으로 해서 이 화면이 늘 비어 있었다.
+const RECORD_CONSENT_PURPOSES: Array<{
+  key: ConsentPurpose
   label: string
   description: string
 }> = [
-  { key: '출판', label: '자서전 출판', description: '책과 출판용 원고에 이 기억을 사용합니다.' },
-  { key: '가족열람', label: '가족 열람', description: '연결된 가족이 이 기억을 볼 수 있습니다.' },
-  { key: '챗봇', label: '챗봇 답변', description: '나의 분신 대화의 근거로 사용합니다.' },
-  { key: '사후공개', label: '사후 공개', description: '사후 전수 정책에 따라 이 기억을 공개합니다.' },
-  { key: '민감정보', label: '민감정보 활용', description: '민감할 수 있는 내용을 서비스 기능에 사용합니다.' },
+  { key: 'publish', label: '자서전 출판', description: '책과 출판용 원고에 이 답변을 사용합니다.' },
+  { key: 'familyRead', label: '가족 열람', description: '연결된 가족이 이 답변의 내용을 볼 수 있습니다.' },
+  { key: 'chatbot', label: '챗봇 답변', description: '나의 분신 대화의 근거로 사용합니다.' },
+  { key: 'posthumous', label: '사후 공개', description: '끄면 사후에 유산이 전수된 뒤에도 이 답변을 공개하지 않습니다.' },
+  { key: 'sensitive', label: '민감정보 활용', description: '끄면 이 답변을 외부 AI 제공자에게 보내지 않습니다. 책 집필과 챗봇에서도 빠집니다.' },
 ]
-
-const MEMORY_CONSENT_STATUSES: Array<{ value: ConsentStatus; label: string }> = [
-  { value: 'granted', label: '허용' },
-  { value: 'revoked', label: '사용 안 함' },
-  { value: 'needs_review', label: '검토 필요' },
-]
-
-const STOPPED_MEMORY_CONSENTS: ConsentSettingsV2 = {
-  출판: 'revoked',
-  가족열람: 'revoked',
-  챗봇: 'revoked',
-  사후공개: 'revoked',
-  민감정보: 'revoked',
-}
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return (
@@ -136,109 +121,70 @@ function ConsentRecordRow({
   )
 }
 
-function getMemoryConsentStatus(memory: Memory, purpose: MemoryConsentPurpose): ConsentStatus {
-  return memory.consentSettings?.[purpose] ?? 'granted'
-}
-
-function MemoryConsentSettingsSection() {
-  const [memories, setMemories] = useState<Memory[]>([])
-  const [loading, setLoading] = useState(true)
-  const [pendingMemoryId, setPendingMemoryId] = useState<string | null>(null)
+function RecordConsentSettingsSection() {
+  const { transcripts, fetchTranscripts } = useInterviewStore()
+  const { consents, fetchConsents, setConsent, stopAllUse } = useConsentStore()
+  const [pendingId, setPendingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
-    let active = true
+    void fetchTranscripts()
+    void fetchConsents()
+  }, [fetchTranscripts, fetchConsents])
 
-    void fetchLocalMemories()
-      .then((response) => {
-        if (!active) return
-        setMemories(response.memories ?? [])
-        setNotice(null)
-      })
-      .catch((error) => {
-        if (!active) return
-        setNotice({
-          kind: 'error',
-          message: error instanceof Error ? error.message : '기억 설정을 불러오지 못했습니다.',
-        })
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
+  const consentOf = (transcriptId: string) => consents[transcriptId] ?? DEFAULT_CONSENT
 
-    return () => {
-      active = false
-    }
-  }, [])
-
-  const replaceMemory = (updatedMemory: Memory) => {
-    setMemories((current) => current.map((memory) =>
-      memory.id === updatedMemory.id ? updatedMemory : memory
-    ))
-  }
-
-  const setPurposeStatus = async (
-    memory: Memory,
-    purpose: MemoryConsentPurpose,
-    status: ConsentStatus,
-  ) => {
-    if (pendingMemoryId === memory.id || getMemoryConsentStatus(memory, purpose) === status) return
-
-    setPendingMemoryId(memory.id)
+  const togglePurpose = async (transcript: Transcript, purpose: ConsentPurpose, next: boolean) => {
+    if (pendingId) return
+    setPendingId(transcript.id)
     setNotice(null)
+    const label = RECORD_CONSENT_PURPOSES.find((item) => item.key === purpose)?.label ?? purpose
     try {
-      const response = await updateLocalMemory(memory.id, {
-        consentSettings: { [purpose]: status },
+      await setConsent(transcript.id, purpose, next)
+      setNotice({
+        kind: 'success',
+        message: `${label}: ${next ? '허용' : '사용 안 함'}으로 변경했습니다.`,
       })
-      replaceMemory(response.memory)
-      const purposeLabel = MEMORY_CONSENT_PURPOSES.find((item) => item.key === purpose)?.label ?? purpose
-      const statusLabel = MEMORY_CONSENT_STATUSES.find((item) => item.value === status)?.label ?? status
-      setNotice({ kind: 'success', message: `${memory.topic}의 ${purposeLabel}: ${statusLabel} 상태로 변경했습니다.` })
     } catch (error) {
       setNotice({
         kind: 'error',
-        message: error instanceof Error ? error.message : '기억 동의 상태를 변경하지 못했습니다.',
+        message: error instanceof Error ? error.message : '동의 상태를 변경하지 못했습니다.',
       })
     } finally {
-      setPendingMemoryId(null)
+      setPendingId(null)
     }
   }
 
-  const stopUsingMemory = async (memory: Memory) => {
-    if (pendingMemoryId === memory.id) return
+  const stopUsingRecord = async (transcript: Transcript) => {
+    if (pendingId) return
     const confirmed = window.confirm(
-      `"${memory.topic}" 기억의 모든 활용을 중지할까요?\n\n자서전, 가족 열람, 챗봇, 사후 공개, 민감정보 활용이 모두 중지되고 검색용 데이터도 제거됩니다. 나중에 목적별로 다시 허용할 수 있습니다.`,
+      `이 답변의 모든 활용을 중지할까요?\n\n자서전 출판, 가족 열람, 챗봇, 사후 공개, 민감정보 활용이 모두 중지됩니다. 나중에 목적별로 다시 허용할 수 있습니다.`,
     )
     if (!confirmed) return
 
-    setPendingMemoryId(memory.id)
+    setPendingId(transcript.id)
     setNotice(null)
     try {
-      const response = await updateLocalMemory(memory.id, {
-        privacy: 'private',
-        consentSettings: STOPPED_MEMORY_CONSENTS,
-        embedding: null,
-      })
-      replaceMemory(response.memory)
-      setNotice({ kind: 'success', message: `${memory.topic} 기억의 활용을 중지했습니다.` })
+      await stopAllUse(transcript.id)
+      setNotice({ kind: 'success', message: '이 답변의 활용을 중지했습니다.' })
     } catch (error) {
       setNotice({
         kind: 'error',
-        message: error instanceof Error ? error.message : '기억 활용을 중지하지 못했습니다.',
+        message: error instanceof Error ? error.message : '활용을 중지하지 못했습니다.',
       })
     } finally {
-      setPendingMemoryId(null)
+      setPendingId(null)
     }
   }
 
   return (
-    <section className="mb-6" aria-labelledby="memory-consent-heading">
+    <section className="mb-6" aria-labelledby="record-consent-heading">
       <div className="mb-3 px-1">
-        <h2 id="memory-consent-heading" className="text-[15px] font-bold text-[#2A2830]">
-          기억별 활용 설정
+        <h2 id="record-consent-heading" className="text-[15px] font-bold text-[#2A2830]">
+          답변별 활용 설정
         </h2>
         <p className="mt-0.5 text-[12px] leading-relaxed text-[#7A767F]">
-          저장된 기억마다 이용 목적을 따로 정하고, 필요하면 모든 활용을 한 번에 중지할 수 있습니다.
+          저장된 답변마다 이용 목적을 따로 정하고, 필요하면 모든 활용을 한 번에 중지할 수 있습니다.
         </p>
       </div>
 
@@ -255,71 +201,46 @@ function MemoryConsentSettingsSection() {
         </p>
       ) : null}
 
-      {loading ? (
-        <div className="rounded-2xl bg-white px-5 py-8 text-center text-[14px] text-[#7A767F]" role="status">
-          기억 설정을 불러오는 중...
-        </div>
-      ) : memories.length === 0 ? (
+      {transcripts.length === 0 ? (
         <div className="rounded-2xl bg-white px-5 py-8 text-center text-[14px] text-[#7A767F]">
-          아직 관리할 기억이 없습니다
+          아직 관리할 답변이 없습니다
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {memories.map((memory) => {
-            const isPending = pendingMemoryId === memory.id
+          {transcripts.map((transcript) => {
+            const isPending = pendingId === transcript.id
+            const consent = consentOf(transcript.id)
+            const title = transcript.questionText || transcript.chapterTitle || '답변'
             return (
               <article
-                key={memory.id}
+                key={transcript.id}
                 className="overflow-hidden rounded-2xl bg-white"
                 style={{ boxShadow: '0 2px 12px rgba(42,40,48,0.08)' }}
               >
                 <div className="border-b border-[#E0DBE8] px-5 py-4">
-                  <h3 className="text-[14px] font-bold text-[#2A2830]">{memory.topic}</h3>
+                  <h3 className="text-[14px] font-bold text-[#2A2830]">{title}</h3>
                   <p className="mt-1 text-[12px] leading-relaxed text-[#7A767F]">
-                    {truncate(memory.cleanedTranscript || memory.originalTranscript || memory.publishVersion || '내용 미리보기가 없습니다.', 64)}
+                    {truncate(transcript.aiSummary || transcript.originalText || '내용 미리보기가 없습니다.', 64)}
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-4 px-5 py-4">
-                  {MEMORY_CONSENT_PURPOSES.map((purpose) => {
-                    const currentStatus = getMemoryConsentStatus(memory, purpose.key)
-                    const currentLabel = MEMORY_CONSENT_STATUSES.find(
-                      (status) => status.value === currentStatus
-                    )?.label ?? currentStatus
-
+                  {RECORD_CONSENT_PURPOSES.map((purpose) => {
+                    const on = consent[purpose.key]
                     return (
-                      <fieldset key={purpose.key} disabled={isPending}>
-                        <legend className="w-full">
-                          <span className="flex items-center justify-between gap-3">
-                            <span className="text-[13px] font-bold text-[#2A2830]">{purpose.label}</span>
-                            <span className="text-[11px] font-medium text-[#6F648F]">현재: {currentLabel}</span>
-                          </span>
-                          <span className="mt-0.5 block text-[11px] leading-relaxed text-[#7A767F]">
+                      <div key={purpose.key} className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-bold text-[#2A2830]">{purpose.label}</p>
+                          <p className="mt-0.5 text-[11px] leading-relaxed text-[#7A767F]">
                             {purpose.description}
-                          </span>
-                        </legend>
-                        <div className="mt-2 grid grid-cols-3 gap-1.5">
-                          {MEMORY_CONSENT_STATUSES.map((status) => {
-                            const selected = currentStatus === status.value
-                            return (
-                              <button
-                                key={status.value}
-                                type="button"
-                                onClick={() => void setPurposeStatus(memory, purpose.key, status.value)}
-                                aria-pressed={selected}
-                                aria-label={`${memory.topic} 기억 ${purpose.label}: ${status.label} 선택`}
-                                className={`min-h-9 rounded-lg border px-1.5 py-2 text-[11px] font-bold ${
-                                  selected
-                                    ? 'border-[#9485BE] bg-[#EEE9F2] text-[#6F648F]'
-                                    : 'border-[#E0DBE8] bg-white text-[#7A767F]'
-                                } disabled:opacity-55`}
-                              >
-                                {status.label}
-                              </button>
-                            )
-                          })}
+                          </p>
                         </div>
-                      </fieldset>
+                        <Toggle
+                          on={on}
+                          onChange={() => void togglePurpose(transcript, purpose.key, !on)}
+                          label={`${title} ${purpose.label} ${on ? '끄기' : '켜기'}`}
+                        />
+                      </div>
                     )
                   })}
                 </div>
@@ -327,12 +248,12 @@ function MemoryConsentSettingsSection() {
                 <div className="border-t border-[#E0DBE8] px-5 py-4">
                   <button
                     type="button"
-                    onClick={() => void stopUsingMemory(memory)}
+                    onClick={() => void stopUsingRecord(transcript)}
                     disabled={isPending}
-                    aria-label={`${memory.topic} 기억 활용 중지`}
+                    aria-label={`${title} 활용 중지`}
                     className="min-h-11 w-full rounded-xl border border-[#B95C5C] bg-white px-4 text-[13px] font-bold text-[#9E3B3B] active:bg-[#FFF0F0] disabled:opacity-55"
                   >
-                    {isPending ? '변경 중...' : '이 기억 활용 중지'}
+                    {isPending ? '변경 중...' : '이 답변 활용 중지'}
                   </button>
                   <p className="mt-2 text-[11px] leading-relaxed text-[#7A767F]">
                     활용 중지는 되돌릴 수 있으며, 나중에 목적별로 다시 허용할 수 있습니다.
@@ -432,7 +353,7 @@ export default function ConsentSettingsScreen() {
       </div>
 
       <main className="flex-1 overflow-y-auto px-5 pb-12">
-        <MemoryConsentSettingsSection />
+        <RecordConsentSettingsSection />
 
         <section
           className="mb-4 rounded-2xl px-5 py-4"

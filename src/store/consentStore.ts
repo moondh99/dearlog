@@ -7,16 +7,26 @@ import {
 } from '../lib/local-server'
 import { useDevModeStore } from './devModeStore'
 
-interface ConsentItem {
-  publish: boolean
-  chatbot: boolean
+// 목적 5종. 예전에는 publish/chatbot 2종만 다뤘고 나머지 3종은 운영에서 비어 있는
+// Memory 테이블에만 있었다.
+export type ConsentPurpose = 'publish' | 'chatbot' | 'familyRead' | 'posthumous' | 'sensitive'
+
+export type ConsentItem = Record<ConsentPurpose, boolean>
+
+export const DEFAULT_CONSENT: ConsentItem = {
+  publish: true,
+  chatbot: true,
+  familyRead: true,
+  posthumous: true,
+  sensitive: true,
 }
 
 interface ConsentState {
   consents: Record<string, ConsentItem>
   fetchConsents: () => Promise<void>
-  setConsent: (transcriptId: string, key: 'publish' | 'chatbot', value: boolean) => Promise<void>
+  setConsent: (transcriptId: string, key: ConsentPurpose, value: boolean) => Promise<void>
   setAll: (transcriptIds: string[], publish: boolean, chatbot: boolean) => Promise<void>
+  stopAllUse: (transcriptId: string) => Promise<void>
 }
 
 export const useConsentStore = create<ConsentState>()(
@@ -32,7 +42,10 @@ export const useConsentStore = create<ConsentState>()(
           for (const record of res.records) {
             newConsents[record.id] = {
               publish: record.publish ?? true,
-              chatbot: record.chatbot ?? true
+              chatbot: record.chatbot ?? true,
+              familyRead: record.familyRead ?? true,
+              posthumous: record.posthumous ?? true,
+              sensitive: record.sensitive ?? true,
             }
           }
           set({ consents: newConsents })
@@ -42,25 +55,43 @@ export const useConsentStore = create<ConsentState>()(
       },
 
       setConsent: async (id, key, value) => {
-        // Optimistic update
-        set((state) => {
-          const currentItem = state.consents[id] ?? { publish: true, chatbot: true }
-          const newItem = { ...currentItem, [key]: value }
-          return {
-            consents: {
-              ...state.consents,
-              [id]: newItem
-            }
-          }
-        })
+        const previous = get().consents[id] ?? DEFAULT_CONSENT
+        set((state) => ({
+          consents: { ...state.consents, [id]: { ...previous, [key]: value } },
+        }))
 
         if (useDevModeStore.getState().isOfflineDemo) return
 
         try {
-          const current = get().consents[id]
-          await updateLocalInterviewRecordConsent(id, current.publish, current.chatbot)
+          await updateLocalInterviewRecordConsent(id, { [key]: value })
         } catch (e) {
           console.error('setConsent API error:', e)
+          // 서버가 거절하면 화면만 바뀌어 동의한 줄 아는 상태가 남는다. 되돌린다.
+          set((state) => ({ consents: { ...state.consents, [id]: previous } }))
+          throw e
+        }
+      },
+
+      // 되돌릴 수 있는 전체 활용 중지. 5종을 한 번에 철회한다.
+      stopAllUse: async (id) => {
+        const previous = get().consents[id] ?? DEFAULT_CONSENT
+        const stopped: ConsentItem = {
+          publish: false,
+          chatbot: false,
+          familyRead: false,
+          posthumous: false,
+          sensitive: false,
+        }
+        set((state) => ({ consents: { ...state.consents, [id]: stopped } }))
+
+        if (useDevModeStore.getState().isOfflineDemo) return
+
+        try {
+          await updateLocalInterviewRecordConsent(id, stopped)
+        } catch (e) {
+          console.error('stopAllUse API error:', e)
+          set((state) => ({ consents: { ...state.consents, [id]: previous } }))
+          throw e
         }
       },
 
@@ -68,7 +99,7 @@ export const useConsentStore = create<ConsentState>()(
         // Optimistic update
         set((state) => ({
           consents: ids.reduce(
-            (acc, id) => ({ ...acc, [id]: { publish, chatbot } }),
+            (acc, id) => ({ ...acc, [id]: { ...(state.consents[id] ?? DEFAULT_CONSENT), publish, chatbot } }),
             { ...state.consents }
           ),
         }))

@@ -124,7 +124,7 @@ export default function ParentProgressScreen() {
     setIsGenerating(true)
     // 출판 동의를 철회한 기록은 자서전 초안에 넣지 않습니다.
     const memoryChunks = buildMemoryChunksFromTranscripts(
-      transcripts.filter((transcript) => transcript.publish !== false)
+      transcripts.filter((transcript) => transcript.publish !== false && transcript.sensitive !== false)
     )
     try {
       const results = await Promise.all(

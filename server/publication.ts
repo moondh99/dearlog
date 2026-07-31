@@ -149,7 +149,9 @@ export async function prepareLocalPublicationInput(input: LocalPublicationInput)
   const [senior, records, cover, chapters, draft, photos] = await Promise.all([
     prisma.user.findUnique({ where: { id: input.seniorId } }),
     prisma.interviewRecord.findMany({
-      where: { userId: input.seniorId, publish: true },
+      // 책은 AI가 쓰므로 민감정보 미동의 기록은 출판 대상에서도 빠진다.
+      // 여기를 통과시키면 그 내용이 집필 에이전트를 거쳐 외부 제공자로 나간다.
+      where: { userId: input.seniorId, publish: true, sensitive: true },
       orderBy: { recordedAt: 'asc' },
       include: {
         chapter: true,

@@ -4,6 +4,23 @@ import type { ChildQuestion, DemoPhoto, QuestionPriority } from '../../types/chi
 import type { Chapter, Question, Transcript } from '../../types/interview'
 import type { CalendarEvent, EventType, GhostwriterResult, Paragraph } from '../../types/agents'
 import type { UserRole } from '../../types/user'
+import { DEFAULT_CONSENT, type ConsentItem } from '../../store/consentStore'
+import type { ConsentSettingsV2 } from '../types'
+
+// 데모 데이터의 5종 동의를 그대로 옮긴다. 예전에는 { publish: true, chatbot: true }로
+// 하드코딩해 시드에 들어 있던 철회 상태(예: 민감정보 revoked)를 통째로 버렸고,
+// 그 결과 데모 세션이 철회된 내용을 다시 공개했다.
+function demoConsentFor(memory: { consentSettings?: ConsentSettingsV2 }): ConsentItem {
+  const settings = memory.consentSettings
+  if (!settings) return { ...DEFAULT_CONSENT }
+  return {
+    publish: settings.출판 !== 'revoked',
+    chatbot: settings.챗봇 !== 'revoked',
+    familyRead: settings.가족열람 !== 'revoked',
+    posthumous: settings.사후공개 !== 'revoked',
+    sensitive: settings.민감정보 !== 'revoked',
+  }
+}
 
 /**
  * capstone-demo-data.ts 는 구세대 src/store.ts 형태(Memory / StoredPhoto / FamilyQuestion /
@@ -99,7 +116,7 @@ export interface NewGenDemoSeed {
   transcripts: Transcript[]
   autobiographyChapters: GhostwriterResult[]
   calendarEvents: CalendarEvent[]
-  consents: Record<string, { publish: boolean; chatbot: boolean }>
+  consents: Record<string, ConsentItem>
 }
 
 function toDemoPhotos(
@@ -234,6 +251,7 @@ export function buildNewGenDemoSeed(): NewGenDemoSeed {
       reviewedAt: toLocalDateStamp(memory.date),
       reviewRequestText: null,
       recordedAt: toLocalDateStamp(memory.date),
+      ...demoConsentFor(memory),
     }
   })
 
@@ -268,9 +286,9 @@ export function buildNewGenDemoSeed(): NewGenDemoSeed {
     questions: allQuestions.filter((question) => question.chapterId === chapter.id),
   }))
 
-  const consents = transcripts.reduce<Record<string, { publish: boolean; chatbot: boolean }>>(
-    (acc, transcript) => {
-      acc[transcript.id] = { publish: true, chatbot: true }
+  const consents = demo.memories.reduce<Record<string, ConsentItem>>(
+    (acc, memory) => {
+      acc[transcriptIdForMemory(memory.id)] = demoConsentFor(memory)
       return acc
     },
     {},

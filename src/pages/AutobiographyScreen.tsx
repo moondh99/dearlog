@@ -560,7 +560,7 @@ export default function AutobiographyScreen() {
   // 읽지만, 여기서 만든 초안은 autobiography/draft로 저장돼 다시 출판 입력으로 들어가므로
   // 여기를 거르지 않으면 철회한 이야기가 초안을 통해 책에 되돌아옵니다.
   const publishableTranscripts = useMemo(
-    () => transcripts.filter((transcript) => transcript.publish !== false),
+    () => transcripts.filter((transcript) => transcript.publish !== false && transcript.sensitive !== false),
     [transcripts],
   )
   const transcriptMemoryChunks = useMemo(
