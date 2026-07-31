@@ -164,8 +164,15 @@ model InterviewRecord {
   recordedAt        DateTime          @default(now())
   source            String            @default("app")
   mode              String            @default("photo")
+  // 목적별 동의. 예전에는 5종 동의가 운영에서 생성되지 않는 Memory 테이블에 붙어 있어
+  // 화면은 있는데 조작할 대상이 없었다. 실제 답변이 쌓이는 이 테이블로 옮긴다.
+  // 상태는 불리언이다. 기존 3상태의 needs_review는 동의 상태가 아니라 검수 워크플로이고,
+  // 아래 reviewStatus가 이미 그 역할을 한다.
   publish           Boolean           @default(true)
   chatbot           Boolean           @default(true)
+  familyRead        Boolean           @default(true)
+  posthumous        Boolean           @default(true)
+  sensitive         Boolean           @default(true)
   reviewStatus      String            @default("pending")
   reviewedAt        DateTime?
   reviewRequestText String?
@@ -173,6 +180,7 @@ model InterviewRecord {
   chapter           Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
   question          Question?         @relation(fields: [questionId], references: [id], onDelete: SetNull)
   session           InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  freeSpeechRecord  FreeSpeechRecord?
 }
 
 model FreeSpeechRecord {
@@ -183,6 +191,10 @@ model FreeSpeechRecord {
   audioFileKey   String
   transcriptText String
   recordedAt     DateTime          @default(now())
+  // 이 행은 InterviewRecord의 사본이다. 동의 컬럼을 여기에도 두면 진실의 원천이 둘이 되어
+  // 한쪽만 철회되는 우회로가 생긴다. 원본을 가리키고 동의는 원본에서 읽는다.
+  interviewRecordId String?        @unique
+  interviewRecord   InterviewRecord? @relation(fields: [interviewRecordId], references: [id], onDelete: Cascade)
   user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   chapter        Chapter           @relation(fields: [chapterId], references: [id], onDelete: Restrict)
   session        InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)

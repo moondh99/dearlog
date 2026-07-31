@@ -35,6 +35,9 @@ export interface Transcript {
   audioUrl?: string | null
   publish?: boolean
   chatbot?: boolean
+  familyRead?: boolean
+  posthumous?: boolean
+  sensitive?: boolean
   reviewStatus?: TranscriptReviewStatus
   reviewedAt?: string | null
   reviewRequestText?: string | null

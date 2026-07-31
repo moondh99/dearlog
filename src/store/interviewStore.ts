@@ -107,6 +107,9 @@ export const useInterviewStore = create<InterviewState>()(
               audioUrl: r.audioUrl || null,
               publish: r.publish ?? true,
               chatbot: r.chatbot ?? true,
+              familyRead: r.familyRead ?? true,
+              posthumous: r.posthumous ?? true,
+              sensitive: r.sensitive ?? true,
               reviewStatus: r.reviewStatus || 'pending',
               reviewedAt: r.reviewedAt ? toLocalDateStamp(r.reviewedAt) : null,
               reviewRequestText: r.reviewRequestText || null,
@@ -134,7 +137,10 @@ export const useInterviewStore = create<InterviewState>()(
             mode: transcript.mode ?? 'voice',
             audioFileKey: transcript.audioFileKey || undefined,
             publish: true,
-            chatbot: true
+            chatbot: true,
+            familyRead: true,
+            posthumous: true,
+            sensitive: true
           })
           await get().fetchTranscripts() // Re-fetch to get database details
           await get().fetchChaptersAndQuestions()

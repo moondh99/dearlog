@@ -405,7 +405,8 @@ export default function ChatbotScreen() {
 
       const chunksFromMemories = buildMemoryChunksFromMemories(serverMemories)
       const chunksFromTranscripts = buildMemoryChunksFromTranscripts(
-        transcripts.filter((transcript) => transcript.chatbot !== false)
+        // 민감정보 미동의 기록은 외부 AI 호출에 넣지 않는다.
+        transcripts.filter((transcript) => transcript.chatbot !== false && transcript.sensitive !== false)
       ).map((chunk) => ({
         ...chunk,
         reliabilityLabel: chunk.reliabilityLabel === 'UNVERIFIED'

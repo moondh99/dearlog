@@ -539,6 +539,9 @@ export function saveLocalInterviewRecord(input: {
   audioFileKey?: string;
   publish?: boolean;
   chatbot?: boolean;
+  familyRead?: boolean;
+  posthumous?: boolean;
+  sensitive?: boolean;
 }) {
   return api<{ record: unknown }>('/api/interview-records', {
     method: 'POST',
@@ -554,6 +557,9 @@ export function saveLocalInterviewRecord(input: {
       audioFileKey: input.audioFileKey,
       publish: input.publish,
       chatbot: input.chatbot,
+      familyRead: input.familyRead,
+      posthumous: input.posthumous,
+      sensitive: input.sensitive,
     }),
   });
 }
@@ -1030,13 +1036,21 @@ export function deleteLocalCalendarEvent(id: string) {
   });
 }
 
-export function updateLocalInterviewRecordConsent(id: string, publish: boolean, chatbot: boolean) {
+export type RecordConsentPurposes = {
+  publish: boolean;
+  chatbot: boolean;
+  familyRead: boolean;
+  posthumous: boolean;
+  sensitive: boolean;
+};
+
+export function updateLocalInterviewRecordConsent(id: string, consent: Partial<RecordConsentPurposes>) {
   const auth = readStoredAuth();
   const role = auth?.role === 'senior' ? 'senior' : 'guardian';
   return api<{ record: any }>(`/api/interview-records/${id}`, {
     method: 'PATCH',
     role,
-    body: JSON.stringify({ publish, chatbot }),
+    body: JSON.stringify(consent),
   });
 }
 

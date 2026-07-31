@@ -121,6 +121,9 @@ const statements = [
     "mode" TEXT NOT NULL DEFAULT 'photo',
     "publish" BOOLEAN NOT NULL DEFAULT 1,
     "chatbot" BOOLEAN NOT NULL DEFAULT 1,
+    "familyRead" BOOLEAN NOT NULL DEFAULT 1,
+    "posthumous" BOOLEAN NOT NULL DEFAULT 1,
+    "sensitive" BOOLEAN NOT NULL DEFAULT 1,
     "reviewStatus" TEXT NOT NULL DEFAULT 'pending',
     "reviewedAt" DATETIME,
     "reviewRequestText" TEXT,
@@ -137,6 +140,7 @@ const statements = [
     "audioFileKey" TEXT NOT NULL,
     "transcriptText" TEXT NOT NULL,
     "recordedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "interviewRecordId" TEXT,
     CONSTRAINT "free_speech_db_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "free_speech_db_chapterId_fkey" FOREIGN KEY ("chapterId") REFERENCES "Chapter" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "free_speech_db_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "InterviewSession" ("id") ON DELETE SET NULL ON UPDATE CASCADE
@@ -505,6 +509,35 @@ export async function initLocalDatabase() {
   if (!recordColumnNames.has('reviewRequestText')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "reviewRequestText" TEXT');
   }
+  // 목적별 동의를 실제 답변이 쌓이는 테이블로 옮긴다. 기존 행은 모두 동의한 상태로 둔다.
+  // 철회는 사용자가 명시적으로 하는 행위이므로, 마이그레이션이 임의로 철회하지 않는다.
+  if (!recordColumnNames.has('familyRead')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "familyRead" BOOLEAN NOT NULL DEFAULT 1');
+  }
+  if (!recordColumnNames.has('posthumous')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "posthumous" BOOLEAN NOT NULL DEFAULT 1');
+  }
+  if (!recordColumnNames.has('sensitive')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "sensitive" BOOLEAN NOT NULL DEFAULT 1');
+  }
+
+  // 자유 발화 기록은 InterviewRecord의 사본이다. 원본을 가리키게 해서 동의를 원본에서 읽는다.
+  const freeSpeechColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("free_speech_db")');
+  const freeSpeechColumnNames = new Set(freeSpeechColumns.map((column) => column.name));
+  if (!freeSpeechColumnNames.has('interviewRecordId')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "free_speech_db" ADD COLUMN "interviewRecordId" TEXT');
+    // 기존 행은 같은 사용자/오디오키/시각으로 원본을 되찾는다.
+    await prisma.$executeRawUnsafe(`
+      UPDATE "free_speech_db" SET "interviewRecordId" = (
+        SELECT "id" FROM "InterviewRecord" r
+        WHERE r."userId" = "free_speech_db"."userId"
+          AND r."audioFileKey" = "free_speech_db"."audioFileKey"
+          AND r."transcriptText" = "free_speech_db"."transcriptText"
+        LIMIT 1
+      ) WHERE "interviewRecordId" IS NULL
+    `);
+  }
+  await prisma.$executeRawUnsafe('CREATE UNIQUE INDEX IF NOT EXISTS "free_speech_db_interviewRecordId_key" ON "free_speech_db"("interviewRecordId")');
 
   const publicationRequestColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PublicationRequest")');
   const publicationRequestColumnNames = new Set(publicationRequestColumns.map((column) => column.name));
