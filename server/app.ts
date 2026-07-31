@@ -690,6 +690,33 @@ function estimateAiProxyUnits(endpoint: AiProxyEndpoint, body: Record<string, un
   return Math.ceil(inputChars / 4);
 }
 
+// 로그인 시도 제한. 전화번호와 이름만 맞으면 30일 토큰이 나오므로, 최소한 대입 속도는 늦춘다.
+// 프로세스 메모리 기반이라 재시작하면 초기화되고 다중 인스턴스에서 공유되지 않는다.
+// ponytail: 단일 인스턴스 가정. 인스턴스를 늘리면 공유 저장소(예: Redis)로 옮긴다.
+const authAttemptBuckets = new Map<string, { windowStartedAt: number; attempts: number }>();
+
+function checkAuthAttemptLimit(key: string, limit: number) {
+  const now = Date.now();
+  const windowMs = positiveInt(Number(process.env.AUTH_ATTEMPT_WINDOW_MS ?? 600_000), 600_000);
+
+  let bucket = authAttemptBuckets.get(key);
+  if (!bucket || now - bucket.windowStartedAt >= windowMs) {
+    bucket = { windowStartedAt: now, attempts: 0 };
+    authAttemptBuckets.set(key, bucket);
+  }
+
+  // 버킷이 무한정 쌓이지 않도록 만료된 항목을 함께 정리한다.
+  if (authAttemptBuckets.size > 5000) {
+    for (const [k, v] of authAttemptBuckets) {
+      if (now - v.windowStartedAt >= windowMs) authAttemptBuckets.delete(k);
+    }
+  }
+
+  bucket.attempts += 1;
+  const retryAfterSeconds = Math.max(1, Math.ceil((windowMs - (now - bucket.windowStartedAt)) / 1000));
+  return { allowed: bucket.attempts <= limit, retryAfterSeconds };
+}
+
 function checkAiProxyRateLimit(
   buckets: Map<string, AiProxyRateBucket>,
   user: RequestUser,
@@ -1547,6 +1574,22 @@ export function createApp() {
       const phoneNumber = normalizePhoneNumber(req.body.phoneNumber);
       if (!/^01[016789]\d{7,8}$/.test(phoneNumber)) {
         res.status(400).json({ error: '휴대폰 번호를 다시 확인해 주세요.' });
+        return;
+      }
+
+      // 전화번호별과 발신 IP별로 각각 제한한다. 번호 하나를 노리는 대입과
+      // 여러 번호를 훑는 대입이 서로 다른 형태라 한쪽만 막으면 뚫린다.
+      // IP 한도를 번호 한도보다 훨씬 높게 둔다. 한 가족이 같은 공유기를 쓰거나
+      // 통신사 NAT 뒤에 있으면 정상 사용자도 같은 IP로 몰리기 때문이다.
+      // 특정 번호를 노린 대입은 번호 한도가 막는다.
+      const attemptChecks = [
+        checkAuthAttemptLimit(`phone:${phoneNumber}`, positiveInt(Number(process.env.AUTH_ATTEMPT_LIMIT_PER_PHONE ?? 10), 10)),
+        checkAuthAttemptLimit(`ip:${req.ip ?? 'unknown'}`, positiveInt(Number(process.env.AUTH_ATTEMPT_LIMIT_PER_IP ?? 100), 100)),
+      ];
+      const blocked = attemptChecks.find((check) => !check.allowed);
+      if (blocked) {
+        res.setHeader('Retry-After', String(blocked.retryAfterSeconds));
+        res.status(429).json({ error: '로그인 시도가 너무 잦습니다. 잠시 후 다시 시도해 주세요.' });
         return;
       }
 
@@ -3487,6 +3530,15 @@ export function createApp() {
     try {
       const { text, priority, status, anonymous, answerMemoryId } = req.body;
       const existing = await assertCurrentUserCanAccessQuestion(req.user!, req.params.id);
+
+      // 공통 질문은 seniorId가 없어 모든 가족이 같은 행을 공유한다. 답변 상태 외에
+      // 질문 내용이나 우선순위를 고치면 다른 가족의 화면까지 바뀐다.
+      // DELETE는 이미 같은 이유로 막혀 있었는데 PATCH만 빠져 있었다.
+      if (existing.category === 'common_questions' && (text !== undefined || priority !== undefined)) {
+        res.status(403).json({ error: '공통 질문의 내용은 수정할 수 없습니다.' });
+        return;
+      }
+
       if (answerMemoryId) {
         const memory = await prisma.memory.findUnique({
           where: { id: String(answerMemoryId) },
@@ -3887,11 +3939,20 @@ export function createApp() {
   });
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    const statusCode = typeof error === 'object' && error && 'statusCode' in error
+    const rawStatusCode = typeof error === 'object' && error && 'statusCode' in error
       ? Number((error as { statusCode?: number }).statusCode)
-      : 500;
-    res.status(Number.isFinite(statusCode) ? statusCode : 500).json({
-      error: error instanceof Error ? error.message : '서버 오류가 발생했습니다.',
+      : NaN;
+    // statusCode가 명시적으로 붙은 오류(httpError)만 우리가 쓴 메시지다.
+    // 그 외에는 메시지를 내보내지 않는다. 예전에는 잘못된 id 하나로 Prisma가 던진
+    // 예외 전문이 그대로 응답에 실려 테이블·컬럼·제약 이름이 노출됐다.
+    const isExplicitHttpError = Number.isFinite(rawStatusCode);
+    if (!isExplicitHttpError) {
+      console.error('[dearlog] unhandled request error:', error);
+    }
+    res.status(isExplicitHttpError ? rawStatusCode : 500).json({
+      error: isExplicitHttpError && error instanceof Error
+        ? error.message
+        : '서버 오류가 발생했습니다.',
     });
   });
 

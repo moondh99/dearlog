@@ -165,3 +165,72 @@ describe('사진 업로드 MIME 검증', () => {
     expect(photoExtensionForMimeType('text/html')).toBe('.jpg');
   });
 });
+
+describe('로그인 시도 제한', () => {
+  it('같은 번호로 반복 시도하면 429로 막는다', async () => {
+    const phoneNumber = '01099998888';
+    const attempt = () => request(app).post('/api/auth/phone').send({ phoneNumber, name: '아무개', isLogin: true });
+
+    let sawTooMany = false;
+    // 번호별 기본 한도는 10회다. 넉넉히 12회 시도해 429가 나오는지 본다.
+    for (let i = 0; i < 12; i += 1) {
+      const res = await attempt();
+      if (res.status === 429) {
+        expect(res.headers['retry-after']).toBeDefined();
+        sawTooMany = true;
+        break;
+      }
+    }
+    expect(sawTooMany).toBe(true);
+  });
+});
+
+describe('에러 응답', () => {
+  it('예상치 못한 오류에 Prisma 내부 정보를 노출하지 않는다', async () => {
+    // 존재하지 않는 chapterId는 FK 제약 위반으로 Prisma 예외를 만든다.
+    const res = await request(app)
+      .post('/api/interview-records')
+      .set('x-user-id', OTHER_FAMILY_SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ chapterId: 'no_such_chapter_id', transcriptText: '테스트' });
+
+    expect(res.status).toBe(500);
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(/prisma|InterviewRecord_|foreign key|constraint/i);
+    expect(res.body.error).toBe('서버 오류가 발생했습니다.');
+  });
+});
+
+describe('공통 질문 보호', () => {
+  // 공통 질문은 seniorId가 없어 모든 가족이 같은 행을 공유한다.
+  async function createCommonQuestion() {
+    return prisma.question.create({
+      data: { category: 'common_questions', text: '모든 가족이 함께 보는 질문' },
+    });
+  }
+
+  it('시니어가 공통 질문의 내용을 수정할 수 없다', async () => {
+    const common = await createCommonQuestion();
+
+    const res = await request(app)
+      .patch(`/api/questions/${common.id}`)
+      .set('x-user-id', OTHER_FAMILY_SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ text: '모든 가족에게 보이는 질문을 바꿔치기' });
+
+    expect(res.status).toBe(403);
+    const after = await prisma.question.findUnique({ where: { id: common.id } });
+    expect(after?.text).toBe(common.text);
+  });
+
+  it('답변 상태 변경은 계속 허용한다', async () => {
+    const common = await createCommonQuestion();
+    const res = await request(app)
+      .patch(`/api/questions/${common.id}`)
+      .set('x-user-id', OTHER_FAMILY_SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ status: 'answered' });
+
+    expect(res.status).toBe(200);
+  });
+});

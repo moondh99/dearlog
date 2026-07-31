@@ -531,6 +531,7 @@ function IncomingCallView({
         <div className="flex flex-col items-center gap-3">
           <button
             onClick={onDecline}
+            aria-label="통화 거절"
             className="w-16 h-16 rounded-full flex items-center justify-center"
             style={{ backgroundColor: '#FF3B30' }}
           >
@@ -541,6 +542,7 @@ function IncomingCallView({
         <div className="flex flex-col items-center gap-3">
           <button
             onClick={onAccept}
+            aria-label="통화 수락"
             className="w-16 h-16 rounded-full flex items-center justify-center"
             style={{ backgroundColor: '#34C759' }}
           >
