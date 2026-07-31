@@ -23,7 +23,7 @@ import {
   startLocalPublicationPreviewJob,
 } from './publication';
 import { sendWebPush } from './push';
-import { audioUpload, photoUpload, resolveLocalFileKey } from './storage';
+import { audioUpload, isAllowedPhotoMimeType, photoUpload, resolveLocalFileKey } from './storage';
 
 function normalizePhoneNumber(value: unknown) {
   return String(value ?? '').replace(/[^\d]/g, '');
@@ -224,9 +224,11 @@ function parseLocalFileKey(fileKey: string): { kind: LocalFileKind; fileName: st
   return { kind, fileName: path.basename(parts.join('/')) };
 }
 
-function signLocalFileAccessToken(fileKey: string) {
+function signLocalFileAccessToken(fileKey: string, ownerId?: string) {
   const payload = Buffer.from(JSON.stringify({
     fileKey,
+    // 아직 DB 레코드가 없는 갓 업로드된 파일은 소유자를 토큰에 담아 확인합니다.
+    ...(ownerId ? { own: ownerId } : {}),
     exp: Math.floor(Date.now() / 1000) + fileAccessTokenTtlSeconds(),
   })).toString('base64url');
   const signature = crypto
@@ -254,6 +256,19 @@ function verifyLocalFileAccessToken(token: unknown, fileKey: string) {
     return parsed.fileKey === fileKey
       && typeof parsed.exp === 'number'
       && parsed.exp > Math.floor(Date.now() / 1000);
+  } catch {
+    return false;
+  }
+}
+
+// 업로드 직후 파일은 아직 InterviewRecord/FreeSpeechRecord가 없어 DB로 소유권을 확인할 수 없습니다.
+// 업로드 응답에 담아 준 토큰의 소유자와 요청자가 같은지로 대신 확인합니다.
+function verifyLocalFileUploadToken(token: unknown, fileKey: string, userId: string) {
+  if (!verifyLocalFileAccessToken(token, fileKey)) return false;
+  try {
+    const payload = String(token).split('.')[0];
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { own?: unknown };
+    return parsed.own === userId;
   } catch {
     return false;
   }
@@ -519,31 +534,21 @@ async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: s
   });
   if (existingLink) return existingLink.seniorId;
 
-  const senior = await prisma.user.findFirst({
-    where: { role: 'senior' },
-    orderBy: { createdAt: 'desc' },
-  });
-  if (!senior) {
-    // 한 휴대폰 번호 계정이 보호자/시니어를 번갈아 쓰는 테스트 흐름에서는 자기 계정을 관리 대상으로 연결합니다.
-    const selfUser = await prisma.user.findUnique({ where: { id: guardianId } });
-    if (selfUser) {
-      await prisma.guardianSeniorLink.upsert({
-        where: { guardianId_seniorId: { guardianId, seniorId: selfUser.id } },
-        update: {},
-        create: { guardianId, seniorId: selfUser.id },
-      });
-      return selfUser.id;
-    }
-    return 'local_senior';
+  // 링크가 없으면 자기 계정만 기록 공간으로 연결합니다.
+  // 예전에는 DB에서 가장 최근 시니어를 찾아 자동 연결했지만, 그 경로로 아무 보호자나
+  // 남의 가족 기록에 접근하고 초대 토큰까지 발급받을 수 있었기 때문에 제거했습니다.
+  // 다른 가족의 시니어는 반드시 초대 플로우를 통해서만 연결됩니다.
+  const selfUser = await prisma.user.findUnique({ where: { id: guardianId } });
+  if (selfUser) {
+    await prisma.guardianSeniorLink.upsert({
+      where: { guardianId_seniorId: { guardianId, seniorId: selfUser.id } },
+      update: {},
+      create: { guardianId, seniorId: selfUser.id },
+    });
+    return selfUser.id;
   }
 
-  // 사용자 테스트에서는 별도 초대 플로우 없이 보호자가 가장 최근 시니어를 관리할 수 있도록 자동 연결합니다.
-  await prisma.guardianSeniorLink.upsert({
-    where: { guardianId_seniorId: { guardianId, seniorId: senior.id } },
-    update: {},
-    create: { guardianId, seniorId: senior.id },
-  });
-  return senior.id;
+  throw httpError('연결된 기록 공간이 없습니다. 초대를 통해 부모님과 연결해 주세요.', 404);
 }
 
 async function ensureSelfGuardianSeniorLink(userId: string) {
@@ -2241,7 +2246,13 @@ export function createApp() {
         return;
       }
       const fileKey = `audio/${path.basename(req.file.filename)}`;
-      res.status(201).json({ fileKey, fileName: req.file.originalname, mimeType: req.file.mimetype, size: req.file.size });
+      res.status(201).json({
+        fileKey,
+        uploadToken: signLocalFileAccessToken(fileKey, req.user!.id),
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      });
     } catch (error) {
       next(error);
     }
@@ -2357,6 +2368,12 @@ export function createApp() {
       if (parsed.kind !== 'audio') {
         res.status(400).json({ error: '음성 파일만 텍스트로 변환할 수 있습니다.' });
         return;
+      }
+
+      // 예전에는 fileKey만 있으면 남의 음성 파일도 그대로 받아쓰기 할 수 있었습니다.
+      // 방금 올린 파일은 업로드 토큰으로, 이미 저장된 파일은 DB 소유권으로 확인합니다.
+      if (!verifyLocalFileUploadToken(req.body.uploadToken, fileKey, req.user!.id)) {
+        await assertCurrentUserCanAccessLocalFile(req.user!, fileKey);
       }
 
       const filePath = resolveLocalFileKey(fileKey);
@@ -2786,9 +2803,11 @@ export function createApp() {
     }
   });
 
-  app.post('/api/push-subscriptions', async (req, res, next) => {
+  app.post('/api/push-subscriptions', requireRole('senior', 'guardian'), async (req, res, next) => {
     try {
       const keys = req.body.keys ?? {};
+      // 구독 소유자는 반드시 인증된 사용자입니다. 예전에는 req.body.userId를 그대로 믿어서
+      // 누구나 남의 사용자 ID로 자기 엔드포인트를 등록하고 그 사람의 알림을 대신 받을 수 있었습니다.
       const subscription = await prisma.pushSubscription.upsert({
         where: { endpoint: req.body.endpoint },
         update: {
@@ -2797,7 +2816,7 @@ export function createApp() {
           userAgent: req.header('user-agent') ?? '',
         },
         create: {
-          userId: req.body.userId ?? req.user?.id ?? 'local_guardian',
+          userId: req.user!.id,
           endpoint: req.body.endpoint,
           p256dh: keys.p256dh,
           auth: keys.auth,
@@ -2865,7 +2884,9 @@ export function createApp() {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
         : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
-      const records = await prisma.interviewRecord.findMany({ where: { userId: seniorId } });
+      // 출판 동의를 철회한 기록은 표지 분석에도 넘기지 않습니다.
+      // 여기를 거르지 않으면 책에서 빠진 이야기가 AI 제공자에게는 그대로 전송됩니다.
+      const records = await prisma.interviewRecord.findMany({ where: { userId: seniorId, publish: true } });
       const decision = await decideCoverDesign(records.map((record) => record.transcriptText), {
         userId: req.user!.id,
         role: req.user!.role,
@@ -3122,6 +3143,8 @@ export function createApp() {
 
       const isMasked = vault && vault.isVaultSetup && vault.deathVerificationStatus !== 'released';
 
+      const isGuardianRequest = req.user!.role === 'guardian';
+
       const mappedMemories = memories.map(m => {
         const baseMemory = mapMemoryToResponse(m);
         if (isMasked) {
@@ -3134,6 +3157,27 @@ export function createApp() {
             embedding: null
           };
         }
+
+        // 가족열람을 철회한 기억은 본문을 가족에게 보내지 않습니다. 예전에는 동의 상태만
+        // 'revoked'로 표시하고 originalTranscript와 embedding은 그대로 내려보내서,
+        // 화면에서만 가려지고 API 응답에는 전문이 남아 있었습니다.
+        // 부모님 본인은 자기 기억을 계속 볼 수 있어야 하므로 보호자 요청에만 적용합니다.
+        if (isGuardianRequest && baseMemory.consent?.status === 'revoked') {
+          return {
+            ...baseMemory,
+            originalTranscript: '',
+            cleanedTranscript: '',
+            publishVersion: '',
+            embedding: null,
+            familyReadRevoked: true,
+          };
+        }
+
+        // 챗봇 활용을 철회하면 임베딩 사본도 함께 내려보내지 않습니다.
+        if (baseMemory.consentSettings?.챗봇 === 'revoked') {
+          return { ...baseMemory, embedding: null };
+        }
+
         return baseMemory;
       });
 
@@ -3819,7 +3863,14 @@ export function createApp() {
       const filePath = resolveLocalFileKey(fileKey);
       await fs.access(filePath);
       res.header('Cache-Control', 'private, max-age=300');
-      if (access.mimeType) res.type(access.mimeType);
+      // 사진의 mimeType은 업로드 당시 클라이언트가 보낸 값이라 그대로 신뢰하지 않습니다.
+      // 예전 데이터에 text/html 같은 값이 남아 있어도 같은 오리진에서 실행되지 않도록 막습니다.
+      if (access.mimeType && (access.kind !== 'photos' || isAllowedPhotoMimeType(access.mimeType))) {
+        res.type(access.mimeType);
+      } else if (access.kind === 'photos') {
+        res.type('application/octet-stream');
+      }
+      res.header('X-Content-Type-Options', 'nosniff');
       res.sendFile(filePath);
     } catch (error) {
       next(error);

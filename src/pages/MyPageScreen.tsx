@@ -222,7 +222,9 @@ export default function MyPageScreen() {
 
   const handleLogout = () => {
     reset()
-    navigate('/splash', { replace: true })
+    // 전체 새로고침으로 메모리에 남은 스토어 상태까지 확실히 버립니다.
+    // navigate만 하면 언마운트돼도 Zustand 인스턴스에 이전 가족 데이터가 남습니다.
+    window.location.replace('/splash')
   }
 
   const backPath = role === 'parent' ? '/parent' : '/child'

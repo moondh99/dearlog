@@ -249,7 +249,7 @@ npm test         # vitest --run
 npm run build    # vite build
 ```
 
-테스트 파일/케이스 수는 `npm test` 출력에 표시됩니다. 최근 측정값은 [현재 작업 현황](docs/current-work-status.md)에 시점과 함께 기록합니다. `vitest.config.ts`에 아직 정리되지 않은 제외 목록이 남아 있어 수치가 변하므로, 문서에 옮겨 적기 전에 직접 실행해 확인하세요.
+테스트 파일/케이스 수는 `npm test` 출력에 표시됩니다. 최근 측정값은 [현재 작업 현황](docs/current-work-status.md)에 시점과 함께 기록합니다. 테스트가 계속 추가되므로 문서에 옮겨 적기 전에 직접 실행해 확인하세요.
 
 참고: 제한된 샌드박스에서는 Supertest가 임시 HTTP 서버를 열 때 `listen EPERM: operation not permitted 0.0.0.0`로 실패할 수 있습니다. 로컬 권한에서 동일 명령을 실행하면 통과합니다.
 
@@ -278,7 +278,7 @@ npm run build    # vite build
 
 - 디지털 유산 금고: `LegacyVault` 모델과 `/api/legacy/*` 6개, `src/lib/local-server.ts`의 클라이언트 래퍼는 있으나 이를 호출하는 화면이 없습니다. 클라이언트 암호화·분할 모듈(`src/lib/security/encryption.ts`, `src/lib/security/shamir.ts`)은 단위 테스트만 있고 어떤 화면·API 호출에도 연결돼 있지 않습니다.
 - 기억 단위 완전 삭제: `DELETE /api/memories/:id`는 있으나 호출하는 화면이 없습니다. 화면에서 지울 수 있는 것은 사진과 가족 질문입니다.
-- 목적별 동의 5종: 서버 `MemoryConsentSettings`는 `publish`, `familyRead`, `chatbot`, `posthumous`, `sensitive`를 저장하지만 앱 동의 화면은 출판·챗봇 2종만 노출합니다.
+- 목적별 동의 5종: 서버 `MemoryConsentSettings`가 `publish`, `familyRead`, `chatbot`, `posthumous`, `sensitive`를 저장하고 `ConsentSettingsScreen`이 5종을 모두 노출합니다. 다만 실제로 강제되는 것은 `publish`(표지·출판 파이프라인)와 `familyRead`(보호자 조회 응답), `chatbot`(챗봇 chunk)까지이며, `posthumous`와 `sensitive`는 저장·표시만 되고 소비 지점에서 걸러지지 않습니다.
 - PDF 생성 경로는 서버의 `server/publication-html.ts`와 `server/publication.ts`로 일원화되어 있습니다. 사용되지 않던 클라이언트 PDF 컴포넌트와 `jspdf`·`@react-pdf/renderer` 의존성은 제거했습니다.
 
 향후 작업:

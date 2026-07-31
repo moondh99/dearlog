@@ -514,18 +514,18 @@ export function endLocalInterviewSession(sessionId: string) {
 export function uploadLocalAudio(file: Blob, fileName = 'dearlog-interview.webm') {
   const form = new FormData();
   form.set('audio', file, fileName);
-  return api<{ fileKey: string; mimeType: string; size: number }>('/api/uploads/audio', {
+  return api<{ fileKey: string; uploadToken?: string; mimeType: string; size: number }>('/api/uploads/audio', {
     method: 'POST',
     role: 'senior',
     body: form,
   });
 }
 
-export function transcribeLocalAudio(fileKey: string) {
+export function transcribeLocalAudio(fileKey: string, uploadToken?: string) {
   return api<{ text: string; fileKey: string }>('/api/audio/transcriptions', {
     method: 'POST',
     role: 'senior',
-    body: JSON.stringify({ fileKey }),
+    body: JSON.stringify({ fileKey, uploadToken }),
   });
 }
 

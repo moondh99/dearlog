@@ -1,6 +1,6 @@
 # Route Authorization Matrix
 
-Last checked: 2026-05-31
+Last checked: 2026-07-31
 
 Source of truth: `server/app.ts`. This matrix documents the intended authorization boundary for the local API. New endpoints should be added here during review.
 
@@ -26,7 +26,6 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 | `GET` | `/api/push-public-key` | Public | Returns VAPID public key |
 | `GET` | `/api/chapters` | Public | Static chapter list |
 | `GET` | `/api/questions` | Public with scoped behavior | Common questions are public; senior-scoped questions require auth or linked senior context |
-| `POST` | `/api/push-subscriptions` | Public today | Stores push subscription for provided/current user; should be revisited before production |
 | `POST` | `/twilio/voice` | Twilio signature when configured | Rejects invalid signature if `TWILIO_AUTH_TOKEN` is set |
 | `POST` | `/twilio/status` | Twilio signature not yet enforced | Updates call status from Twilio webhook |
 | `POST` | `/twilio/recording` | Public placeholder | Currently returns `<Response/>`; no data mutation |
@@ -49,11 +48,14 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 | `GET` | `/api/ai/audit-summary` | Guardian | Optional dashboard token; operational summary across proxy usage |
 | `POST` | `/api/ai/chat-completions` | Senior/Guardian | Per-user rate/unit limit and audit log |
 | `POST` | `/api/ai/embeddings` | Senior/Guardian | Per-user rate/unit limit and audit log |
+| `POST` | `/api/audio/speech` | Senior/Guardian | Per-user rate/unit limit and audit log |
+| `POST` | `/api/audio/transcriptions` | Senior/Guardian | File must be owned by the caller: signed upload token from `/api/uploads/audio`, or DB-backed ownership for stored files |
 
 ## Interviews, Calls, And Notifications
 
 | Method | Route | Access | Ownership check |
 | --- | --- | --- | --- |
+| `POST` | `/api/push-subscriptions` | Senior/Guardian | Owner is always `req.user.id`; a `userId` in the body is ignored |
 | `POST` | `/api/uploads/audio` | Senior/Guardian | File delivery later requires recorded senior ownership |
 | `POST` | `/api/interview-schedules` | Guardian | Target senior resolved through guardian link |
 | `GET` | `/api/interview-schedules` | Guardian | Returns schedules for current guardian only |
@@ -106,9 +108,12 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 
 | Method | Route | Access | Ownership check |
 | --- | --- | --- | --- |
-| `POST` | `/api/cover-designs/generate` | Guardian | Target senior resolved through guardian link |
-| `PATCH` | `/api/cover-designs/:id/confirm` | Guardian | Cover senior must be accessible |
-| `POST` | `/api/publication-requests` | Guardian | Target senior resolved through guardian link |
+| `POST` | `/api/cover-designs/generate` | Senior/Guardian | Senior self or guardian-linked senior. Only `publish: true` records are sent to the AI provider |
+| `PATCH` | `/api/cover-designs/:id/confirm` | Senior/Guardian | Cover senior must be accessible |
+| `POST` | `/api/publication-requests` | Senior/Guardian | Senior self or guardian-linked senior |
+| `POST` | `/api/publication-preview-jobs` | Senior/Guardian | Senior self or guardian-linked senior |
+| `GET` | `/api/publication-preview-jobs/:id` | Senior/Guardian | Job senior must be accessible |
+| `GET` | `/api/publication-preview` | Senior/Guardian | Senior self or guardian-linked senior |
 | `POST` | `/api/legacy/vault` | Senior/Guardian | Senior self or guardian-linked senior |
 | `GET` | `/api/legacy/vault` | Senior/Guardian | Senior self or guardian-linked senior |
 | `POST` | `/api/legacy/trigger-death` | Guardian | Target senior resolved through guardian link |

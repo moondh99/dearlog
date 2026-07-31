@@ -15,6 +15,25 @@ interface AuthState {
   reset: () => void
 }
 
+// 로그아웃할 때 authStore(sessionStorage)만 비우면 가족 데이터를 담은 localStorage 스토어가
+// 그대로 남습니다. 같은 기기를 다음 사람이 쓰면 이전 가족의 사진·대화·질문이 캐시에서 그대로
+// 보이고, 남아 있던 activeSeniorId가 모든 요청에 붙어 새 계정 조회까지 어긋납니다.
+const PERSISTED_FAMILY_DATA_KEYS = [
+  'dearlog-child',
+  'dearlog-interview',
+  'dearlog-consent',
+  'dearlog-autobiography',
+  'dearlog-calendar',
+  'dearlog-scheduled-call',
+]
+
+export function clearPersistedFamilyData() {
+  if (typeof localStorage === 'undefined') return
+  for (const key of PERSISTED_FAMILY_DATA_KEYS) {
+    localStorage.removeItem(key)
+  }
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -73,7 +92,10 @@ export const useAuthStore = create<AuthState>()(
       setTokenLoginState: (userId, userName, phoneNumber, authToken = null) => {
         set({ role: 'parent', userId, userName, phoneNumber, authToken })
       },
-      reset: () => set({ role: null, userName: '', userId: null, phoneNumber: '', authToken: null }),
+      reset: () => {
+        set({ role: null, userName: '', userId: null, phoneNumber: '', authToken: null })
+        clearPersistedFamilyData()
+      },
     }),
     {
       name: 'dearlog-auth',

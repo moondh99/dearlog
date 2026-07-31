@@ -59,6 +59,27 @@ export async function writeLocalFile(kind: StorageKind, bytes: Uint8Array | Buff
   return buildLocalFileKey(kind, fileName);
 }
 
+// SVG는 브라우저가 스크립트로 실행하므로 이미지여도 받지 않습니다. 나머지 image/* 는 허용해
+// iOS가 올리는 HEIC 같은 형식이 막히지 않게 합니다.
+export function isAllowedPhotoMimeType(mimeType: string) {
+  return mimeType.startsWith('image/') && mimeType !== 'image/svg+xml';
+}
+
+const PHOTO_EXTENSION_BY_MIME: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/heic': '.heic',
+  'image/heif': '.heif',
+};
+
+// 저장 파일명은 업로드된 originalname이 아니라 MIME에서 정합니다.
+// 예전에는 payload.html 을 image/jpeg 로 올리면 .html 로 저장돼 같은 오리진에서 실행됐습니다.
+export function photoExtensionForMimeType(mimeType: string) {
+  return PHOTO_EXTENSION_BY_MIME[mimeType] ?? '.jpg';
+}
+
 type LocalUploadOptions = {
   destinationDir?: string;
 };
@@ -83,7 +104,9 @@ function createLocalDiskStorage(
       }
     },
     filename: (_req, file, callback) => {
-      const ext = path.extname(file.originalname) || fallbackExtension;
+      const ext = kind === 'photos'
+        ? photoExtensionForMimeType(file.mimetype)
+        : path.extname(file.originalname) || fallbackExtension;
       callback(null, `${Date.now()}_${Math.random().toString(36).slice(2, 10)}${ext}`);
     },
   });
@@ -93,6 +116,13 @@ export function createPhotoUpload(options: LocalUploadOptions = {}) {
   return multer({
     storage: createLocalDiskStorage('photos', '.jpg', options.destinationDir),
     limits: PHOTO_UPLOAD_LIMITS,
+    fileFilter: (_req, file, callback) => {
+      if (!isAllowedPhotoMimeType(file.mimetype)) {
+        callback(Object.assign(new Error('이미지 파일만 올릴 수 있습니다.'), { statusCode: 400 }));
+        return;
+      }
+      callback(null, true);
+    },
   });
 }
 
