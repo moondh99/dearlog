@@ -6,15 +6,15 @@
   <string>com.dearlog.cloudflared</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/moondh/Downloads/디어로그/scripts/launchd/start-tunnel.sh</string>
+    <string>__DEARLOG_ROOT__/scripts/launchd/start-tunnel.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/moondh/Downloads/디어로그/scripts/launchd/logs/tunnel.out.log</string>
+  <string>__DEARLOG_ROOT__/scripts/launchd/logs/tunnel.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/moondh/Downloads/디어로그/scripts/launchd/logs/tunnel.err.log</string>
+  <string>__DEARLOG_ROOT__/scripts/launchd/logs/tunnel.err.log</string>
 </dict>
 </plist>
