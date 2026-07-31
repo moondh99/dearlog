@@ -21,6 +21,7 @@ let PUBLICATION_WRITING_DRAFT_SYSTEM_PROMPT: typeof import('./domain/publication
 let PUBLICATION_MANIFEST_SYSTEM_PROMPT: typeof import('./domain/publication-agent').PUBLICATION_MANIFEST_SYSTEM_PROMPT;
 let PUBLICATION_QUALITY_CHECKLIST: typeof import('./domain/publication-agent').PUBLICATION_QUALITY_CHECKLIST;
 let renderHtmlToPdf: typeof import('./publication-html').renderHtmlToPdf;
+let closeRenderBrowser: typeof import('./publication-html').closeRenderBrowser;
 let renderPublicationHtml: typeof import('./publication-html').renderPublicationHtml;
 let generateLocalPrintPdf: typeof import('./publication').generateLocalPrintPdf;
 let generateLocalPublicationDraft: typeof import('./publication').generateLocalPublicationDraft;
@@ -54,7 +55,7 @@ beforeAll(async () => {
     PUBLICATION_MANIFEST_SYSTEM_PROMPT,
     PUBLICATION_QUALITY_CHECKLIST,
   } = await import('./domain/publication-agent'));
-  ({ renderHtmlToPdf, renderPublicationHtml } = await import('./publication-html'));
+  ({ renderHtmlToPdf, renderPublicationHtml, closeRenderBrowser } = await import('./publication-html'));
   ({
     generateLocalPrintPdf,
     generateLocalPublicationDraft,
@@ -67,6 +68,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // 브라우저를 프로세스당 한 번만 띄우므로 여기서 닫지 않으면 Chrome이 남는다.
+  await closeRenderBrowser();
   await prisma.$disconnect();
 });
 

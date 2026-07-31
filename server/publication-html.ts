@@ -1290,10 +1290,17 @@ async function resolveChromePath() {
   throw new Error('HTML/CSS PDF 생성을 위한 Chrome 실행 파일을 찾을 수 없습니다. CHROME_PATH를 설정하세요.');
 }
 
-export async function renderHtmlToPdf(html: string) {
+type RenderBrowser = Awaited<ReturnType<typeof import('puppeteer-core').default.launch>>;
+
+// Chrome 기동은 PDF 한 장 그리는 것보다 오래 걸린다. 예전에는 renderHtmlToPdf가
+// 호출마다 새로 띄우고 닫아서, 출판 요청 하나가 브라우저 기동을 여러 번 반복했고
+// 테스트에서도 부하가 걸리면 30초 타임아웃을 넘겼다. 프로세스당 한 번만 띄운다.
+let browserPromise: Promise<RenderBrowser> | null = null;
+
+async function launchRenderBrowser(): Promise<RenderBrowser> {
   const { default: puppeteer } = await import('puppeteer-core');
   const executablePath = await resolveChromePath();
-  const browser = await puppeteer.launch({
+  return puppeteer.launch({
     executablePath,
     headless: true,
     args: [
@@ -1303,9 +1310,50 @@ export async function renderHtmlToPdf(html: string) {
       '--font-render-hinting=medium',
     ],
   });
+}
+
+async function getRenderBrowser(): Promise<RenderBrowser> {
+  const pending = browserPromise;
+  if (pending) {
+    // 실패했거나 크래시로 끊긴 브라우저는 버리고 다시 띄운다.
+    const existing = await pending.catch(() => null);
+    if (existing?.connected) return existing;
+    if (browserPromise === pending) browserPromise = null;
+  }
+
+  // 아래 대입은 await를 건너뛰지 않으므로, 동시에 들어온 호출도 같은 promise를 공유한다.
+  if (!browserPromise) {
+    const started = launchRenderBrowser();
+    browserPromise = started;
+    started.catch(() => {
+      // 실패한 promise를 캐시에 남기면 이후 호출이 영원히 같은 오류를 받는다.
+      if (browserPromise === started) browserPromise = null;
+    });
+  }
+  return browserPromise;
+}
+
+// 테스트 종료나 서버 정리에서 남은 Chrome을 정리한다.
+export async function closeRenderBrowser() {
+  const pending = browserPromise;
+  browserPromise = null;
+  if (!pending) return;
+  const browser = await pending.catch(() => null);
+  await browser?.close().catch(() => {});
+}
+
+// 테스트 전용. 캐시는 그대로 두고 브라우저만 닫아 크래시 상황을 흉내 낸다.
+// closeRenderBrowser는 캐시까지 비우기 때문에 재기동 분기를 지나치지 못한다.
+export async function crashRenderBrowserForTests() {
+  const browser = await browserPromise?.catch(() => null);
+  await browser?.close().catch(() => {});
+}
+
+export async function renderHtmlToPdf(html: string) {
+  const browser = await getRenderBrowser();
+  const page = await browser.newPage();
 
   try {
-    const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'load' });
     await page.evaluate(() => document.fonts.ready);
     await page.emulateMediaType('print');
@@ -1314,6 +1362,7 @@ export async function renderHtmlToPdf(html: string) {
       preferCSSPageSize: true,
     });
   } finally {
-    await browser.close();
+    // 브라우저는 재사용하므로 페이지만 닫는다. 안 닫으면 탭이 계속 쌓인다.
+    await page.close().catch(() => {});
   }
 }
