@@ -22,13 +22,15 @@ function formatAiEndpointLabel(endpoint: string) {
   return AI_ENDPOINT_LABELS[endpoint] ?? endpoint
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
+function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return (
     <button
+      type="button"
       onClick={onChange}
       className="relative flex-shrink-0"
       style={{ width: 44, height: 26 }}
       aria-pressed={on}
+      aria-label={label}
     >
       <div
         className="absolute inset-0 rounded-full transition-colors duration-200"
@@ -235,6 +237,7 @@ export default function MyPageScreen() {
       <div className="flex items-center px-5 pt-12 pb-4">
         <button
           onClick={() => navigate(backPath)}
+          aria-label="뒤로"
           className="p-2 -ml-2 mr-2 min-h-[48px] flex items-center"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -540,7 +543,7 @@ export default function MyPageScreen() {
               <p className="text-[16px] text-[#2A2830]">푸시 알림</p>
               <p className="text-[12px] text-[#7A767F] mt-0.5">인터뷰 일정 및 새 답변 알림</p>
             </div>
-            <Toggle on={notifOn} onChange={() => setNotifOn((v) => !v)} />
+            <Toggle on={notifOn} onChange={() => setNotifOn((v) => !v)} label="푸시 알림" />
           </div>
         </div>
 

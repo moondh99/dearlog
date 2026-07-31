@@ -209,7 +209,7 @@ export default function CalendarScreen() {
   return (
     <div className="flex flex-col min-h-screen bg-[#F8F6F9]">
       <div className="flex items-center px-5 pt-12 pb-4">
-        <button onClick={() => navigate(backPath)} className="p-2 -ml-2 mr-2">
+        <button onClick={() => navigate(backPath)} aria-label="뒤로" className="p-2 -ml-2 mr-2 min-h-[44px] min-w-[44px] flex items-center">
           <BackArrow />
         </button>
         <h1 className="text-[18px] font-bold text-[#2A2830]">캘린더</h1>
@@ -225,7 +225,8 @@ export default function CalendarScreen() {
           <div className="flex items-center justify-between mb-5">
             <button
               onClick={prevMonth}
-              className="w-9 h-9 rounded-full flex items-center justify-center bg-[#F3EFF5] active:opacity-70"
+              aria-label="이전 달"
+              className="w-11 h-11 rounded-full flex items-center justify-center bg-[#F3EFF5] active:opacity-70"
             >
               <ChevronLeft />
             </button>
@@ -234,7 +235,8 @@ export default function CalendarScreen() {
             </span>
             <button
               onClick={nextMonth}
-              className="w-9 h-9 rounded-full flex items-center justify-center bg-[#F3EFF5] active:opacity-70"
+              aria-label="다음 달"
+              className="w-11 h-11 rounded-full flex items-center justify-center bg-[#F3EFF5] active:opacity-70"
             >
               <ChevronRight />
             </button>

@@ -35,7 +35,7 @@ const STOPPED_MEMORY_CONSENTS: ConsentSettingsV2 = {
   민감정보: 'revoked',
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
+function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return (
     <button
       type="button"
@@ -43,6 +43,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
       className="relative flex-shrink-0"
       style={{ width: 44, height: 26 }}
       aria-pressed={on}
+      aria-label={label}
     >
       <div
         className="absolute inset-0 rounded-full transition-colors duration-200"
@@ -113,7 +114,7 @@ function ConsentRecordRow({
             </svg>
             <span className="text-[14px] text-[#2A2830]">자서전 출판</span>
           </div>
-          <Toggle on={publish} onChange={onPublish} />
+          <Toggle on={publish} onChange={onPublish} label="자서전 출판 동의" />
         </div>
 
         <div className="flex items-center justify-between">
@@ -128,7 +129,7 @@ function ConsentRecordRow({
             </svg>
             <span className="text-[14px] text-[#2A2830]">챗봇 사용</span>
           </div>
-          <Toggle on={chatbot} onChange={onChatbot} />
+          <Toggle on={chatbot} onChange={onChatbot} label="챗봇 사용 동의" />
         </div>
       </div>
     </div>
