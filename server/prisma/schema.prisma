@@ -116,6 +116,12 @@ model Photo {
   analysisJson    String     @default("{}")
   linkedMemoryIds String     @default("[]")
   uploadedAt      DateTime   @default(now())
+  // 목적별 동의. 사진은 챗봇 근거로 쓰이지 않아 chatbot은 두지 않는다.
+  // 집행 지점이 없는 컬럼을 만드는 것이 애초에 이 문제를 만들었다.
+  publish         Boolean    @default(true)
+  familyRead      Boolean    @default(true)
+  posthumous      Boolean    @default(true)
+  sensitive       Boolean    @default(true)
   user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   questions       Question[]
 }

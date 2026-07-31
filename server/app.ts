@@ -465,6 +465,10 @@ function mapPhotoToResponse(p: any) {
     analysis,
     metadata,
     linkedMemoryIds,
+    publish: p.publish ?? true,
+    familyRead: p.familyRead ?? true,
+    posthumous: p.posthumous ?? true,
+    sensitive: p.sensitive ?? true,
     fileKey: p.fileKey,
     fileName: p.fileName,
     mimeType: p.mimeType,
@@ -2265,20 +2269,26 @@ export function createApp() {
       const photoLocation = String(req.body.location ?? '').trim();
       const memo = String(req.body.memo ?? '').trim();
       const linkedQuestion = String(req.body.linkedQuestion ?? '').trim();
-      const result = await analyzePhotoAndCreateQuestions({
-        filePath: req.file.path,
-        mimeType: req.file.mimetype,
-        chapterId: req.body.chapterId,
-      }, {
-        userId: req.user!.id,
-        role: req.user!.role,
-      });
+      // 민감정보 미동의로 올린 사진은 외부 AI 분석 자체를 하지 않는다.
+      // 업로드 후에 끄면 분석은 이미 끝난 뒤라, 여기서 받지 않으면 되돌릴 방법이 없다.
+      const sensitiveAllowed = req.body.sensitive === undefined || Boolean(req.body.sensitive) === true;
+      const result = sensitiveAllowed
+        ? await analyzePhotoAndCreateQuestions({
+          filePath: req.file.path,
+          mimeType: req.file.mimetype,
+          chapterId: req.body.chapterId,
+        }, {
+          userId: req.user!.id,
+          role: req.user!.role,
+        })
+        : { analysis: {}, questions: [] as string[] };
       const photo = await prisma.photo.create({
         data: {
           userId: seniorId,
           fileKey,
           fileName: req.file.originalname,
           mimeType: req.file.mimetype,
+          sensitive: sensitiveAllowed,
           metadataJson: JSON.stringify({
             size: req.file.size,
             ...(capturedDate ? { capturedDate } : {}),
@@ -3475,7 +3485,11 @@ export function createApp() {
         orderBy: { uploadedAt: 'desc' }
       });
 
-      res.json({ photos: photos.map(mapPhotoToResponse) });
+      const maskContext = await readVaultMaskContext(seniorId, req.user!.role === 'senior');
+      // 가려야 하는 사진은 목록에서 아예 뺀다. 사진은 URL 하나만 남아도 그대로 보인다.
+      const visiblePhotos = photos.filter((photo) => !transcriptMaskReason(photo, maskContext));
+
+      res.json({ photos: visiblePhotos.map(mapPhotoToResponse) });
     } catch (error) {
       next(error);
     }
@@ -3485,6 +3499,12 @@ export function createApp() {
     try {
       const { linkedMemoryIds } = req.body;
       const parsedLinkedMemoryIds = linkedMemoryIds ? JSON.stringify(linkedMemoryIds) : undefined;
+      const photoConsent = {
+        ...(req.body.publish !== undefined ? { publish: Boolean(req.body.publish) } : {}),
+        ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
+        ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
+        ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
+      };
       const existing = await prisma.photo.findUnique({
         where: { id: req.params.id },
         select: { userId: true },
@@ -3509,7 +3529,8 @@ export function createApp() {
       const photo = await prisma.photo.update({
         where: { id: req.params.id },
         data: {
-          linkedMemoryIds: parsedLinkedMemoryIds
+          ...(parsedLinkedMemoryIds !== undefined ? { linkedMemoryIds: parsedLinkedMemoryIds } : {}),
+          ...photoConsent,
         }
       });
 

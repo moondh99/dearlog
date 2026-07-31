@@ -128,6 +128,9 @@ async function waitForPublicationPreviewJob(jobId: string, status: string) {
   throw new Error(`Publication preview job ${jobId} did not reach ${status}: ${JSON.stringify(latestJob)}`);
 }
 
+// 아래 출판 관련 테스트는 에이전트 파이프라인 전체와 실제 PDF 렌더링을 돈다.
+// 전역 testTimeout(30초)은 부하가 걸린 병렬 실행에서 빠듯해 간헐적으로 넘어갔다.
+// 느린 것이지 멈춘 것이 아니므로 해당 테스트에만 여유를 준다.
 describe('local Dearlog server', () => {
   it('serves seeded fixed chapters and common questions', async () => {
     const chapters = await prisma.chapter.findMany({ orderBy: { order: 'asc' } });
@@ -1006,7 +1009,7 @@ describe('local Dearlog server', () => {
       format: 'A5',
       agentTimeoutMs: 1,
     })).rejects.toThrow('Publication editorial plan agent is not configured');
-  });
+  }, 120_000);
 
   it('keeps retrying recoverable publication preview agent failures until an agent draft is ready', async () => {
     const record = await prisma.interviewRecord.create({
@@ -1177,7 +1180,7 @@ describe('local Dearlog server', () => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     }
-  });
+  }, 120_000);
 
   it('caches publication preview output so repeated preview and final generation do not call the writer again', async () => {
     const record = await prisma.interviewRecord.create({
@@ -1450,7 +1453,7 @@ describe('local Dearlog server', () => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     }
-  });
+  }, 120_000);
 
   it('renders photo question answers as photo story blocks instead of standalone gallery plates', async () => {
     const fileKey = 'photos/publication-photo-story-test.png';
@@ -1803,7 +1806,7 @@ describe('local Dearlog server', () => {
     for (const term of ['CONFIRMED', 'UNVERIFIED', 'sourceRecordIds', 'hallucination', 'reliability']) {
       expect(pdfText).not.toContain(term);
     }
-  });
+  }, 120_000);
 
   it('generates and confirms a cover, then creates a local publication request', async () => {
     const record = await prisma.interviewRecord.create({
@@ -1995,5 +1998,5 @@ describe('local Dearlog server', () => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     }
-  });
+  }, 120_000);
 });

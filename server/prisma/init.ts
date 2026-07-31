@@ -55,6 +55,10 @@ const statements = [
     "metadataJson" TEXT NOT NULL DEFAULT '{}',
     "analysisJson" TEXT NOT NULL DEFAULT '{}',
     "linkedMemoryIds" TEXT NOT NULL DEFAULT '[]',
+    "publish" BOOLEAN NOT NULL DEFAULT 1,
+    "familyRead" BOOLEAN NOT NULL DEFAULT 1,
+    "posthumous" BOOLEAN NOT NULL DEFAULT 1,
+    "sensitive" BOOLEAN NOT NULL DEFAULT 1,
     "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Photo_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
@@ -444,6 +448,12 @@ export async function initLocalDatabase() {
   const photoColumnNames = new Set(photoColumns.map((column) => column.name));
   if (!photoColumnNames.has('linkedMemoryIds')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "Photo" ADD COLUMN "linkedMemoryIds" TEXT NOT NULL DEFAULT \'[]\'');
+  }
+  // 사진 목적별 동의. 기존 사진은 모두 허용 상태로 둔다.
+  for (const column of ['publish', 'familyRead', 'posthumous', 'sensitive']) {
+    if (!photoColumnNames.has(column)) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "Photo" ADD COLUMN "${column}" BOOLEAN NOT NULL DEFAULT 1`);
+    }
   }
 
   // Question 속성 컬럼 추가
