@@ -59,11 +59,6 @@ export const config = {
       || (process.env.NODE_ENV !== 'production' && process.env.AI_PROXY_DASHBOARD_ENABLED !== 'false'),
     dashboardToken: process.env.AI_PROXY_DASHBOARD_TOKEN ?? '',
   },
-  twilio: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
-    authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
-    fromNumber: process.env.TWILIO_FROM_NUMBER ?? '',
-  },
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
     privateKey: process.env.VAPID_PRIVATE_KEY ?? '',

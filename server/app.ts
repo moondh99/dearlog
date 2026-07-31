@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
-import twilio from 'twilio';
 import {
   getFactChatClient,
   getOpenAIClient,
@@ -1276,7 +1275,6 @@ export function createApp() {
     }
     next();
   });
-  app.use('/twilio', express.urlencoded({ extended: false }));
   app.use(express.json({ limit: '10mb' }));
   app.use(attachLocalUser);
 
@@ -3875,37 +3873,6 @@ export function createApp() {
     } catch (error) {
       next(error);
     }
-  });
-
-  app.post('/twilio/voice', async (req, res) => {
-    if (config.twilio.authToken && !twilio.validateRequest(config.twilio.authToken, req.header('x-twilio-signature') ?? '', `${config.publicUrl}${req.originalUrl}`, req.body)) {
-      res.status(403).send('invalid signature');
-      return;
-    }
-    const response = new twilio.twiml.VoiceResponse();
-    const connect = response.connect();
-    connect.stream({ url: `${config.publicUrl.replace(/^http/, 'ws')}/twilio/media?scheduleId=${encodeURIComponent(req.query.scheduleId?.toString() ?? '')}` });
-    res.type('text/xml').send(response.toString());
-  });
-
-  app.post('/twilio/status', async (req, res, next) => {
-    try {
-      const scheduleId = req.query.scheduleId?.toString();
-      if (scheduleId) {
-        await prisma.interviewSchedule.update({
-          where: { id: scheduleId },
-          data: { status: String(req.body.CallStatus ?? 'updated') },
-        });
-      }
-      res.sendStatus(204);
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post('/twilio/recording', async (_req, res) => {
-    // Twilio recording callback은 실제 배포에서 녹음 URL 다운로드 worker로 확장합니다.
-    res.sendStatus(204);
   });
 
   app.use(express.static(distDir));
