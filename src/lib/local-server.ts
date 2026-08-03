@@ -758,27 +758,51 @@ export function markLocalNotificationRead(id: string, role: 'senior' | 'guardian
   });
 }
 
+export function supportsWebPush() {
+  return typeof navigator !== 'undefined' && 'serviceWorker' in navigator && typeof window !== 'undefined' && 'PushManager' in window;
+}
+
+// 이 기기가 지금 구독 중인지는 서버가 아니라 브라우저가 답입니다. 서버 행이 남아 있어도
+// 사용자가 브라우저 설정에서 권한을 지웠다면 알림은 오지 않습니다.
+export async function getLocalPushSubscription() {
+  if (!supportsWebPush()) return null;
+  const registration = await navigator.serviceWorker.getRegistration('/push-sw.js');
+  if (!registration) return null;
+  return registration.pushManager.getSubscription();
+}
+
 export async function registerLocalPushSubscription(vapidPublicKey: string, role: 'senior' | 'guardian' = 'guardian') {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+  if (!supportsWebPush()) {
     throw new Error('이 브라우저는 Web Push를 지원하지 않습니다.');
   }
   if (!vapidPublicKey) {
     throw new Error('VAPID_PUBLIC_KEY가 아직 설정되지 않았습니다.');
   }
-  const registration = await navigator.serviceWorker.register('/push-sw.js');
+  await navigator.serviceWorker.register('/push-sw.js');
   // 서비스워커가 active 상태가 된 뒤 구독해야 실제 브라우저에서 "no active Service Worker"가 나지 않습니다.
   const readyRegistration = await navigator.serviceWorker.ready;
   const subscription = await readyRegistration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: vapidPublicKey,
   });
+  // 구독 소유자는 서버가 인증 정보로 정합니다. 여기서 userId를 보내도 무시됩니다.
   return api('/api/push-subscriptions', {
     method: 'POST',
     role,
-    body: JSON.stringify({
-      ...subscription.toJSON(),
-      userId: getCurrentUserId(role),
-    }),
+    body: JSON.stringify(subscription.toJSON()),
+  });
+}
+
+export async function unregisterLocalPushSubscription(role: 'senior' | 'guardian' = 'guardian') {
+  const subscription = await getLocalPushSubscription();
+  if (!subscription) return { deleted: 0 };
+  const { endpoint } = subscription;
+  await subscription.unsubscribe();
+  // 브라우저 구독만 끊으면 서버에는 죽은 행이 남아 발송할 때마다 실패합니다.
+  return api<{ deleted: number }>('/api/push-subscriptions', {
+    method: 'DELETE',
+    role,
+    body: JSON.stringify({ endpoint }),
   });
 }
 

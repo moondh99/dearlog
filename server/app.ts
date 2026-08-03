@@ -2991,6 +2991,9 @@ export function createApp() {
       const subscription = await prisma.pushSubscription.upsert({
         where: { endpoint: req.body.endpoint },
         update: {
+          // 소유자도 함께 옮깁니다. 한 기기를 두 사람이 번갈아 쓰면 엔드포인트가 같아서
+          // 이 줄이 없으면 나중에 등록한 사람 대신 먼저 등록한 사람의 알림이 계속 옵니다.
+          userId: req.user!.id,
           p256dh: keys.p256dh,
           auth: keys.auth,
           userAgent: req.header('user-agent') ?? '',
@@ -3004,6 +3007,23 @@ export function createApp() {
         },
       });
       res.status(201).json({ subscription });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/push-subscriptions', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const endpoint = String(req.body?.endpoint ?? '');
+      if (!endpoint) {
+        res.status(400).json({ error: '해지할 구독 endpoint가 없습니다.' });
+        return;
+      }
+      // userId 를 함께 걸어 남의 구독은 지우지 못하게 합니다.
+      const deleted = await prisma.pushSubscription.deleteMany({
+        where: { endpoint, userId: req.user!.id },
+      });
+      res.json({ deleted: deleted.count });
     } catch (error) {
       next(error);
     }
