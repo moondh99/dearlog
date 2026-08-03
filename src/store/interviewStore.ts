@@ -9,22 +9,9 @@ import {
   updateLocalInterviewRecordReview,
   updateLocalFamilyQuestion
 } from '../lib/local-server'
+import { chapterDescriptionOf, chapterTitleOf } from '../lib/chapters'
 import { toLocalDateStamp } from '../lib/date'
 import { useDevModeStore } from './devModeStore'
-
-const CHAPTER_METADATA: Record<string, { title: string; description: string }> = {
-  childhood: { title: '어린 시절', description: '태어나서 청소년기까지의 기억' },
-  adolescence: { title: '학창 시절', description: '친구들과 함께 웃고 성장하던 학창 시절' },
-  youth: { title: '청년 시절', description: '20~30대 사회에 첫 발을 내딛던 시절' },
-  family_home: { title: '결혼과 가족', description: '사랑하는 가족과 함께한 소중한 순간들' },
-  hobbies: { title: '일과 삶', description: '삶에 활력을 불어넣어 준 일과 취향' },
-  relationships: { title: '사람과 관계', description: '살아오며 만난 소중한 인연들과의 기억' },
-  messages: { title: '자녀에게 남기는 말', description: '세월이 담긴 삶의 이야기와 조언' },
-  ch1: { title: '어린 시절', description: '태어나서 청소년기까지의 기억' },
-  ch2: { title: '청년 시절', description: '20~30대 사회에 첫 발을 내딛던 시절' },
-  ch3: { title: '결혼과 가족', description: '사랑하는 가족과 함께한 소중한 순간들' },
-  ch4: { title: '자녀에게 남기는 말', description: '세월이 담긴 삶의 이야기와 조언' },
-};
 
 interface InterviewState {
   chapters: Chapter[]
@@ -60,7 +47,6 @@ export const useInterviewStore = create<InterviewState>()(
           )
 
           const mappedChapters = chapters.map((ch: any) => {
-            const meta = CHAPTER_METADATA[ch.id] || { title: ch.title, description: ch.title + ' 이야기' }
             const chQuestions = questions
               .filter((q: any) => q.chapterId === ch.id)
               .map((q: any) => ({
@@ -76,8 +62,9 @@ export const useInterviewStore = create<InterviewState>()(
               }))
             return {
               id: ch.id,
-              title: meta.title,
-              description: meta.description,
+              // 제목은 서버가 내려준 값을 그대로 쓴다. 여기서 다시 이름 붙이면 정의가 갈라진다.
+              title: ch.title,
+              description: chapterDescriptionOf(ch.id, `${ch.title} 이야기`),
               order: ch.order,
               questions: chQuestions,
             }
@@ -93,13 +80,12 @@ export const useInterviewStore = create<InterviewState>()(
         try {
           const res = await fetchLocalInterviewRecords(seniorId)
           const mappedTranscripts = res.records.map((r: any) => {
-            const chapterMeta = CHAPTER_METADATA[r.chapterId] || { title: r.chapter?.title || '기타' }
             return {
               id: r.id,
               questionId: r.questionId || '',
               questionText: r.question?.text || '',
               chapterId: r.chapterId,
-              chapterTitle: chapterMeta.title,
+              chapterTitle: r.chapter?.title || chapterTitleOf(r.chapterId),
               originalText: r.transcriptText,
               aiSummary: r.aiSummary || r.transcriptText,
               mode: r.mode,
