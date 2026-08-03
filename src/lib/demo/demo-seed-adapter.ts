@@ -1,4 +1,5 @@
 import { buildCapstoneDemoState, buildDemoAutobiography } from './capstone-demo-data'
+import { CHAPTERS, chapterTitleOf } from '../chapters'
 import { toLocalDateStamp } from '../date'
 import type { ChildQuestion, DemoPhoto, QuestionPriority } from '../../types/child'
 import type { Chapter, Question, Transcript } from '../../types/interview'
@@ -35,15 +36,6 @@ export const DEMO_SENIOR_NAME = '김영자'
 export const DEMO_GUARDIAN_NAME = '김민수'
 export const DEMO_PHONE_NUMBER = '01012345678'
 
-/** 신세대 인터뷰 챕터 정의 (ChildQuestionsScreen 의 CHAPTER_OPTIONS 와 동일한 id 사용) */
-export const DEMO_CHAPTERS: Array<Omit<Chapter, 'questions'>> = [
-  { id: 'childhood', title: '어린 시절', description: '태어나서 청소년기까지의 기억', order: 1 },
-  { id: 'youth', title: '청년 시절', description: '20~30대 사회에 첫 발을 내딛던 시절', order: 2 },
-  { id: 'family_home', title: '결혼과 가족', description: '사랑하는 가족과 함께한 소중한 순간들', order: 3 },
-  { id: 'hobbies', title: '일과 삶', description: '삶에 활력을 불어넣어 준 일과 취향', order: 4 },
-  { id: 'messages', title: '자녀에게 남기는 말', description: '세월이 담긴 삶의 이야기와 조언', order: 5 },
-]
-
 const SUBMITTER_LABELS: Record<string, string> = {
   demo_family_daughter: '딸 김지영',
   demo_family_son: '아들 김민수',
@@ -56,7 +48,17 @@ const PRIORITY_FROM_DEMO: Record<string, QuestionPriority> = {
   low: 'interest',
 }
 
-const MESSAGE_MEMORY_PATTERN = /letter|lesson|family_message/
+/**
+ * 연대만으로는 시기와 무관한 챕터('취미', '인간관계', '청소년기')를 가릴 수 없다.
+ * 뜻이 분명한 기억은 id 로 먼저 집고, 남는 것만 연대로 나눈다.
+ */
+const CHAPTER_BY_MEMORY_ID: Array<[RegExp, string]> = [
+  [/letter|lesson|family_message/, 'messages'],
+  [/school/, 'adolescence'],
+  [/friend|funeral|mother_in_law|side_dish|covid/, 'relationships'],
+  [/smartphone/, 'hobbies'],
+  [/wedding/, 'family_home'],
+]
 
 function decadeOf(timePeriod: string): number {
   const matched = timePeriod.match(/\d{4}/)
@@ -65,25 +67,23 @@ function decadeOf(timePeriod: string): number {
 
 /** 기억 카드를 신세대 챕터 id 로 배치한다. */
 export function chapterIdForDemoMemory(memoryId: string, timePeriod: string): string {
-  if (MESSAGE_MEMORY_PATTERN.test(memoryId)) return 'messages'
+  const matched = CHAPTER_BY_MEMORY_ID.find(([pattern]) => pattern.test(memoryId))
+  if (matched) return matched[1]
   const decade = decadeOf(timePeriod)
   if (decade <= 1960) return 'childhood'
   if (decade <= 1970) return 'youth'
-  if (decade <= 1990) return 'family_home'
-  return 'hobbies'
+  return 'family_home'
 }
 
 /** 아직 답변이 없어 연결된 기억 카드가 없는 가족 질문을 챕터에 배치한다. */
 export function chapterIdForDemoQuestion(questionText: string): string {
   if (/남기|당부|손주|전하|말씀/.test(questionText)) return 'messages'
-  if (/코로나|요즘|최근|스마트폰|손녀/.test(questionText)) return 'hobbies'
+  if (/취미|좋아하|즐거|노래|음식/.test(questionText)) return 'hobbies'
+  if (/코로나|이웃|동료|친구|고마운/.test(questionText)) return 'relationships'
+  if (/학교|학창|선생님|졸업/.test(questionText)) return 'adolescence'
   if (/서울|월급|직장|공장|장사|일하/.test(questionText)) return 'youth'
   if (/결혼|아이|자녀|남편|가족|김장/.test(questionText)) return 'family_home'
   return 'childhood'
-}
-
-function chapterTitleOf(chapterId: string): string {
-  return DEMO_CHAPTERS.find((chapter) => chapter.id === chapterId)?.title ?? '기타'
 }
 
 function questionIdForMemory(memoryId: string): string {
@@ -281,7 +281,7 @@ export function buildNewGenDemoSeed(): NewGenDemoSeed {
     }))
 
   const allQuestions = [...answeredQuestions, ...pendingQuestions]
-  const chapters: Chapter[] = DEMO_CHAPTERS.map((chapter) => ({
+  const chapters: Chapter[] = CHAPTERS.map((chapter) => ({
     ...chapter,
     questions: allQuestions.filter((question) => question.chapterId === chapter.id),
   }))

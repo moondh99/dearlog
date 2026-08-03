@@ -6,6 +6,7 @@ import ChildBottomNav from '../components/ChildBottomNav'
 import { useActiveSeniorContext } from '../hooks/useActiveSeniorContext'
 import { useAuthStore } from '../store/authStore'
 import { useChildStore } from '../store/childStore'
+import { CHAPTERS } from '../lib/chapters'
 import { reformulateQuestion } from '../lib/agents/questionQueue'
 import type { ChildQuestion, QuestionPriority } from '../types/child'
 import questionMascot from '../assets/figma/question-mascot.png'
@@ -17,14 +18,6 @@ const RECOMMENDED_QUESTIONS = [
   '처음으로 일을 시작했을 때 어떤 기분이었나요?',
   '가장 행복했던 날의 기억을 떠올려 보세요.',
   '나에게 꼭 하고 싶은 말이 있다면?',
-]
-
-const CHAPTER_OPTIONS = [
-  { id: 'childhood', label: '어린 시절' },
-  { id: 'youth', label: '청년 시절' },
-  { id: 'family_home', label: '결혼과 가족' },
-  { id: 'hobbies', label: '일과 삶' },
-  { id: 'messages', label: '자녀에게 남기는 말' },
 ]
 
 function normalizeQuestionText(value: string) {
@@ -319,7 +312,7 @@ function CreateQuestionScreen({
             연결할 챕터 선택 <span className="text-[#7A767F]/60">(선택)</span>
           </p>
           <div className="mt-2.5 flex flex-wrap gap-2">
-            {CHAPTER_OPTIONS.map((chapter) => {
+            {CHAPTERS.map((chapter) => {
               const active = selectedChapterId === chapter.id
               return (
                 <button
@@ -333,7 +326,7 @@ function CreateQuestionScreen({
                   }`}
                   aria-pressed={active}
                 >
-                  {chapter.label}
+                  {chapter.title}
                 </button>
               )
             })}

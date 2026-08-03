@@ -408,7 +408,7 @@ describe('core route flows', () => {
     fireEvent.click(screen.getByRole('button', { name: /텍스트로 질문 만들기/ }));
     expect(await screen.findByRole('heading', { name: '질문 만들기' })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('부모님께 묻고 싶은 이야기를 적어보세요.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '일과 삶' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '취미' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '질문 저장하기' })).toBeDisabled();
   });
 
