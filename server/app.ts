@@ -3023,6 +3023,7 @@ export function createApp() {
   });
 
   app.post('/api/publication-requests', requireRole('senior', 'guardian'), async (req, res, next) => {
+    let requestId: string | null = null;
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
@@ -3040,6 +3041,7 @@ export function createApp() {
           status: 'generating',
         },
       });
+      requestId = request.id;
       const result = await generateLocalPrintPdf({
         seniorId,
         coverDesignId: cover?.id,
@@ -3064,6 +3066,13 @@ export function createApp() {
         sourceHash: result.sourceHash,
       });
     } catch (error) {
+      // 여기서 실패를 남기지 않으면 행이 영원히 generating 으로 남아 진행 중과 실패를 구분할 수 없다.
+      // 상태 갱신이 또 실패해도 원래 에러는 그대로 올려 보낸다.
+      if (requestId) {
+        await prisma.publicationRequest
+          .update({ where: { id: requestId }, data: { status: 'failed' } })
+          .catch(() => undefined);
+      }
       next(error);
     }
   });

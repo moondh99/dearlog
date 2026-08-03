@@ -117,6 +117,9 @@ export type PublicationPreviewJobStage = 'cache_check' | 'editorial_plan' | 'wri
 
 const PUBLICATION_PREVIEW_STAGE_TIMEOUT_MS = 600_000;
 const PUBLICATION_PREVIEW_MAX_ATTEMPTS = 2;
+// 복구 가능 오류에는 재시도 여유를 더 주되 상한은 반드시 둔다.
+// 상한이 없으면 매 시도마다 외부 AI 제공자 호출과 Chrome 렌더링이 끝없이 돌아 비용이 샌다.
+const PUBLICATION_PREVIEW_MAX_RECOVERABLE_ATTEMPTS = 6;
 const runningPreviewJobs = new Set<string>();
 const scheduledPreviewJobRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -572,6 +575,18 @@ function isRecoverablePreviewJobError(code?: string | null, message?: string | n
   return true;
 }
 
+function previewJobMaxAttempts(code?: string | null, message?: string | null) {
+  return isRecoverablePreviewJobError(code, message)
+    ? PUBLICATION_PREVIEW_MAX_RECOVERABLE_ATTEMPTS
+    : PUBLICATION_PREVIEW_MAX_ATTEMPTS;
+}
+
+// 상한을 넘겨 죽은 job 은 되살리지 않는다. 되살리면 재시도 상한이 사실상 없어진다.
+function canRetryPreviewJob(job: PreviewJobRetryState) {
+  return isRecoverablePreviewJobError(job.errorCode, job.errorMessage)
+    && job.attemptCount < previewJobMaxAttempts(job.errorCode, job.errorMessage);
+}
+
 function recoverableRetryDelayRemainingMs(job: PreviewJobRetryState) {
   if (
     job.status !== 'queued'
@@ -644,10 +659,7 @@ export async function runPublicationPreviewJob(jobId: string) {
 
       const format = job.format === 'B5' ? 'B5' : 'A5';
       const attempt = job.attemptCount + 1;
-      if (
-        attempt > PUBLICATION_PREVIEW_MAX_ATTEMPTS
-        && !isRecoverablePreviewJobError(job.errorCode, job.errorMessage)
-      ) {
+      if (attempt > previewJobMaxAttempts(job.errorCode, job.errorMessage)) {
         await prisma.publicationPreviewJob.update({
           where: { id: job.id },
           data: {
@@ -744,7 +756,7 @@ export async function runPublicationPreviewJob(jobId: string) {
         const message = errorMessage(error).slice(0, 500);
         const code = errorCode(error).slice(0, 80);
         const recoverable = isRecoverablePreviewJobError(code, message);
-        if (!recoverable && attempt >= PUBLICATION_PREVIEW_MAX_ATTEMPTS) {
+        if (attempt >= previewJobMaxAttempts(code, message)) {
           await prisma.publicationPreviewJob.update({
             where: { id: job.id },
             data: {
@@ -781,7 +793,7 @@ export async function runPublicationPreviewJob(jobId: string) {
 }
 
 async function reviveRecoverablePreviewJob<T extends PreviewJobRetryState>(job: T): Promise<T> {
-  if (job.status !== 'failed' || !isRecoverablePreviewJobError(job.errorCode, job.errorMessage)) return job;
+  if (job.status !== 'failed' || !canRetryPreviewJob(job)) return job;
   const revived = await prisma.publicationPreviewJob.update({
     where: { id: job.id },
     data: {
@@ -890,7 +902,7 @@ export async function startLocalPublicationPreviewJob(input: {
     },
     orderBy: { updatedAt: 'desc' },
   });
-  if (recoverableFailedJob && isRecoverablePreviewJobError(recoverableFailedJob.errorCode, recoverableFailedJob.errorMessage)) {
+  if (recoverableFailedJob && canRetryPreviewJob(recoverableFailedJob)) {
     const revived = await reviveRecoverablePreviewJob(recoverableFailedJob);
     return previewJobView(revived);
   }
