@@ -1,7 +1,7 @@
 # 5종 동의 실제 집행 설계안
 
 작성일: 2026-07-31
-상태: **1단계 구현 완료** — 결정 사항이 정해져 반영했다. 남은 범위는 문서 끝을 참고한다.
+상태: **1·2단계 구현 완료** — 남은 범위는 문서 끝을 참고한다.
 
 ## 조사로 확인한 현재 상태
 
@@ -104,14 +104,27 @@ ContentConsent(subjectType, subjectId, purpose, status)
 
 (b)가 가장 방어적이고 기술적으로 명확하다. 다만 그러면 `chatbot` 동의와 상당 부분 겹친다.
 
-## 남은 범위 (2단계)
+## 2단계: 사진 동의 (완료)
 
-1. **`Photo`에 동의 적용.** 사진은 지금도 동의 개념이 없고 모든 책에 무조건 들어간다
-   (`server/publication.ts`의 `prisma.photo.findMany({ where: { userId } })`). 사진은 AI 분석에도
-   보내지므로 `publish`/`familyRead`/`posthumous`/`sensitive`가 적용돼야 한다.
-2. **철회의 소급 적용.** 이미 만들어진 PDF는 `pdfFileKey`가 살아 있는 한 계속 내려받을 수 있고,
+사진에 `publish` / `familyRead` / `posthumous` / `sensitive` 4종을 붙였다.
+**`chatbot`은 두지 않았다.** 분신 대화는 사진을 근거로 쓰지 않는다. 집행 지점이 없는 컬럼을
+만드는 것이 애초에 이 문제를 만들었기 때문에 반복하지 않는다.
+
+| 목적 | 집행 지점 |
+| --- | --- |
+| `publish` | 출판 파이프라인의 사진 조회. 예전에는 모든 사진이 무조건 책에 들어갔다 |
+| `familyRead` | `/api/photos`에서 목록에서 아예 제외한다. 사진은 URL 하나만 남아도 그대로 보인다 |
+| `posthumous` | 유산 전수 후에도 철회한 사진은 열리지 않는다 |
+| `sensitive` | 업로드 시 `sensitive: false`면 AI 분석 자체를 하지 않는다. 책에서도 빠진다 |
+
+`sensitive`는 업로드 시점이 중요하다. 사진 분석은 업로드할 때 일어나므로, 올린 뒤에 끄면
+분석은 이미 끝난 뒤다. 그래서 업로드 요청이 `sensitive`를 받아 분석 자체를 건너뛴다.
+
+## 남은 범위
+
+1. **철회의 소급 적용.** 이미 만들어진 PDF는 `pdfFileKey`가 살아 있는 한 계속 내려받을 수 있고,
    챗봇 대화 기록은 인용한 원문을 localStorage에 남긴다. 완전 삭제 정책과 함께 결정해야 한다.
-3. **`Memory` 테이블 정리.** 이제 5종 동의가 `InterviewRecord`에 있으므로 `Memory`와
+2. **`Memory` 테이블 정리.** 이제 동의가 `InterviewRecord`와 `Photo`에 있으므로 `Memory`와
    `MemoryConsentSettings`, `MemoryVectorEntry`는 쓰이지 않는다. 삭제는 마이그레이션이 필요하므로
    별도 과제로 둔다.
 

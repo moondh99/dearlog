@@ -29,4 +29,9 @@ export interface DemoPhoto {
   generatedQuestions: string[]
   registeredQuestions?: string[]
   addedAt: string
+  // 사진 목적별 동의. 사진은 챗봇 근거로 쓰이지 않아 chatbot은 없다.
+  publish?: boolean
+  familyRead?: boolean
+  posthumous?: boolean
+  sensitive?: boolean
 }

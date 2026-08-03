@@ -59,6 +59,7 @@ interface ChildState {
   activeSeniorId: string | null
   setActiveSeniorId: (id: string | null) => void
   fetchPhotos: () => Promise<void>
+  setPhotoConsent: (photoId: string, key: 'publish' | 'familyRead' | 'posthumous' | 'sensitive', value: boolean) => Promise<void>
   fetchQuestions: () => Promise<void>
   addQuestion: (q: { text: string; originalText?: string; anonymous: boolean; submittedBy?: string; priority: QuestionPriority; chapterId?: string | null; seniorId?: string | null }) => Promise<void>
   addPhoto: (p: { id?: string; caption: string; url?: string; metadata?: DemoPhoto['metadata']; generatedQuestions: string[]; registeredQuestions?: string[] }) => void
@@ -87,11 +88,39 @@ export const useChildStore = create<ChildState>()(
             metadata: p.metadata,
             generatedQuestions: p.generatedQuestions || [],
             registeredQuestions: p.registeredQuestions || [],
-            addedAt: p.uploadedAt ? toLocalDateStamp(p.uploadedAt) : toLocalDateStamp()
+            addedAt: p.uploadedAt ? toLocalDateStamp(p.uploadedAt) : toLocalDateStamp(),
+            publish: p.publish ?? true,
+            familyRead: p.familyRead ?? true,
+            posthumous: p.posthumous ?? true,
+            sensitive: p.sensitive ?? true,
           }))
           set({ photos: mapped })
         } catch (e) {
           console.error('fetchPhotos error:', e)
+        }
+      },
+
+      setPhotoConsent: async (photoId, key, value) => {
+        const previous = get().photos.find((photo) => photo.id === photoId)
+        set((state) => ({
+          photos: state.photos.map((photo) =>
+            photo.id === photoId ? { ...photo, [key]: value } : photo
+          ),
+        }))
+
+        if (useDevModeStore.getState().isOfflineDemo) return
+
+        try {
+          await updateLocalPhoto(photoId, { [key]: value })
+        } catch (e) {
+          console.error('setPhotoConsent error:', e)
+          // 서버가 거절하면 화면만 바뀌어 철회한 줄 아는 상태가 남는다.
+          if (previous) {
+            set((state) => ({
+              photos: state.photos.map((photo) => (photo.id === photoId ? previous : photo)),
+            }))
+          }
+          throw e
         }
       },
 

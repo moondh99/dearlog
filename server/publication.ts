@@ -165,7 +165,11 @@ export async function prepareLocalPublicationInput(input: LocalPublicationInput)
     input.coverDesignId ? prisma.coverDesign.findUnique({ where: { id: input.coverDesignId } }) : null,
     prisma.chapter.findMany({ orderBy: { order: 'asc' } }),
     prisma.autobiographyDraft.findUnique({ where: { userId: input.seniorId } }),
-    prisma.photo.findMany({ where: { userId: input.seniorId }, orderBy: { uploadedAt: 'asc' } }),
+    // 사진도 출판·민감정보 동의를 따른다. 예전에는 모든 사진이 무조건 책에 들어갔다.
+    prisma.photo.findMany({
+      where: { userId: input.seniorId, publish: true, sensitive: true },
+      orderBy: { uploadedAt: 'asc' },
+    }),
   ]);
 
   const sourceRecords = buildPublicationSourceRecords(records);

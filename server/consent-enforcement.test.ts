@@ -60,6 +60,7 @@ beforeEach(async () => {
   process.env.ALLOW_DEV_AUTH_HEADERS = 'true';
   await prisma.freeSpeechRecord.deleteMany({});
   await prisma.interviewRecord.deleteMany({});
+  await prisma.photo.deleteMany({});
   await prisma.legacyVault.deleteMany({});
   await prisma.guardianSeniorLink.deleteMany({});
 
@@ -234,5 +235,87 @@ describe('동의 저장', () => {
       posthumous: true,
       sensitive: true,
     });
+  });
+});
+
+describe('사진 동의', () => {
+  async function createPhoto(overrides: Record<string, unknown> = {}) {
+    return prisma.photo.create({
+      data: {
+        userId: SENIOR,
+        fileKey: `photos/p-${Math.round(performance.now() * 1000)}.jpg`,
+        fileName: 'family.jpg',
+        mimeType: 'image/jpeg',
+        ...overrides,
+      },
+    });
+  }
+
+  it('기본값은 모두 허용이다', async () => {
+    const photo = await createPhoto();
+    expect(photo).toMatchObject({ publish: true, familyRead: true, posthumous: true, sensitive: true });
+  });
+
+  it('출판을 철회하면 책에 들어가지 않는다', async () => {
+    const kept = await createPhoto({ publish: true });
+    await createPhoto({ publish: false });
+
+    const input = await prepareLocalPublicationInput({ seniorId: SENIOR, format: 'A5' } as any);
+
+    // 예전에는 모든 사진이 무조건 책에 들어갔다.
+    expect(input.photos.map((photo: { id: string }) => photo.id)).toEqual([kept.id]);
+  });
+
+  it('민감정보를 철회하면 책에 들어가지 않는다', async () => {
+    const kept = await createPhoto({ sensitive: true });
+    await createPhoto({ sensitive: false });
+
+    const input = await prepareLocalPublicationInput({ seniorId: SENIOR, format: 'A5' } as any);
+
+    expect(input.photos.map((photo: { id: string }) => photo.id)).toEqual([kept.id]);
+  });
+
+  it('가족열람을 철회하면 보호자 목록에서 빠진다', async () => {
+    const visible = await createPhoto({ familyRead: true });
+    await createPhoto({ familyRead: false });
+
+    const res = await asGuardian('/api/photos');
+
+    expect(res.status).toBe(200);
+    // 사진은 URL 하나만 남아도 그대로 보이므로 목록에서 아예 뺀다.
+    expect(res.body.photos.map((photo: { id: string }) => photo.id)).toEqual([visible.id]);
+  });
+
+  it('부모님 본인은 철회한 사진도 계속 본다', async () => {
+    await createPhoto({ familyRead: false });
+
+    const res = await asSenior('/api/photos');
+
+    expect(res.body.photos).toHaveLength(1);
+  });
+
+  it('사후공개를 철회하면 유산 전수 후에도 보호자에게 열리지 않는다', async () => {
+    await createPhoto({ posthumous: false });
+    await prisma.legacyVault.create({
+      data: { seniorId: SENIOR, isVaultSetup: true, deathVerificationStatus: 'released' },
+    });
+
+    const res = await asGuardian('/api/photos');
+
+    expect(res.body.photos).toHaveLength(0);
+  });
+
+  it('PATCH로 사진 동의를 저장한다', async () => {
+    const photo = await createPhoto();
+
+    const res = await request(app)
+      .patch(`/api/photos/${photo.id}`)
+      .set('x-user-id', SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ publish: false, familyRead: false, posthumous: false, sensitive: false });
+
+    expect(res.status).toBe(200);
+    const saved = await prisma.photo.findUnique({ where: { id: photo.id } });
+    expect(saved).toMatchObject({ publish: false, familyRead: false, posthumous: false, sensitive: false });
   });
 });

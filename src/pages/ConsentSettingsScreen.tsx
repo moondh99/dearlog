@@ -4,7 +4,9 @@ import { useAuthStore } from '../store/authStore'
 import { useConsentStore } from '../store/consentStore'
 import { useInterviewStore } from '../store/interviewStore'
 import { DEFAULT_CONSENT, type ConsentPurpose } from '../store/consentStore'
+import { useChildStore } from '../store/childStore'
 import type { Transcript } from '../types/interview'
+import type { DemoPhoto } from '../types/child'
 
 // 목적별 동의는 실제 답변(InterviewRecord)에 붙는다.
 // 예전에는 운영에서 생성되지 않는 Memory 테이블을 대상으로 해서 이 화면이 늘 비어 있었다.
@@ -18,6 +20,20 @@ const RECORD_CONSENT_PURPOSES: Array<{
   { key: 'chatbot', label: '챗봇 답변', description: '나의 분신 대화의 근거로 사용합니다.' },
   { key: 'posthumous', label: '사후 공개', description: '끄면 사후에 유산이 전수된 뒤에도 이 답변을 공개하지 않습니다.' },
   { key: 'sensitive', label: '민감정보 활용', description: '끄면 이 답변을 외부 AI 제공자에게 보내지 않습니다. 책 집필과 챗봇에서도 빠집니다.' },
+]
+
+// 사진에는 챗봇이 없다. 분신 대화는 사진을 근거로 쓰지 않는다.
+type PhotoConsentPurpose = 'publish' | 'familyRead' | 'posthumous' | 'sensitive'
+
+const PHOTO_CONSENT_PURPOSES: Array<{
+  key: PhotoConsentPurpose
+  label: string
+  description: string
+}> = [
+  { key: 'publish', label: '자서전 출판', description: '책에 이 사진을 싣습니다.' },
+  { key: 'familyRead', label: '가족 열람', description: '연결된 가족이 이 사진을 볼 수 있습니다.' },
+  { key: 'posthumous', label: '사후 공개', description: '끄면 사후에 유산이 전수된 뒤에도 이 사진을 공개하지 않습니다.' },
+  { key: 'sensitive', label: '민감정보 활용', description: '끄면 이 사진을 외부 AI 제공자에게 보내지 않습니다. 책에서도 빠집니다.' },
 ]
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
@@ -118,6 +134,104 @@ function ConsentRecordRow({
         </div>
       </div>
     </div>
+  )
+}
+
+function PhotoConsentSettingsSection() {
+  const { photos, fetchPhotos, setPhotoConsent } = useChildStore()
+  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+
+  useEffect(() => {
+    void fetchPhotos()
+  }, [fetchPhotos])
+
+  const togglePurpose = async (photo: DemoPhoto, purpose: PhotoConsentPurpose, next: boolean) => {
+    if (pendingId) return
+    setPendingId(photo.id)
+    setNotice(null)
+    const label = PHOTO_CONSENT_PURPOSES.find((item) => item.key === purpose)?.label ?? purpose
+    try {
+      await setPhotoConsent(photo.id, purpose, next)
+      setNotice({
+        kind: 'success',
+        message: `${label}: ${next ? '허용' : '사용 안 함'}으로 변경했습니다.`,
+      })
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        message: error instanceof Error ? error.message : '사진 동의 상태를 변경하지 못했습니다.',
+      })
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  if (photos.length === 0) return null
+
+  return (
+    <section className="mb-6" aria-labelledby="photo-consent-heading">
+      <div className="mb-3 px-1">
+        <h2 id="photo-consent-heading" className="text-[15px] font-bold text-[#2A2830]">
+          사진별 활용 설정
+        </h2>
+        <p className="mt-0.5 text-[12px] leading-relaxed text-[#7A767F]">
+          사진마다 이용 목적을 따로 정할 수 있습니다.
+        </p>
+      </div>
+
+      {notice ? (
+        <p
+          role={notice.kind === 'error' ? 'alert' : 'status'}
+          className={`mb-3 rounded-xl px-4 py-3 text-[12px] ${
+            notice.kind === 'error'
+              ? 'bg-[#FFF0F0] text-[#9E3B3B]'
+              : 'bg-[#EEF7F0] text-[#376A43]'
+          }`}
+        >
+          {notice.message}
+        </p>
+      ) : null}
+
+      <div className="flex flex-col gap-3">
+        {photos.map((photo) => {
+          const title = photo.caption || '가족 사진'
+          return (
+            <article
+              key={photo.id}
+              className="overflow-hidden rounded-2xl bg-white"
+              style={{ boxShadow: '0 2px 12px rgba(42,40,48,0.08)' }}
+            >
+              <div className="border-b border-[#E0DBE8] px-5 py-4">
+                <h3 className="text-[14px] font-bold text-[#2A2830]">{title}</h3>
+                <p className="mt-1 text-[12px] text-[#7A767F]">{photo.addedAt}</p>
+              </div>
+
+              <div className="flex flex-col gap-4 px-5 py-4">
+                {PHOTO_CONSENT_PURPOSES.map((purpose) => {
+                  const on = photo[purpose.key] !== false
+                  return (
+                    <div key={purpose.key} className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-bold text-[#2A2830]">{purpose.label}</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-[#7A767F]">
+                          {purpose.description}
+                        </p>
+                      </div>
+                      <Toggle
+                        on={on}
+                        onChange={() => void togglePurpose(photo, purpose.key, !on)}
+                        label={`${title} 사진 ${purpose.label} ${on ? '끄기' : '켜기'}`}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -354,6 +468,7 @@ export default function ConsentSettingsScreen() {
 
       <main className="flex-1 overflow-y-auto px-5 pb-12">
         <RecordConsentSettingsSection />
+        <PhotoConsentSettingsSection />
 
         <section
           className="mb-4 rounded-2xl px-5 py-4"
