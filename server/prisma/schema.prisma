@@ -122,6 +122,8 @@ model Photo {
   familyRead      Boolean    @default(true)
   posthumous      Boolean    @default(true)
   sensitive       Boolean    @default(true)
+  // 동의를 마지막으로 바꾼 시각. InterviewRecord와 같은 이유로 둔다.
+  consentUpdatedAt DateTime?
   user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   questions       Question[]
 }
@@ -179,6 +181,9 @@ model InterviewRecord {
   familyRead        Boolean           @default(true)
   posthumous        Boolean           @default(true)
   sensitive         Boolean           @default(true)
+  // 동의를 마지막으로 바꾼 시각. 이 표에는 updatedAt이 없고, 있었더라도 본문 수정까지
+  // 갱신돼 멀쩡한 PDF를 막았을 것이다. 이미 만들어진 산출물이 철회 전 내용인지 판단하는 데 쓴다.
+  consentUpdatedAt  DateTime?
   reviewStatus      String            @default("pending")
   reviewedAt        DateTime?
   reviewRequestText String?

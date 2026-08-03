@@ -204,7 +204,50 @@ type LocalFileAccess = {
   seniorId: string;
   fileName?: string | null;
   mimeType?: string | null;
+  // PDF는 만들어진 시점의 동의 상태를 그대로 담고 있어, 그 뒤의 철회와 시점을 비교해야 합니다.
+  producedAt?: Date;
 };
+
+// 동의를 바꾼 시각을 남깁니다. InterviewRecord/Photo에는 updatedAt이 없고, 있었더라도
+// 본문 수정까지 갱신돼 멀쩡한 산출물을 막았을 것이므로 동의 전용 컬럼을 씁니다.
+// 허용으로 되돌린 경우에도 갱신되지만, 막을지는 현재 동의 상태로 다시 판단하므로 문제가 없습니다.
+function consentTouch(body: Record<string, unknown>, purposes: readonly string[]) {
+  return purposes.some((purpose) => body[purpose] !== undefined)
+    ? { consentUpdatedAt: new Date() }
+    : {};
+}
+
+// 산출물을 만든 뒤에 출판 관련 동의가 철회됐는지 확인합니다.
+// 출판 입력은 publish와 sensitive를 함께 보므로(server/publication.ts) 둘 다 대상입니다.
+async function hasPublicationConsentRevokedSince(seniorId: string, producedAt: Date) {
+  const revokedSince = {
+    userId: seniorId,
+    consentUpdatedAt: { gt: producedAt },
+    OR: [{ publish: false }, { sensitive: false }],
+  };
+  const [records, photos] = await Promise.all([
+    prisma.interviewRecord.count({ where: revokedSince }),
+    prisma.photo.count({ where: revokedSince }),
+  ]);
+  return records + photos > 0;
+}
+
+const REVOKED_PUBLICATION_MESSAGE = '이 자서전을 만든 뒤에 동의가 철회된 기록이 있어 더 이상 열 수 없습니다. 자서전을 다시 만들어 주세요.';
+
+// 종이책은 회수할 수 없지만 PDF는 막을 수 있습니다. 막을 수 있는 것까지 놔두면
+// 동의 철회가 "앞으로 만들 책"에만 적용돼 이미 나간 책으로 그대로 새어 나갑니다.
+async function assertPublicationOutputStillConsented(
+  seniorId: string,
+  producedAt: Date,
+  user?: RequestUser,
+) {
+  // 부모님 본인은 계속 볼 수 있습니다. 자기 이야기를 자기가 못 보게 막을 이유가 없고,
+  // 기존 동의 집행도 본인 조회는 전부 열어 두었습니다.
+  if (user?.role === 'senior' && user.id === seniorId) return;
+  if (await hasPublicationConsentRevokedSince(seniorId, producedAt)) {
+    throw httpError(REVOKED_PUBLICATION_MESSAGE, 409);
+  }
+}
 
 function fileAccessTokenTtlSeconds() {
   return Math.max(60, boundedPositiveInt(Number(process.env.FILE_ACCESS_TOKEN_TTL_SECONDS ?? config.fileAccess.tokenTtlSeconds), 10 * 60, 60 * 60));
@@ -1300,7 +1343,7 @@ async function resolveLocalFileAccess(fileKey: string): Promise<LocalFileAccess>
 
   const publication = await prisma.publicationRequest.findFirst({
     where: { pdfFileKey: fileKey },
-    select: { userId: true, id: true },
+    select: { userId: true, id: true, createdAt: true },
   });
   if (!publication) throw httpError('파일을 찾을 수 없습니다.', 404);
   return {
@@ -1308,6 +1351,8 @@ async function resolveLocalFileAccess(fileKey: string): Promise<LocalFileAccess>
     seniorId: publication.userId,
     fileName: `dearlog-${publication.id}.pdf`,
     mimeType: 'application/pdf',
+    // 생성 도중에 철회한 경우도 막도록 완료 시각이 아니라 요청 시각을 기준으로 삼습니다.
+    producedAt: publication.createdAt,
   };
 }
 
@@ -2715,6 +2760,7 @@ export function createApp() {
           ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
           ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
           ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
+          ...consentTouch(req.body, ['publish', 'chatbot', 'familyRead', 'posthumous', 'sensitive']),
           ...(reviewStatus ? { reviewStatus } : {}),
           ...(reviewStatus === 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: new Date() } : {}),
           ...(reviewStatus && reviewStatus !== 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: null } : {}),
@@ -2751,6 +2797,7 @@ export function createApp() {
         data: {
           ...(publish !== undefined ? { publish: Boolean(publish) } : {}),
           ...(chatbot !== undefined ? { chatbot: Boolean(chatbot) } : {}),
+          ...consentTouch(req.body, ['publish', 'chatbot']),
         },
       });
       res.json({ ok: true });
@@ -3120,13 +3167,16 @@ export function createApp() {
     try {
       const existing = await prisma.publicationPreviewJob.findUnique({
         where: { id: req.params.id },
-        select: { userId: true },
+        select: { userId: true, createdAt: true },
       });
       if (!existing) {
         res.status(404).json({ error: '기록집 미리보기 작업을 찾을 수 없습니다.' });
         return;
       }
       await assertCurrentUserCanAccessSenior(req.user!, existing.userId);
+      // 미리보기 초안도 PDF와 같은 본문을 담고 있습니다. 예전 job id 를 그대로 조회하면
+      // 철회 전 책이 그대로 열리므로 같은 게이트를 지납니다.
+      await assertPublicationOutputStillConsented(existing.userId, existing.createdAt, req.user);
       const job = await getLocalPublicationPreviewJob(req.params.id);
       if (!job) {
         res.status(404).json({ error: '기록집 미리보기 작업을 찾을 수 없습니다.' });
@@ -3513,6 +3563,7 @@ export function createApp() {
         ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
         ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
         ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
+        ...consentTouch(req.body, ['publish', 'familyRead', 'posthumous', 'sensitive']),
       };
       const existing = await prisma.photo.findUnique({
         where: { id: req.params.id },
@@ -3973,6 +4024,11 @@ export function createApp() {
       if (!access) {
         res.status(403).json({ error: '권한이 없습니다.' });
         return;
+      }
+
+      // 소유권을 확인한 뒤에 봅니다. 먼저 보면 관계없는 가족에게 동의 상태가 새어 나갑니다.
+      if (access.producedAt) {
+        await assertPublicationOutputStillConsented(access.seniorId, access.producedAt, req.user);
       }
 
       const filePath = resolveLocalFileKey(fileKey);
