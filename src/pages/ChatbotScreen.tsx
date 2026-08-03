@@ -369,6 +369,8 @@ export default function ChatbotScreen() {
 
     if (isOfflineDemo) {
       setServerMemories([])
+      // 오프라인 데모는 철회 시각을 물어볼 서버가 없다. 지난 대화도 데모 데이터뿐이다.
+      setChatSessions(readChatSessions(chatOwnerKey))
       setSourceOwnerKey(chatOwnerKey)
       setIsLoadingSources(false)
       return
@@ -409,8 +411,10 @@ export default function ChatbotScreen() {
   }, [activeSeniorId, activeSeniorLoading, chatOwnerKey, fetchTranscripts, isOfflineDemo, role])
 
   useEffect(() => {
-    const sessions = readChatSessions(chatOwnerKey)
-    setChatSessions(sessions)
+    // 여기서 지난 대화를 바로 보여주면, 철회 시각을 받아오기 전까지 철회된 대화가 목록에
+    // 남는다. 그 사이에 세션을 열면 본문이 messages 로 넘어가 뒤늦은 정리가 닿지 않는다.
+    // 목록은 철회 시각을 확인한 위 이펙트가 채운다.
+    setChatSessions([])
     setCurrentSessionId(null)
     setMessages([createWelcomeMessage()])
     setExpandedSourceId(null)
