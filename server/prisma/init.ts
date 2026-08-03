@@ -24,6 +24,7 @@ const statements = [
     "hometown" TEXT,
     "schoolHistory" TEXT,
     "publicationContentDeletedAt" DATETIME,
+    "chatbotConsentUpdatedAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`,
@@ -408,10 +409,13 @@ export async function initLocalDatabase() {
   if (!columnNames.has('schoolHistory')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "schoolHistory" TEXT');
   }
-  // 마지막으로 지운 시각. 기존 행은 NULL(= 지운 적 없음)로 두어
-  // 이미 만들어진 산출물을 소급해서 막지 않는다.
+  // 삭제·챗봇 동의 변경 시각. 기존 행은 NULL(= 지운 적도 바꾼 적도 없음)로 두어
+  // 이미 만들어진 산출물과 이미 저장된 대화를 소급해서 막지 않는다.
   if (!columnNames.has('publicationContentDeletedAt')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "publicationContentDeletedAt" DATETIME');
+  }
+  if (!columnNames.has('chatbotConsentUpdatedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "chatbotConsentUpdatedAt" DATETIME');
   }
 
   const linkColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("GuardianSeniorLink")');

@@ -890,7 +890,8 @@ export function fetchLocalMemories(seniorId?: string | null) {
   const params = new URLSearchParams();
   if (seniorId) params.set('seniorId', seniorId);
   const query = params.toString();
-  return api<{ memories: Memory[] }>(`/api/memories${query ? `?${query}` : ''}`, {
+  // chatbotConsentUpdatedAt: 이 시각 이전에 오간 분신 대화는 더 이상 보관하면 안 된다.
+  return api<{ memories: Memory[]; chatbotConsentUpdatedAt?: string | null }>(`/api/memories${query ? `?${query}` : ''}`, {
     role,
   });
 }

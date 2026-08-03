@@ -221,6 +221,24 @@ function consentTouch(body: Record<string, unknown>, purposes: readonly string[]
     : {};
 }
 
+// 분신 대화의 근거를 좁히는 목적입니다. 챗봇 chunk는 chatbot과 sensitive를 함께 봅니다.
+const CHATBOT_CONSENT_PURPOSES = ['chatbot', 'sensitive'] as const;
+
+// 지난 대화는 브라우저 localStorage에 남아 서버가 지울 수 없습니다. 대신 "언제 이후의
+// 대화만 남겨도 되는가"를 시니어 단위로 하나 남겨 클라이언트가 그 전 대화를 버리게 합니다.
+// InterviewRecord.consentUpdatedAt에 섞으면 책과 무관한 챗봇 토글이 멀쩡한 책을 막습니다.
+async function markChatbotSourcesChanged(seniorId: string) {
+  await prisma.user.update({
+    where: { id: seniorId },
+    data: { chatbotConsentUpdatedAt: new Date() },
+  });
+}
+
+async function touchChatbotConsent(seniorId: string, body: Record<string, unknown>) {
+  if (!CHATBOT_CONSENT_PURPOSES.some((purpose) => body[purpose] !== undefined)) return;
+  await markChatbotSourcesChanged(seniorId);
+}
+
 // 지운 행에는 consentUpdatedAt을 남길 자리가 없습니다. 삭제된 기록마다 흔적(tombstone)을
 // 남기는 대신 시니어 단위로 "마지막으로 지운 시각" 하나만 갱신합니다.
 // 책에 애초에 들어가지 않던 것(publish=false 또는 sensitive=false)을 지운 것은 책 내용을
@@ -2789,6 +2807,7 @@ export function createApp() {
           ...(req.body.reviewRequestText !== undefined ? { reviewRequestText: req.body.reviewRequestText ? String(req.body.reviewRequestText) : null } : {}),
         },
       });
+      await touchChatbotConsent(existing.userId, req.body);
       res.json({ record });
     } catch (error) {
       next(error);
@@ -2821,6 +2840,9 @@ export function createApp() {
           ...consentTouch(req.body, PUBLICATION_CONSENT_PURPOSES),
         },
       });
+      for (const seniorId of new Set(records.map((record) => record.userId))) {
+        await touchChatbotConsent(seniorId, req.body);
+      }
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -3347,7 +3369,17 @@ export function createApp() {
         return baseMemory;
       });
 
-      res.json({ memories: mappedMemories });
+      // 분신 대화 화면이 화면을 열 때마다 부르는 경로라, 지난 대화를 언제까지 버려야 하는지
+      // 여기에 얹어 보냅니다. 이것만을 위한 엔드포인트를 새로 만들 이유가 없습니다.
+      const senior = await prisma.user.findUnique({
+        where: { id: seniorId },
+        select: { chatbotConsentUpdatedAt: true },
+      });
+
+      res.json({
+        memories: mappedMemories,
+        chatbotConsentUpdatedAt: senior?.chatbotConsentUpdatedAt ?? null,
+      });
     } catch (error) {
       next(error);
     }
@@ -3546,6 +3578,8 @@ export function createApp() {
       await prisma.memory.delete({
         where: { id: req.params.id }
       });
+      // 기억도 분신 대화의 근거다. 근거가 사라지면 그것을 인용한 지난 대화도 남으면 안 된다.
+      await markChatbotSourcesChanged(existing.userId);
       res.json({ ok: true });
     } catch (error) {
       next(error);

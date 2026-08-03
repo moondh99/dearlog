@@ -118,7 +118,7 @@ beforeEach(async () => {
   await prisma.user.upsert({
     where: { id: SENIOR },
     // 삭제 표시는 시니어 단위로 계속 남으므로 테스트마다 되돌려 준다.
-    update: { publicationContentDeletedAt: null },
+    update: { publicationContentDeletedAt: null, chatbotConsentUpdatedAt: null },
     create: { id: SENIOR, role: 'senior', name: '부모님', phoneNumber: '01055560001' },
   });
   await prisma.user.upsert({
@@ -268,6 +268,41 @@ describe('기록·사진 삭제', () => {
     const freshKey = await publishBook(new Date(Date.now() + 1000));
     expect((await downloadAsGuardian(freshKey)).status).toBe(200);
     expect((await downloadAsGuardian(staleKey)).status).toBe(409);
+  });
+});
+
+describe('챗봇 철회 시점 알림', () => {
+  // 지난 대화는 브라우저 localStorage 에 있어 서버가 지울 수 없다. 대신 "이 시각 이전
+  // 대화는 버려라"를 알려 준다. 화면이 늘 부르는 경로에 얹어 새 엔드포인트를 만들지 않는다.
+  function readChatbotRevokedAt() {
+    return request(app)
+      .get('/api/memories')
+      .set('x-user-id', GUARDIAN)
+      .set('x-user-role', 'guardian')
+      .query({ seniorId: SENIOR });
+  }
+
+  it('챗봇 동의를 철회하면 그 시각을 알려준다', async () => {
+    const record = await createRecord();
+    expect((await readChatbotRevokedAt()).body.chatbotConsentUpdatedAt).toBeNull();
+
+    const res = await request(app)
+      .patch(`/api/interview-records/${record.id}`)
+      .set('x-user-id', SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ chatbot: false });
+    expect(res.status).toBe(200);
+
+    expect((await readChatbotRevokedAt()).body.chatbotConsentUpdatedAt).toBeTruthy();
+  });
+
+  it('챗봇과 무관한 동의 변경은 지난 대화를 버리게 하지 않는다', async () => {
+    const record = await createRecord();
+
+    // 출판만 철회한 것으로 관계없는 대화까지 지워지면 대화 기록이 상시 사라진다.
+    await revokePublish(record.id);
+
+    expect((await readChatbotRevokedAt()).body.chatbotConsentUpdatedAt).toBeNull();
   });
 });
 
