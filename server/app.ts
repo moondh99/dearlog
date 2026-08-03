@@ -208,6 +208,10 @@ type LocalFileAccess = {
   producedAt?: Date;
 };
 
+// 책 내용을 바꾸는 목적만 남깁니다. chatbot/familyRead/posthumous 를 함께 남기면,
+// 책에 애초에 들어가지 않은 기록의 다른 토글을 건드린 것만으로 멀쩡한 책이 막힙니다.
+const PUBLICATION_CONSENT_PURPOSES = ['publish', 'sensitive'] as const;
+
 // 동의를 바꾼 시각을 남깁니다. InterviewRecord/Photo에는 updatedAt이 없고, 있었더라도
 // 본문 수정까지 갱신돼 멀쩡한 산출물을 막았을 것이므로 동의 전용 컬럼을 씁니다.
 // 허용으로 되돌린 경우에도 갱신되지만, 막을지는 현재 동의 상태로 다시 판단하므로 문제가 없습니다.
@@ -2760,7 +2764,7 @@ export function createApp() {
           ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
           ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
           ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
-          ...consentTouch(req.body, ['publish', 'chatbot', 'familyRead', 'posthumous', 'sensitive']),
+          ...consentTouch(req.body, PUBLICATION_CONSENT_PURPOSES),
           ...(reviewStatus ? { reviewStatus } : {}),
           ...(reviewStatus === 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: new Date() } : {}),
           ...(reviewStatus && reviewStatus !== 'applied' && req.body.reviewedAt === undefined ? { reviewedAt: null } : {}),
@@ -2797,7 +2801,7 @@ export function createApp() {
         data: {
           ...(publish !== undefined ? { publish: Boolean(publish) } : {}),
           ...(chatbot !== undefined ? { chatbot: Boolean(chatbot) } : {}),
-          ...consentTouch(req.body, ['publish', 'chatbot']),
+          ...consentTouch(req.body, PUBLICATION_CONSENT_PURPOSES),
         },
       });
       res.json({ ok: true });
@@ -3563,7 +3567,7 @@ export function createApp() {
         ...(req.body.familyRead !== undefined ? { familyRead: Boolean(req.body.familyRead) } : {}),
         ...(req.body.posthumous !== undefined ? { posthumous: Boolean(req.body.posthumous) } : {}),
         ...(req.body.sensitive !== undefined ? { sensitive: Boolean(req.body.sensitive) } : {}),
-        ...consentTouch(req.body, ['publish', 'familyRead', 'posthumous', 'sensitive']),
+        ...consentTouch(req.body, PUBLICATION_CONSENT_PURPOSES),
       };
       const existing = await prisma.photo.findUnique({
         where: { id: req.params.id },

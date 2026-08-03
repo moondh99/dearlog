@@ -210,6 +210,22 @@ describe('이미 만들어진 PDF', () => {
 
     expect((await downloadAsGuardian(fileKey)).status).toBe(200);
   });
+
+  it('책에 들어가지 않는 목적만 바꾼 것은 막지 않는다', async () => {
+    // 이미 출판을 철회해 둔 기록이라 책에 애초에 들어가지 않았다. 그 기록의 다른 토글을
+    // 건드린 것만으로 멀쩡한 책이 막히면 안 된다.
+    const record = await createRecord({ publish: false });
+    const fileKey = await publishBook(BEFORE_REVOCATION());
+
+    const res = await request(app)
+      .patch(`/api/interview-records/${record.id}`)
+      .set('x-user-id', SENIOR)
+      .set('x-user-role', 'senior')
+      .send({ familyRead: false, chatbot: false, posthumous: false });
+    expect(res.status).toBe(200);
+
+    expect((await downloadAsGuardian(fileKey)).status).toBe(200);
+  });
 });
 
 describe('미리보기 초안', () => {
