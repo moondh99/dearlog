@@ -59,6 +59,7 @@ const statements = [
     "familyRead" BOOLEAN NOT NULL DEFAULT 1,
     "posthumous" BOOLEAN NOT NULL DEFAULT 1,
     "sensitive" BOOLEAN NOT NULL DEFAULT 1,
+    "consentUpdatedAt" DATETIME,
     "uploadedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Photo_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
   )`,
@@ -128,6 +129,7 @@ const statements = [
     "familyRead" BOOLEAN NOT NULL DEFAULT 1,
     "posthumous" BOOLEAN NOT NULL DEFAULT 1,
     "sensitive" BOOLEAN NOT NULL DEFAULT 1,
+    "consentUpdatedAt" DATETIME,
     "reviewStatus" TEXT NOT NULL DEFAULT 'pending',
     "reviewedAt" DATETIME,
     "reviewRequestText" TEXT,
@@ -455,6 +457,10 @@ export async function initLocalDatabase() {
       await prisma.$executeRawUnsafe(`ALTER TABLE "Photo" ADD COLUMN "${column}" BOOLEAN NOT NULL DEFAULT 1`);
     }
   }
+  // 동의 변경 시각. 기존 행은 NULL(= 철회한 적 없음)로 두어 이미 만들어진 산출물을 막지 않는다.
+  if (!photoColumnNames.has('consentUpdatedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Photo" ADD COLUMN "consentUpdatedAt" DATETIME');
+  }
 
   // Question 속성 컬럼 추가
   const questionColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Question")');
@@ -529,6 +535,10 @@ export async function initLocalDatabase() {
   }
   if (!recordColumnNames.has('sensitive')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "sensitive" BOOLEAN NOT NULL DEFAULT 1');
+  }
+  // 동의 변경 시각. 기존 행은 NULL(= 철회한 적 없음)로 두어 이미 만들어진 산출물을 막지 않는다.
+  if (!recordColumnNames.has('consentUpdatedAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "InterviewRecord" ADD COLUMN "consentUpdatedAt" DATETIME');
   }
 
   // 자유 발화 기록은 InterviewRecord의 사본이다. 원본을 가리키게 해서 동의를 원본에서 읽는다.
