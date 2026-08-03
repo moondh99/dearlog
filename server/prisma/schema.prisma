@@ -28,6 +28,9 @@ model User {
   occupation             String?
   hometown               String?
   schoolHistory          String?
+  // 책에 들어갈 수 있던 기록·사진을 마지막으로 지운 시각. 지운 행에는 consentUpdatedAt을
+  // 남길 자리가 없으므로 시니어 단위로 하나만 둔다. 삭제는 철회보다 강한 의사 표시다.
+  publicationContentDeletedAt DateTime?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   seniorLinks            GuardianSeniorLink[]    @relation("GuardianLinks")

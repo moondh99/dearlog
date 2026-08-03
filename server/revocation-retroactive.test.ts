@@ -117,7 +117,8 @@ beforeEach(async () => {
 
   await prisma.user.upsert({
     where: { id: SENIOR },
-    update: {},
+    // 삭제 표시는 시니어 단위로 계속 남으므로 테스트마다 되돌려 준다.
+    update: { publicationContentDeletedAt: null },
     create: { id: SENIOR, role: 'senior', name: '부모님', phoneNumber: '01055560001' },
   });
   await prisma.user.upsert({
@@ -225,6 +226,48 @@ describe('이미 만들어진 PDF', () => {
     expect(res.status).toBe(200);
 
     expect((await downloadAsGuardian(fileKey)).status).toBe(200);
+  });
+});
+
+describe('기록·사진 삭제', () => {
+  // 삭제는 철회보다 강한 의사 표시다. 그런데 지운 행에는 consentUpdatedAt 이 남지 않아
+  // 예전에는 철회는 막히고 삭제는 그대로 열리는 앞뒤가 안 맞는 상태였다.
+  function deletePhotoAsSenior(photoId: string) {
+    return request(app).delete(`/api/photos/${photoId}`).set('x-user-id', SENIOR).set('x-user-role', 'senior');
+  }
+
+  it('책을 만든 뒤 사진을 지우면 가족이 더 이상 내려받지 못한다', async () => {
+    const photo = await createPhoto();
+    const fileKey = await publishBook(BEFORE_REVOCATION());
+    expect((await downloadAsGuardian(fileKey)).status).toBe(200);
+
+    expect((await deletePhotoAsSenior(photo.id)).status).toBe(200);
+
+    const res = await downloadAsGuardian(fileKey);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('다시 만들어');
+  });
+
+  it('책에 애초에 들어가지 않던 사진을 지운 것은 막지 않는다', async () => {
+    // 출판을 이미 철회해 둔 사진이라 책에 들어가지 않았다. 지워도 책 내용은 그대로다.
+    const photo = await createPhoto({ publish: false });
+    const fileKey = await publishBook(BEFORE_REVOCATION());
+
+    expect((await deletePhotoAsSenior(photo.id)).status).toBe(200);
+
+    expect((await downloadAsGuardian(fileKey)).status).toBe(200);
+  });
+
+  it('삭제 뒤에 다시 만든 책은 내려받을 수 있다', async () => {
+    const photo = await createPhoto();
+    const staleKey = await publishBook(BEFORE_REVOCATION());
+    expect((await deletePhotoAsSenior(photo.id)).status).toBe(200);
+    expect((await downloadAsGuardian(staleKey)).status).toBe(409);
+
+    // 한 번 지웠다고 앞으로 만들 책까지 영영 막히면 안 된다.
+    const freshKey = await publishBook(new Date(Date.now() + 1000));
+    expect((await downloadAsGuardian(freshKey)).status).toBe(200);
+    expect((await downloadAsGuardian(staleKey)).status).toBe(409);
   });
 });
 

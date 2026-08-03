@@ -221,7 +221,18 @@ function consentTouch(body: Record<string, unknown>, purposes: readonly string[]
     : {};
 }
 
-// 산출물을 만든 뒤에 출판 관련 동의가 철회됐는지 확인합니다.
+// 지운 행에는 consentUpdatedAt을 남길 자리가 없습니다. 삭제된 기록마다 흔적(tombstone)을
+// 남기는 대신 시니어 단위로 "마지막으로 지운 시각" 하나만 갱신합니다.
+// 책에 애초에 들어가지 않던 것(publish=false 또는 sensitive=false)을 지운 것은 책 내용을
+// 바꾸지 않으므로 남기지 않습니다. 남기면 멀쩡한 책이 막히는 과잉 차단이 됩니다.
+async function markPublicationContentDeleted(seniorId: string) {
+  await prisma.user.update({
+    where: { id: seniorId },
+    data: { publicationContentDeletedAt: new Date() },
+  });
+}
+
+// 산출물을 만든 뒤에 출판 관련 동의가 철회되거나 책에 들어갔던 내용이 지워졌는지 확인합니다.
 // 출판 입력은 publish와 sensitive를 함께 보므로(server/publication.ts) 둘 다 대상입니다.
 async function hasPublicationConsentRevokedSince(seniorId: string, producedAt: Date) {
   const revokedSince = {
@@ -229,10 +240,16 @@ async function hasPublicationConsentRevokedSince(seniorId: string, producedAt: D
     consentUpdatedAt: { gt: producedAt },
     OR: [{ publish: false }, { sensitive: false }],
   };
-  const [records, photos] = await Promise.all([
+  const [records, photos, senior] = await Promise.all([
     prisma.interviewRecord.count({ where: revokedSince }),
     prisma.photo.count({ where: revokedSince }),
+    prisma.user.findUnique({
+      where: { id: seniorId },
+      select: { publicationContentDeletedAt: true },
+    }),
   ]);
+  const deletedAt = senior?.publicationContentDeletedAt;
+  if (deletedAt && deletedAt > producedAt) return true;
   return records + photos > 0;
 }
 
@@ -3608,7 +3625,7 @@ export function createApp() {
     try {
       const existing = await prisma.photo.findUnique({
         where: { id: req.params.id },
-        select: { userId: true },
+        select: { userId: true, publish: true, sensitive: true },
       });
       if (!existing) {
         res.status(404).json({ error: '사진을 찾을 수 없습니다.' });
@@ -3618,6 +3635,9 @@ export function createApp() {
       await prisma.photo.delete({
         where: { id: req.params.id }
       });
+      if (existing.publish && existing.sensitive) {
+        await markPublicationContentDeleted(existing.userId);
+      }
       res.json({ ok: true });
     } catch (error) {
       next(error);

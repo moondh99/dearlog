@@ -1,7 +1,7 @@
 # 5종 동의 실제 집행 설계안
 
 작성일: 2026-07-31
-상태: **1·2·3단계 구현 완료** — 남은 범위는 문서 끝을 참고한다.
+상태: **1~4단계 구현 완료** — 남은 범위는 문서 끝을 참고한다.
 
 ## 조사로 확인한 현재 상태
 
@@ -157,13 +157,31 @@ ContentConsent(subjectType, subjectId, purpose, status)
 뒤의 기록·사진 목록에서 계산되므로 철회하면 해시가 달라져 캐시에 맞지 않고, 최신 캐시를
 재사용하는 경로는 `draftUsesOnlyAvailableRecords`가 이미 막는다.
 
+## 4단계: 삭제의 소급 적용 (완료)
+
+삭제는 철회보다 강한 의사 표시다. 그런데 기록이나 사진을 지우면 `consentUpdatedAt`을 남길
+**행 자체가 사라져** 이미 만들어진 책이 그대로 열렸다. 철회는 막고 삭제는 안 막는 것은
+앞뒤가 안 맞는다.
+
+**결정: 시니어 단위 시각 하나.** `User.publicationContentDeletedAt`을 추가하고 3단계의 같은
+게이트가 이것도 함께 본다. 지운 행마다 흔적(tombstone)을 남기는 쪽은 표가 늘고 모든 조회가
+그 표를 걸러야 한다. 게이트는 "산출물보다 나중인 사건이 있었는가"만 알면 되므로 시각 하나로 족하다.
+
+| 항목 | 결정 |
+| --- | --- |
+| 남기는 조건 | 지운 것이 **책에 들어갈 수 있던 것일 때만**. `publish=false`거나 `sensitive=false`인 것을 지운 것은 책 내용을 바꾸지 않는다 |
+| 게이트 | `hasPublicationConsentRevokedSince`에서 `publicationContentDeletedAt > producedAt`을 함께 본다. 집행 지점은 3단계와 동일하다 |
+| 기존 행 | `NULL`(= 지운 적 없음). 이미 만들어진 책을 소급해서 막지 않는다 |
+
+책에 들어가는 내용을 지우는 운영 경로는 `DELETE /api/photos/:id` **하나뿐이다.**
+`InterviewRecord`와 `FreeSpeechRecord`에는 삭제 라우트가 아예 없고, 계정 전체 삭제 경로도 없다.
+`FreeSpeechRecord`의 `onDelete: Cascade`는 원본 삭제 경로가 없어 실제로 타지 않는다.
+`DELETE /api/memories/:id`는 `Memory`가 책 입력이 아니므로 출판 게이트와 무관하다.
+
 ## 남은 범위
 
 1. **챗봇 대화 기록의 인용문.** 브라우저 `localStorage`에 있어 서버가 지울 수 없다.
-   완전 삭제 정책과 함께 결정해야 한다.
-2. **기록 자체를 지운 경우.** 지금은 동의 철회만 소급된다. 삭제는 철회보다 강한 행위지만
-   `consentUpdatedAt`이 남지 않으므로 이미 만든 책을 막지 않는다.
-3. **`Memory` 테이블 정리.** 이제 동의가 `InterviewRecord`와 `Photo`에 있으므로 `Memory`와
+2. **`Memory` 테이블 정리.** 이제 동의가 `InterviewRecord`와 `Photo`에 있으므로 `Memory`와
    `MemoryConsentSettings`, `MemoryVectorEntry`는 쓰이지 않는다. 삭제는 마이그레이션이 필요하므로
    별도 과제로 둔다.
 
