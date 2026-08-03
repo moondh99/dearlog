@@ -262,6 +262,82 @@ describe('ChatbotScreen', () => {
     ]))
   })
 
+  // 챗봇 동의를 철회해도 인용문이 담긴 지난 대화가 localStorage 에 그대로 남아 있었다.
+  // 서버가 지울 수 없는 저장소라 화면이 열릴 때 클라이언트가 지워야 한다.
+  const CHAT_HISTORY_KEY = 'dearlog-memory-chat-history:child:senior-2'
+
+  function seedStoredChatSession(updatedAt: string) {
+    window.localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify([{
+      id: 'chat_stored',
+      createdAt: updatedAt,
+      updatedAt,
+      ownerLabel: '순자 이모의 기록',
+      messages: [
+        { id: 'u_1', role: 'user', text: '시장 이야기를 들려주세요' },
+        { id: 'a_1', role: 'ai', text: '시장에서 콩나물을 팔던 이야기가 남아 있어요.' },
+      ],
+    }]))
+  }
+
+  async function openStoredHistory() {
+    const input = await screen.findByPlaceholderText('저장된 이야기를 불러오는 중입니다...')
+    await waitFor(() => {
+      expect(input).not.toBeDisabled()
+    })
+    fireEvent.click(screen.getByRole('button', { name: '이전 대화 보기' }))
+  }
+
+  it('drops stored chat sessions once chatbot consent is revoked', async () => {
+    seedStoredChatSession('2026-06-01T00:00:00.000Z')
+    chatbotMocks.fetchLocalMemories.mockResolvedValue({
+      memories: [],
+      chatbotConsentUpdatedAt: '2026-06-02T00:00:00.000Z',
+    })
+
+    renderChatbot()
+    await openStoredHistory()
+
+    expect(screen.queryByRole('button', { name: /시장 이야기를 들려주세요/ })).not.toBeInTheDocument()
+    // 화면에서 가리는 것으로는 부족하다. 저장소에서 실제로 사라져야 한다.
+    expect(window.localStorage.getItem(CHAT_HISTORY_KEY)).not.toContain('콩나물')
+  })
+
+  it('keeps stored chat sessions that are newer than the revocation', async () => {
+    seedStoredChatSession('2026-06-03T00:00:00.000Z')
+    chatbotMocks.fetchLocalMemories.mockResolvedValue({
+      memories: [],
+      chatbotConsentUpdatedAt: '2026-06-02T00:00:00.000Z',
+    })
+
+    renderChatbot()
+    await openStoredHistory()
+
+    // 철회 뒤에 오간 대화는 이미 걸러진 근거로 만들어졌으므로 버릴 이유가 없다.
+    expect(screen.getByRole('button', { name: /시장 이야기를 들려주세요/ })).toBeInTheDocument()
+  })
+
+  it('does not show stored chat sessions before the revocation time is known', async () => {
+    // 철회 시각은 서버에서 받아오므로 비동기다. 그 사이에 지난 대화를 먼저 보여주면
+    // 철회된 대화를 열 수 있고, 한번 열면 본문이 대화창으로 넘어가 뒤늦은 정리가 닿지 않는다.
+    seedStoredChatSession('2026-06-01T00:00:00.000Z')
+    let resolveMemories = () => {}
+    chatbotMocks.fetchLocalMemories.mockReturnValue(new Promise((resolve) => {
+      resolveMemories = () => resolve({ memories: [], chatbotConsentUpdatedAt: '2026-06-02T00:00:00.000Z' })
+    }))
+
+    renderChatbot()
+    // 기록 공간이 정해지기 전에는 저장 키부터 다르다. 열쇠가 붙은 뒤에 열어야 실제 상황이다.
+    await screen.findByText('순자 이모의 기록')
+    fireEvent.click(screen.getByRole('button', { name: '이전 대화 보기' }))
+
+    expect(screen.queryByRole('button', { name: /시장 이야기를 들려주세요/ })).not.toBeInTheDocument()
+
+    resolveMemories()
+    await waitFor(() => {
+      expect(window.localStorage.getItem(CHAT_HISTORY_KEY)).not.toContain('콩나물')
+    })
+  })
+
   it('excludes interview records whose chatbot consent was revoked', async () => {
     chatbotMocks.fetchLocalInterviewRecords.mockResolvedValue({
       records: [

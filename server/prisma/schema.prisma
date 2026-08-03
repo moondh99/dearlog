@@ -28,6 +28,13 @@ model User {
   occupation             String?
   hometown               String?
   schoolHistory          String?
+  // 책에 들어갈 수 있던 기록·사진을 마지막으로 지운 시각. 지운 행에는 consentUpdatedAt을
+  // 남길 자리가 없으므로 시니어 단위로 하나만 둔다. 삭제는 철회보다 강한 의사 표시다.
+  publicationContentDeletedAt DateTime?
+  // 챗봇 근거로 쓰이는 동의(chatbot/sensitive)가 마지막으로 바뀌거나 근거가 지워진 시각.
+  // 브라우저 localStorage의 지난 대화를 클라이언트가 언제 버려야 하는지 판단하는 데 쓴다.
+  // consentUpdatedAt에 챗봇 목적을 섞으면 멀쩡한 책 다운로드까지 막히므로 컬럼을 나눈다.
+  chatbotConsentUpdatedAt DateTime?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   seniorLinks            GuardianSeniorLink[]    @relation("GuardianLinks")

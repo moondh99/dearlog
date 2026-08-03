@@ -116,6 +116,21 @@ function writeChatSessions(ownerKey: string, sessions: ChatSession[]) {
   }
 }
 
+// 챗봇 동의를 철회하면 그 뒤로는 근거로 쓰이지 않지만, 이미 인용문이 담긴 지난 대화가
+// localStorage에 그대로 남는다. 서버가 지울 수 없는 저장소라 클라이언트가 지워야 한다.
+// 메시지에는 출처 기록 id가 없으므로(DigitalTwinResult) 인용된 기록만 골라낼 수 없다.
+// 그래서 세션 단위로 시점을 비교한다. 관계없는 세션까지 버려지지만, 틀린다면 남기는 쪽이
+// 아니라 지우는 쪽으로 틀리는 편이 맞다.
+function dropChatSessionsRevokedSince(ownerKey: string, revokedAt?: string | null) {
+  const sessions = readChatSessions(ownerKey)
+  const revokedTime = revokedAt ? new Date(revokedAt).getTime() : Number.NaN
+  if (Number.isNaN(revokedTime)) return sessions
+
+  const kept = sessions.filter((session) => new Date(session.updatedAt).getTime() > revokedTime)
+  if (kept.length !== sessions.length) writeChatSessions(ownerKey, kept)
+  return kept
+}
+
 function getChatSessionTitle(messages: Message[]) {
   const firstUserMessage = messages.find((message) => message.role === 'user')
   const title = firstUserMessage?.text.replace(/\s+/g, ' ').trim() || '이전 대화'
@@ -354,6 +369,8 @@ export default function ChatbotScreen() {
 
     if (isOfflineDemo) {
       setServerMemories([])
+      // 오프라인 데모는 철회 시각을 물어볼 서버가 없다. 지난 대화도 데모 데이터뿐이다.
+      setChatSessions(readChatSessions(chatOwnerKey))
       setSourceOwnerKey(chatOwnerKey)
       setIsLoadingSources(false)
       return
@@ -372,13 +389,16 @@ export default function ChatbotScreen() {
         const [memoryResult] = await Promise.all([
           fetchLocalMemories(targetSeniorId).catch((error) => {
             console.error('fetchLocalMemories error:', error)
-            return { memories: [] }
+            // 서버에 못 닿았을 때 지난 대화를 지우면 통신 장애만으로 대화가 영영 사라진다.
+            // 철회 반영은 다음 성공한 조회로 미룬다.
+            return { memories: [], chatbotConsentUpdatedAt: null }
           }),
           fetchTranscripts(targetSeniorId),
         ])
 
         if (!alive) return
         setServerMemories(memoryResult.memories ?? [])
+        setChatSessions(dropChatSessionsRevokedSince(ownerKey, memoryResult.chatbotConsentUpdatedAt))
         setSourceOwnerKey(ownerKey)
       } finally {
         if (alive) setIsLoadingSources(false)
@@ -391,8 +411,10 @@ export default function ChatbotScreen() {
   }, [activeSeniorId, activeSeniorLoading, chatOwnerKey, fetchTranscripts, isOfflineDemo, role])
 
   useEffect(() => {
-    const sessions = readChatSessions(chatOwnerKey)
-    setChatSessions(sessions)
+    // 여기서 지난 대화를 바로 보여주면, 철회 시각을 받아오기 전까지 철회된 대화가 목록에
+    // 남는다. 그 사이에 세션을 열면 본문이 messages 로 넘어가 뒤늦은 정리가 닿지 않는다.
+    // 목록은 철회 시각을 확인한 위 이펙트가 채운다.
+    setChatSessions([])
     setCurrentSessionId(null)
     setMessages([createWelcomeMessage()])
     setExpandedSourceId(null)
