@@ -66,6 +66,21 @@ export interface Share {
 }
 
 /**
+ * 다항식 계수용 난수 한 바이트(0 제외).
+ *
+ * 예전에는 Math.random()을 썼습니다. Math.random의 내부 상태는 출력 몇 개만 보면
+ * 되돌릴 수 있어서, 조각 하나를 쥔 사람이 나머지 계수를 계산해 비밀을 그대로 복원할 수
+ * 있습니다. 임계값을 몇으로 잡든 분할 자체가 무의미해집니다.
+ */
+function randomNonZeroByte(): number {
+  const buffer = new Uint8Array(1);
+  do {
+    globalThis.crypto.getRandomValues(buffer);
+  } while (buffer[0] === 0);
+  return buffer[0];
+}
+
+/**
  * Splits a secret string into N shares, requiring T shares to reconstruct.
  * @param secret The secret string to split.
  * @param t Threshold (minimum shares required to reconstruct).
@@ -97,11 +112,7 @@ export function splitSecret(secret: string, t: number, n: number): Share[] {
     
     for (let c = 1; c < t; c++) {
       // Pick random coefficient in GF(2^8) (excluding 0 to ensure degree t-1, though not strictly required, it's safer)
-      let randCoeff = 0;
-      while (randCoeff === 0) {
-        randCoeff = Math.floor(Math.random() * 256);
-      }
-      coefficients[c] = randCoeff;
+      coefficients[c] = randomNonZeroByte();
     }
     
     // Evaluate polynomial for each share x = 1 to N

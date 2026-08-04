@@ -24,6 +24,7 @@ const ChildChaptersScreen = lazy(() => import('./pages/ChildChaptersScreen'))
 const CreateRecordSpaceScreen = lazy(() => import('./pages/CreateRecordSpaceScreen'))
 const MyPageScreen = lazy(() => import('./pages/MyPageScreen'))
 const ConsentSettingsScreen = lazy(() => import('./pages/ConsentSettingsScreen'))
+const LegacyVaultScreen = lazy(() => import('./pages/LegacyVaultScreen'))
 const CalendarScreen = lazy(() => import('./pages/CalendarScreen'))
 const ChatbotScreen = lazy(() => import('./pages/ChatbotScreen'))
 const AutobiographyScreen = lazy(() => import('./pages/AutobiographyScreen'))
@@ -138,6 +139,8 @@ export function AppRoutes() {
             <Route path="/child/consent-settings" element={<RoleGuard allowedRole="child"><ConsentSettingsScreen /></RoleGuard>} />
             <Route path="/parent/mypage" element={<RoleGuard allowedRole="parent"><MyPageScreen /></RoleGuard>} />
             <Route path="/parent/consent-settings" element={<RoleGuard allowedRole="parent"><ConsentSettingsScreen /></RoleGuard>} />
+            {/* 금고는 기록의 주인만 엽니다. 보호자가 대신 열면 부모님 기록의 열쇠를 보호자가 쥐게 됩니다. */}
+            <Route path="/parent/vault" element={<RoleGuard allowedRole="parent"><LegacyVaultScreen /></RoleGuard>} />
             <Route path="/mypage" element={<MyPageRedirect />} />
             {demoSettingsEnabled && <Route path="/settings" element={<DemoSettingsScreen />} />}
             <Route path="/calendar" element={<AuthGuard><CalendarScreen /></AuthGuard>} />

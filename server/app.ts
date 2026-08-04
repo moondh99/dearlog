@@ -623,6 +623,8 @@ function transcriptMaskReason(
   record: RecordConsentFlags,
   context: { isSelf: boolean; vaultLocked: boolean; vaultReleased: boolean },
 ) {
+  // 금고는 본인에게도 잠긴다. 잠긴 동안 이 앱에서 본문을 읽을 수 있는 사람은 아무도 없다.
+  // 되돌리는 길은 금고 해지뿐이다(legacy-api.test.ts 가 이 동작을 붙들고 있다).
   if (context.vaultLocked) return VAULT_LOCKED_TEXT;
   // 본인은 자기 기록을 항상 볼 수 있어야 동의를 관리할 수 있다.
   if (context.isSelf) return null;
