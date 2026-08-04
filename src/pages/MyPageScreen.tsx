@@ -601,6 +601,26 @@ export default function MyPageScreen() {
           </div>
         </div>
 
+        {/* 디지털 유산 금고 — 기록의 주인만 열 수 있어 부모님 화면에만 둡니다 */}
+        {role === 'parent' && (
+          <div
+            className="rounded-2xl px-5 py-4 mb-4"
+            style={{ backgroundColor: '#FFFFFF', boxShadow: '0 2px 12px rgba(42,40,48,0.08)' }}
+          >
+            <p className="text-[16px] text-[#2A2830]">디지털 유산 금고</p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-[#7A767F]">
+              지금까지의 기록을 가족에게 닫아 두었다가 사후에 전합니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/parent/vault')}
+              className="mt-3 h-11 w-full rounded-xl bg-[#2A2830] text-[14px] font-bold text-white active:opacity-80"
+            >
+              금고 설정 열기
+            </button>
+          </div>
+        )}
+
         {/* 알림 설정 */}
         <div
           className="rounded-2xl overflow-hidden mb-4"

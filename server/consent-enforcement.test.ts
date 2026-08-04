@@ -142,6 +142,36 @@ describe('사후공개', () => {
   });
 });
 
+// 금고 설정 화면이 생기기 전까지 isVaultSetup 은 true 가 될 길이 없어서 이 상태는 한 번도
+// 돌아본 적이 없다. 화면을 붙이는 순간부터는 실제로 도는 경로다.
+describe('금고 잠금', () => {
+  async function openVault() {
+    await prisma.legacyVault.create({
+      data: { seniorId: SENIOR, isVaultSetup: true, deathVerificationStatus: 'alive' },
+    });
+  }
+
+  it('금고를 열면 보호자에게는 본문이 닫힌다', async () => {
+    await createRecord({ familyRead: true, posthumous: true });
+    await openVault();
+
+    const res = await asGuardian('/api/interview-records');
+
+    expect(res.body.records[0].transcriptText).not.toContain('물장구');
+  });
+
+  it('금고를 열면 부모님 본인 화면에서도 본문이 닫힌다', async () => {
+    await createRecord();
+    await openVault();
+
+    const res = await asSenior('/api/interview-records');
+
+    // 다른 동의 항목과 달리 금고는 본인도 예외가 아니다. 되돌리는 길은 금고 해지뿐이라
+    // 금고 화면에서 이 사실을 먼저 알려 준다.
+    expect(res.body.records[0].transcriptText).not.toContain('물장구');
+  });
+});
+
 describe('민감정보', () => {
   it('철회하면 출판 입력에서 빠진다', async () => {
     const kept = await createRecord({ sensitive: true, transcriptText: '남는 이야기' });

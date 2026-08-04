@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { splitSecret, combineShares } from './shamir';
 
 describe("Shamir's Secret Sharing (t-of-n)", () => {
@@ -62,6 +62,23 @@ describe("Shamir's Secret Sharing (t-of-n)", () => {
     expect(() => splitSecret(secret, 3, 2)).toThrow();
     // N cannot exceed 255
     expect(() => splitSecret(secret, 5, 256)).toThrow();
+  });
+
+  it("draws coefficients from the CSPRNG, never Math.random", () => {
+    // Math.random 의 내부 상태는 출력 몇 개로 되돌릴 수 있다. 그걸로 계수를 뽑으면 조각
+    // 하나만 쥔 사람이 나머지를 계산해 비밀을 복원할 수 있어 분할이 무의미해진다.
+    const mathRandom = vi.spyOn(Math, "random");
+    const getRandomValues = vi.spyOn(globalThis.crypto, "getRandomValues");
+
+    try {
+      splitSecret(secret, 3, 3);
+
+      expect(mathRandom).not.toHaveBeenCalled();
+      expect(getRandomValues).toHaveBeenCalled();
+    } finally {
+      mathRandom.mockRestore();
+      getRandomValues.mockRestore();
+    }
   });
 
   it("should throw errors for duplicate shares or empty arrays during recovery", () => {
