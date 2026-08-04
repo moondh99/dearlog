@@ -601,6 +601,26 @@ export default function MyPageScreen() {
           </div>
         </div>
 
+        {/* 디지털 유산 심사 — 신고와 승인, 전수받은 기록 열기는 보호자 쪽 절차입니다 */}
+        {role === 'child' && (
+          <div
+            className="rounded-2xl px-5 py-4 mb-4"
+            style={{ backgroundColor: '#FFFFFF', boxShadow: '0 2px 12px rgba(42,40,48,0.08)' }}
+          >
+            <p className="text-[16px] text-[#2A2830]">디지털 유산 심사</p>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-[#7A767F]">
+              부모님이 열어 둔 금고의 사망 심사를 진행하고 전달받은 기록을 엽니다.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/child/legacy')}
+              className="mt-3 h-11 w-full rounded-xl bg-[#2A2830] text-[14px] font-bold text-white active:opacity-80"
+            >
+              유산 심사 열기
+            </button>
+          </div>
+        )}
+
         {/* 디지털 유산 금고 — 기록의 주인만 열 수 있어 부모님 화면에만 둡니다 */}
         {role === 'parent' && (
           <div
