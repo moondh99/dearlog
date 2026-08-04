@@ -634,6 +634,55 @@ function transcriptMaskReason(
   return null;
 }
 
+// 사망 신고와 승인 사이에 두는 유예 시간. 이 사이에 어르신 본인이나 다른 가족이
+// 신고를 취소할 수 있다. 시연에서는 환경변수로 0에 가깝게 줄인다.
+const DEFAULT_DEATH_REVIEW_HOURS = 72;
+
+function deathReviewWindowHours() {
+  const hours = Number(process.env.LEGACY_DEATH_REVIEW_HOURS ?? DEFAULT_DEATH_REVIEW_HOURS);
+  return Number.isFinite(hours) && hours >= 0 ? hours : DEFAULT_DEATH_REVIEW_HOURS;
+}
+
+function deathReviewRemainingMs(triggeredAt: Date | null) {
+  // 신고 시각이 없는 예전 행은 유예를 지켰다고 볼 근거가 없으므로 통째로 다시 기다리게 한다.
+  if (!triggeredAt) return deathReviewWindowHours() * 60 * 60 * 1000;
+  const elapsed = Date.now() - triggeredAt.getTime();
+  return Math.max(0, deathReviewWindowHours() * 60 * 60 * 1000 - elapsed);
+}
+
+// 유산 관련 알림은 어르신 본인과 연결된 보호자 전원이 받아야 한다.
+// 신고한 사람만 받으면 정작 신고 대상도, 승인할 가족도 모르는 채로 절차가 진행된다.
+async function createLegacyNotifications(input: {
+  seniorId: string;
+  excludeUserId: string | null;
+  type: string;
+  title: string;
+  body: string;
+}) {
+  const links = await prisma.guardianSeniorLink.findMany({
+    where: { seniorId: input.seniorId },
+    select: { guardianId: true },
+  });
+  const recipients = [input.seniorId, ...links.map((link) => link.guardianId)].filter(
+    (userId, index, all) => all.indexOf(userId) === index && userId !== input.excludeUserId,
+  );
+
+  return prisma.$transaction(
+    recipients.map((userId) =>
+      prisma.notification.create({
+        data: {
+          userId,
+          relatedUserId: input.seniorId,
+          type: input.type,
+          title: input.title,
+          body: input.body,
+          metadataJson: JSON.stringify({ seniorId: input.seniorId }),
+        },
+      }),
+    ),
+  );
+}
+
 async function readVaultMaskContext(seniorId: string, isSelf: boolean) {
   const vault = await prisma.legacyVault.findUnique({ where: { seniorId } });
   return {
@@ -3944,13 +3993,20 @@ export function createApp() {
   app.post('/api/legacy/trigger-death', requireRole('guardian'), async (req, res, next) => {
     try {
       const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
-      
+
       const vault = await prisma.legacyVault.findUnique({
         where: { seniorId }
       });
-      
+
       if (!vault || !vault.isVaultSetup) {
         res.status(400).json({ error: '유산 금고가 아직 개설되지 않았습니다.' });
+        return;
+      }
+
+      // 이미 진행 중인 신고를 덮어쓰면 신고자와 신고 시각이 바뀐다.
+      // 신고자가 자기 신고를 다시 신고해 승인 제한을 우회하는 길이 열린다.
+      if (vault.deathVerificationStatus !== 'alive') {
+        res.status(400).json({ error: '이미 사망 심사가 진행 중이거나 끝났습니다.' });
         return;
       }
 
@@ -3959,21 +4015,22 @@ export function createApp() {
         data: {
           isDeceased: true,
           deathVerificationStatus: 'pending_verification',
+          deathTriggeredById: req.user!.id,
+          deathTriggeredAt: new Date(),
           updatedAt: new Date()
         }
       });
-      
-      const notification = await prisma.notification.create({
-        data: {
-          userId: req.user!.id,
-          relatedUserId: seniorId,
-          type: 'legacy_death_triggered',
-          title: '디지털 유산 전수 심사 개시',
-          body: '어르신의 디지털 유산 전수를 위한 사망 심사가 시작되었습니다. 승인 후 데이터를 복원할 수 있습니다.',
-          metadataJson: JSON.stringify({ seniorId })
-        }
+
+      // 예전에는 신고한 보호자 본인에게만 알림을 만들었다. 정작 신고 대상인 어르신은
+      // 살아 계셔도 아무 통보를 받지 못했고, 승인할 다른 가족도 몰랐다.
+      const [notification] = await createLegacyNotifications({
+        seniorId,
+        excludeUserId: req.user!.id,
+        type: 'legacy_death_triggered',
+        title: '디지털 유산 전수 심사 개시',
+        body: `사망 심사가 시작되었습니다. ${deathReviewWindowHours()}시간 뒤 다른 가족이 승인하면 유산이 전수됩니다. 잘못된 신고라면 그 전에 취소해 주세요.`,
       });
-      
+
       res.json({
         vault: {
           id: updatedVault.id,
@@ -4008,7 +4065,25 @@ export function createApp() {
         res.status(400).json({ error: '사망 심사 대기 상태에서만 승인할 수 있습니다.' });
         return;
       }
-      
+
+      // 신고한 사람이 그대로 승인하면 확인 절차가 아니라 혼자 누르는 버튼 두 개일 뿐이다.
+      // 연결된 보호자가 한 명뿐이면 확인해 줄 다른 가족이 없으므로, 그때는 유예 시간이
+      // 지나고 어르신이 취소하지 않은 것을 확인으로 삼는다.
+      const guardianCount = await prisma.guardianSeniorLink.count({ where: { seniorId } });
+      if (guardianCount > 1 && vault.deathTriggeredById === req.user!.id) {
+        res.status(403).json({ error: '신고한 분과 다른 가족이 승인해야 합니다.' });
+        return;
+      }
+
+      // 유예가 없으면 어르신에게 알림이 가도 볼 새가 없어 취소 경로가 장식이 된다.
+      const remainingMs = deathReviewRemainingMs(vault.deathTriggeredAt);
+      if (remainingMs > 0) {
+        res.status(403).json({
+          error: `사망 심사 유예 기간이 남았습니다. ${Math.ceil(remainingMs / (60 * 60 * 1000))}시간 뒤에 승인할 수 있습니다.`,
+        });
+        return;
+      }
+
       const updatedVault = await prisma.legacyVault.update({
         where: { seniorId },
         data: {
@@ -4018,18 +4093,15 @@ export function createApp() {
           updatedAt: new Date()
         }
       });
-      
-      const notification = await prisma.notification.create({
-        data: {
-          userId: req.user!.id,
-          relatedUserId: seniorId,
-          type: 'legacy_released',
-          title: '디지털 유산 상속 준비 완료',
-          body: '사망 심사가 최종 승인되었습니다. 가족 보관 키 조각과 승인된 기관 키 조각을 결합하여 유산을 복원하세요.',
-          metadataJson: JSON.stringify({ seniorId })
-        }
+
+      const [notification] = await createLegacyNotifications({
+        seniorId,
+        excludeUserId: null,
+        type: 'legacy_released',
+        title: '디지털 유산 상속 준비 완료',
+        body: '사망 심사가 최종 승인되었습니다. 가족 보관 키 조각과 승인된 기관 키 조각을 결합하여 유산을 복원하세요.',
       });
-      
+
       res.json({
         vault: {
           id: updatedVault.id,
@@ -4041,6 +4113,56 @@ export function createApp() {
           institutionShareReleased: updatedVault.institutionShareReleased
         },
         notification
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // 잘못된 사망 신고를 되돌리는 길. 이게 없으면 어르신이 살아 계셔도 신고를 멈출 방법이
+  // 없고, 유예 시간 동안 보내는 알림도 알려 주기만 할 뿐 아무것도 할 수 없다.
+  app.post('/api/legacy/cancel-death', requireRole('senior', 'guardian'), async (req, res, next) => {
+    try {
+      const seniorId = req.user!.role === 'senior'
+        ? req.user!.id
+        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+
+      const vault = await prisma.legacyVault.findUnique({ where: { seniorId } });
+
+      if (!vault || vault.deathVerificationStatus !== 'pending_verification') {
+        res.status(400).json({ error: '사망 심사 대기 상태에서만 취소할 수 있습니다.' });
+        return;
+      }
+
+      const updatedVault = await prisma.legacyVault.update({
+        where: { seniorId },
+        data: {
+          isDeceased: false,
+          deathVerificationStatus: 'alive',
+          deathTriggeredById: null,
+          deathTriggeredAt: null,
+          updatedAt: new Date(),
+        },
+      });
+
+      await createLegacyNotifications({
+        seniorId,
+        excludeUserId: req.user!.id,
+        type: 'legacy_death_cancelled',
+        title: '디지털 유산 전수 심사 취소',
+        body: '사망 심사가 취소되었습니다. 유산 금고는 그대로 보관됩니다.',
+      });
+
+      res.json({
+        vault: {
+          id: updatedVault.id,
+          seniorId: updatedVault.seniorId,
+          isVaultSetup: updatedVault.isVaultSetup,
+          deathVerificationStatus: updatedVault.deathVerificationStatus,
+          isDeceased: updatedVault.isDeceased,
+          serverShareReleased: updatedVault.serverShareReleased,
+          institutionShareReleased: updatedVault.institutionShareReleased,
+        },
       });
     } catch (error) {
       next(error);
