@@ -361,6 +361,11 @@ model LegacyVault {
   serverShareReleased      Boolean @default(false)
   institutionShareReleased Boolean @default(false)
 
+  // 누가 언제 사망을 신고했는지 남긴다. 신고자 본인은 승인할 수 없고,
+  // 유예 시간이 지나기 전에도 승인할 수 없다.
+  deathTriggeredById String?
+  deathTriggeredAt   DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

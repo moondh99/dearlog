@@ -221,12 +221,37 @@ describe('Digital Legacy Vault API', () => {
     expect(res.body.vault.deathVerificationStatus).toBe('pending_verification');
     expect(res.body.vault.isDeceased).toBe(true);
 
-    // Check notification
+    // 신고 대상인 어르신 본인이 알림을 받아야 한다. 예전에는 신고한 보호자에게만 만들어서
+    // 살아 계신 어르신이 아무 통보도 받지 못했다.
     const notification = await prisma.notification.findFirst({
-      where: { userId: 'test_guardian', type: 'legacy_death_triggered' }
+      where: { userId: 'test_senior', type: 'legacy_death_triggered' }
     });
     expect(notification).toBeTruthy();
     expect(notification?.relatedUserId).toBe('test_senior');
+  });
+
+  it('POST /api/legacy/trigger-death refuses to restart a pending review', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        deathVerificationStatus: 'pending_verification',
+        isDeceased: true,
+        deathTriggeredById: 'test_guardian_2',
+        deathTriggeredAt: new Date(),
+      }
+    });
+
+    // 다시 신고하면 신고자가 바뀌어 "신고한 사람은 승인 못 한다" 제한을 우회할 수 있다.
+    const res = await request(app)
+      .post('/api/legacy/trigger-death')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send({ seniorId: 'test_senior' });
+
+    expect(res.status).toBe(400);
+    const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+    expect(vault?.deathTriggeredById).toBe('test_guardian_2');
   });
 
   it('POST /api/legacy/approve-death sets state to released and updates release flags', async () => {
@@ -238,7 +263,10 @@ describe('Digital Legacy Vault API', () => {
         serverShare: mockVaultData.serverShare,
         institutionShare: mockVaultData.institutionShare,
         deathVerificationStatus: 'pending_verification',
-        isDeceased: true
+        isDeceased: true,
+        deathTriggeredById: 'test_guardian',
+        // 유예 기간이 이미 지난 신고. 연결된 보호자가 한 명뿐이라 신고자 본인이 승인한다.
+        deathTriggeredAt: new Date(Date.now() - 100 * 60 * 60 * 1000),
       }
     });
 
@@ -258,6 +286,121 @@ describe('Digital Legacy Vault API', () => {
       where: { userId: 'test_guardian', type: 'legacy_released' }
     });
     expect(notification).toBeTruthy();
+  });
+
+  describe('사망 심사 견제', () => {
+    async function createPendingVault(overrides: Record<string, unknown> = {}) {
+      return prisma.legacyVault.create({
+        data: {
+          seniorId: 'test_senior',
+          isVaultSetup: true,
+          encryptedMemories: mockVaultData.encryptedMemories,
+          serverShare: mockVaultData.serverShare,
+          institutionShare: mockVaultData.institutionShare,
+          deathVerificationStatus: 'pending_verification',
+          isDeceased: true,
+          deathTriggeredById: 'test_guardian',
+          deathTriggeredAt: new Date(Date.now() - 100 * 60 * 60 * 1000),
+          ...overrides,
+        },
+      });
+    }
+
+    async function addSecondGuardian() {
+      await prisma.user.create({
+        data: { id: 'test_guardian_2', name: '둘째', role: 'guardian', phoneNumber: '+821099998888' },
+      });
+      await prisma.guardianSeniorLink.create({
+        data: { guardianId: 'test_guardian_2', seniorId: 'test_senior' },
+      });
+    }
+
+    function approveAs(userId: string) {
+      return request(app)
+        .post('/api/legacy/approve-death')
+        .set('x-user-id', userId)
+        .set('x-user-role', 'guardian')
+        .send({ seniorId: 'test_senior' });
+    }
+
+    it('신고한 보호자는 자기 신고를 승인할 수 없다', async () => {
+      await addSecondGuardian();
+      await createPendingVault();
+
+      // 혼자 신고하고 혼자 승인하면 확인 절차가 아니라 버튼 두 개다.
+      const res = await approveAs('test_guardian');
+
+      expect(res.status).toBe(403);
+      const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+      expect(vault?.deathVerificationStatus).toBe('pending_verification');
+    });
+
+    it('다른 보호자는 승인할 수 있다', async () => {
+      await addSecondGuardian();
+      await createPendingVault();
+
+      const res = await approveAs('test_guardian_2');
+
+      expect(res.status).toBe(200);
+      expect(res.body.vault.deathVerificationStatus).toBe('released');
+    });
+
+    it('유예 기간이 남아 있으면 승인할 수 없다', async () => {
+      await addSecondGuardian();
+      await createPendingVault({ deathTriggeredAt: new Date() });
+
+      const res = await approveAs('test_guardian_2');
+
+      // 유예가 없으면 어르신에게 알림이 가도 취소할 새가 없다.
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('유예');
+    });
+
+    it('신고 시각이 없는 예전 행도 유예를 처음부터 기다린다', async () => {
+      await addSecondGuardian();
+      await createPendingVault({ deathTriggeredById: null, deathTriggeredAt: null });
+
+      const res = await approveAs('test_guardian_2');
+
+      expect(res.status).toBe(403);
+    });
+
+    it('어르신 본인이 사망 신고를 취소하면 금고가 다시 잠긴다', async () => {
+      await createPendingVault({ deathTriggeredAt: new Date() });
+
+      const res = await request(app)
+        .post('/api/legacy/cancel-death')
+        .set('x-user-id', 'test_senior')
+        .set('x-user-role', 'senior')
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.vault.deathVerificationStatus).toBe('alive');
+      expect(res.body.vault.isDeceased).toBe(false);
+
+      const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+      // 신고자가 남아 있으면 다음 신고에서 승인 제한이 엉뚱한 사람에게 걸린다.
+      expect(vault?.deathTriggeredById).toBeNull();
+      expect(vault?.deathTriggeredAt).toBeNull();
+    });
+
+    it('취소한 뒤에는 조각을 내주지 않는다', async () => {
+      await createPendingVault({ deathTriggeredAt: new Date() });
+      const cancelled = await request(app)
+        .post('/api/legacy/cancel-death')
+        .set('x-user-id', 'test_senior')
+        .set('x-user-role', 'senior')
+        .send({});
+      expect(cancelled.status).toBe(200);
+
+      const res = await request(app)
+        .get('/api/legacy/shares')
+        .query({ seniorId: 'test_senior' })
+        .set('x-user-id', 'test_guardian')
+        .set('x-user-role', 'guardian');
+
+      expect(res.status).toBe(403);
+    });
   });
 
   it('POST /api/legacy/approve-death requires pending verification state', async () => {

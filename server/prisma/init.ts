@@ -278,6 +278,8 @@ const statements = [
     "deathVerificationStatus" TEXT NOT NULL DEFAULT 'alive',
     "serverShareReleased" BOOLEAN NOT NULL DEFAULT 0,
     "institutionShareReleased" BOOLEAN NOT NULL DEFAULT 0,
+    "deathTriggeredById" TEXT,
+    "deathTriggeredAt" DATETIME,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "LegacyVault_seniorId_fkey" FOREIGN KEY ("seniorId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
@@ -568,6 +570,16 @@ export async function initLocalDatabase() {
     `);
   }
   await prisma.$executeRawUnsafe('CREATE UNIQUE INDEX IF NOT EXISTS "free_speech_db_interviewRecordId_key" ON "free_speech_db"("interviewRecordId")');
+
+  // 사망 신고자와 신고 시각. 신고자 본인이 그대로 승인하는 길을 막는 데 쓴다.
+  const legacyVaultColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("LegacyVault")');
+  const legacyVaultColumnNames = new Set(legacyVaultColumns.map((column) => column.name));
+  if (!legacyVaultColumnNames.has('deathTriggeredById')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "LegacyVault" ADD COLUMN "deathTriggeredById" TEXT');
+  }
+  if (!legacyVaultColumnNames.has('deathTriggeredAt')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "LegacyVault" ADD COLUMN "deathTriggeredAt" DATETIME');
+  }
 
   const publicationRequestColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("PublicationRequest")');
   const publicationRequestColumnNames = new Set(publicationRequestColumns.map((column) => column.name));

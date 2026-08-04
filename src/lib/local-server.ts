@@ -845,6 +845,16 @@ export function approveLocalDeathVerification() {
   });
 }
 
+export function cancelLocalDeathVerification() {
+  const auth = readStoredAuth();
+  const role = auth?.role === 'senior' ? 'senior' : 'guardian';
+  return api<{ vault: any }>('/api/legacy/cancel-death', {
+    method: 'POST',
+    role,
+    body: JSON.stringify({}),
+  });
+}
+
 export function fetchLocalLegacyShares() {
   return api<{ serverShare: string; institutionShare: string }>('/api/legacy/shares', {
     role: 'guardian',
