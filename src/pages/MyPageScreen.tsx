@@ -4,7 +4,7 @@ import { Activity } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useInterviewStore } from '../store/interviewStore'
 import { useConsentStore } from '../store/consentStore'
-import type { LocalAIProxyAuditSummary, LocalFamilyMember } from '../lib/local-server'
+import type { LocalAIProxyAuditSummary, LocalFamilyMember, LocalNotification } from '../lib/local-server'
 
 const FALLBACK_FAMILY_MEMBERS = [
   { name: '김영자', role: 'parent' as const, relationship: '부모님' },
@@ -67,7 +67,11 @@ export default function MyPageScreen() {
 
   const [editingName, setEditingName] = useState(false)
   const [nameInput, setNameInput] = useState(userName)
-  const [notifOn, setNotifOn] = useState(true)
+  // 예전에는 그냥 true 로 두고 아무 데도 붙이지 않아서, 구독이 없는데도 켜졌다고 보여 줬습니다.
+  const [notifOn, setNotifOn] = useState(false)
+  const [notifBusy, setNotifBusy] = useState(false)
+  const [notifError, setNotifError] = useState<string | null>(null)
+  const [notifications, setNotifications] = useState<LocalNotification[]>([])
   const [familyMembers, setFamilyMembers] = useState<LocalFamilyMember[]>([])
   const [showAddModal, setShowAddModal] = useState(false)
   const [newParentName, setNewParentName] = useState('')
@@ -80,6 +84,64 @@ export default function MyPageScreen() {
 
   // 서버 role 은 'guardian', 신세대 role 은 'child' 로 대응된다 (local-server 의 role 매핑과 동일)
   const isGuardian = role === 'child'
+  const serverRole: 'senior' | 'guardian' = role === 'parent' ? 'senior' : 'guardian'
+
+  const loadNotifications = async () => {
+    try {
+      const { fetchLocalNotifications } = await import('../lib/local-server')
+      const res = await fetchLocalNotifications(serverRole)
+      setNotifications(res?.notifications ?? [])
+    } catch (e) {
+      console.error('Failed to fetch notifications:', e)
+      setNotifications([])
+    }
+  }
+
+  const handleTogglePush = async () => {
+    if (notifBusy) return
+    setNotifBusy(true)
+    setNotifError(null)
+    try {
+      const lib = await import('../lib/local-server')
+      if (notifOn) {
+        await lib.unregisterLocalPushSubscription(serverRole)
+        setNotifOn(false)
+      } else {
+        const { publicKey } = await lib.fetchLocalVapidPublicKey()
+        await lib.registerLocalPushSubscription(publicKey, serverRole)
+        setNotifOn(true)
+      }
+    } catch (e) {
+      console.error('Failed to change push subscription:', e)
+      setNotifError(
+        e instanceof DOMException && e.name === 'NotAllowedError'
+          ? '브라우저에서 알림 권한이 막혀 있습니다. 브라우저 설정에서 허용해 주세요.'
+          : e instanceof Error && e.message
+            ? e.message
+            : '알림 설정을 바꾸지 못했습니다.'
+      )
+    } finally {
+      setNotifBusy(false)
+    }
+  }
+
+  const handleOpenNotification = async (notification: LocalNotification) => {
+    if (notification.status === 'unread') {
+      setNotifications((list) =>
+        list.map((item) => (item.id === notification.id ? { ...item, status: 'read' } : item))
+      )
+      try {
+        const { markLocalNotificationRead } = await import('../lib/local-server')
+        await markLocalNotificationRead(notification.id, serverRole)
+      } catch (e) {
+        console.error('Failed to mark notification read:', e)
+      }
+    }
+    // 화면이 있는 경로만 따라갑니다. app_interview_call 은 '/?callSessionId=...' 를 넣는데
+    // 그 쿼리를 읽는 곳이 아직 없어서, 따라가면 알림함에서 스플래시로 튕기기만 합니다.
+    const url = notification.metadata?.url
+    if (typeof url === 'string' && url.startsWith('/') && url.split('?')[0].length > 1) navigate(url)
+  }
 
   const loadFamily = async () => {
     try {
@@ -132,6 +194,15 @@ export default function MyPageScreen() {
     void fetchTranscripts()
     void fetchConsents()
   }, [fetchConsents, fetchTranscripts])
+
+  useEffect(() => {
+    void loadNotifications()
+    void (async () => {
+      const { getLocalPushSubscription } = await import('../lib/local-server')
+      const subscription = await getLocalPushSubscription().catch(() => null)
+      setNotifOn(Boolean(subscription))
+    })()
+  }, [serverRole])
 
   const submittingRef = useRef(false)
 
@@ -542,9 +613,41 @@ export default function MyPageScreen() {
             <div>
               <p className="text-[16px] text-[#2A2830]">푸시 알림</p>
               <p className="text-[12px] text-[#7A767F] mt-0.5">인터뷰 일정 및 새 답변 알림</p>
+              {notifError && <p className="text-[12px] text-[#C0554E] mt-1">{notifError}</p>}
             </div>
-            <Toggle on={notifOn} onChange={() => setNotifOn((v) => !v)} label="푸시 알림" />
+            <Toggle on={notifOn} onChange={handleTogglePush} label="푸시 알림" />
           </div>
+
+          <div className="px-5 py-3 border-t border-[#E0DBE8]">
+            <span className="text-[13px] font-medium text-[#7A767F]">받은 알림</span>
+          </div>
+          {notifications.length === 0 ? (
+            <p className="px-5 pb-4 text-[13px] text-[#7A767F]">아직 받은 알림이 없습니다.</p>
+          ) : (
+            <ul>
+              {notifications.map((notification) => (
+                <li key={notification.id}>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenNotification(notification)}
+                    className="w-full text-left px-5 py-3 border-t border-[#F1EEF5]"
+                  >
+                    <div className="flex items-center gap-2">
+                      {notification.status === 'unread' && (
+                        <span
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: '#9485BE' }}
+                          aria-label="읽지 않음"
+                        />
+                      )}
+                      <p className="text-[15px] text-[#2A2830]">{notification.title}</p>
+                    </div>
+                    <p className="text-[13px] text-[#7A767F] mt-0.5">{notification.body}</p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         {/* AI 운영 점검 (보호자 전용) */}

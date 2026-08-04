@@ -7,9 +7,10 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
+    // icon 은 지정하지 않습니다. 예전에는 /metadata.json 을 넣었는데 그런 파일도 없고
+    // 이미지도 아니라서 브라우저가 아이콘 없이 그렸습니다.
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: '/metadata.json',
       data: payload,
     })
   );
@@ -18,5 +19,19 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || '/';
-  event.waitUntil(clients.openWindow(targetUrl));
+  event.waitUntil(
+    (async () => {
+      const windowClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // 앱이 이미 열려 있으면 창을 새로 띄우지 않고 그 창을 앞으로 가져옵니다.
+      const existing = windowClients.find((client) => 'focus' in client);
+      if (existing) {
+        await existing.focus();
+        if ('navigate' in existing) {
+          await existing.navigate(targetUrl).catch(() => undefined);
+        }
+        return;
+      }
+      await clients.openWindow(targetUrl);
+    })()
+  );
 });
