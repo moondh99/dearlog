@@ -401,6 +401,39 @@ describe('Digital Legacy Vault API', () => {
 
       expect(res.status).toBe(403);
     });
+
+    it('심사 화면이 신고자와 남은 유예를 볼 수 있다', async () => {
+      await createPendingVault({ deathTriggeredAt: new Date() });
+
+      const res = await request(app)
+        .get('/api/legacy/vault')
+        .query({ seniorId: 'test_senior' })
+        .set('x-user-id', 'test_guardian')
+        .set('x-user-role', 'guardian');
+
+      expect(res.status).toBe(200);
+      // 이게 없으면 화면은 승인 버튼을 열어 두고 서버 403 을 받아야만 이유를 알 수 있다.
+      expect(res.body.vault.deathTriggeredById).toBe('test_guardian');
+      expect(res.body.vault.deathTriggeredAt).toBeTruthy();
+      expect(res.body.vault.deathReviewRemainingMs).toBeGreaterThan(0);
+    });
+
+    it('심사 중이 아니면 남은 유예를 0으로 준다', async () => {
+      // deathReviewRemainingMs 는 신고 시각이 없으면 유예 전체를 돌려준다. 그대로 흘리면
+      // 살아 계신 어르신의 금고에도 "72시간 뒤에 승인할 수 있습니다"가 뜬다.
+      await prisma.legacyVault.create({
+        data: { seniorId: 'test_senior', isVaultSetup: true, deathVerificationStatus: 'alive' },
+      });
+
+      const res = await request(app)
+        .get('/api/legacy/vault')
+        .query({ seniorId: 'test_senior' })
+        .set('x-user-id', 'test_guardian')
+        .set('x-user-role', 'guardian');
+
+      expect(res.status).toBe(200);
+      expect(res.body.vault.deathReviewRemainingMs).toBe(0);
+    });
   });
 
   it('POST /api/legacy/approve-death requires pending verification state', async () => {

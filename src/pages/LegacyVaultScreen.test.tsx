@@ -44,6 +44,10 @@ function fakeFetch(input: any, init: any = {}) {
     }
     return Promise.resolve(jsonResponse({ vault }))
   }
+  if (path.startsWith('/api/legacy/cancel-death')) {
+    vault = { isVaultSetup: true, deathVerificationStatus: 'alive' }
+    return Promise.resolve(jsonResponse({ vault }))
+  }
   if (path.startsWith('/api/legacy/reset')) {
     vault = { isVaultSetup: false }
     return Promise.resolve(jsonResponse({ ok: true }))
@@ -147,5 +151,17 @@ describe('LegacyVaultScreen', () => {
 
     expect(await screen.findByText('아직 열지 않음')).toBeInTheDocument()
     expect(requests.some((r) => r.method === 'POST' && r.path.startsWith('/api/legacy/reset'))).toBe(true)
+  })
+
+  it('사망 심사 중이면 어르신 본인이 취소할 수 있다', async () => {
+    vault = { isVaultSetup: true, deathVerificationStatus: 'pending_verification' }
+    renderScreen()
+
+    // 신고 알림은 "잘못된 신고라면 취소해 주세요"라고 한다. 여기에 버튼이 없으면
+    // 그 알림은 알려 주기만 하고 아무것도 할 수 없는 문장이다.
+    fireEvent.click(await screen.findByRole('button', { name: '사망 신고 취소하기' }))
+
+    expect(await screen.findByText('보관 중')).toBeInTheDocument()
+    expect(requests.some((r) => r.method === 'POST' && r.path.startsWith('/api/legacy/cancel-death'))).toBe(true)
   })
 })

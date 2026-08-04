@@ -28,6 +28,9 @@ type VaultState = {
   deathVerificationStatus?: string
 }
 
+// 사망 심사가 걸리면 어르신 본인에게 "잘못된 신고라면 취소해 주세요"라는 알림이 갑니다.
+// 이 화면에 취소 버튼이 없으면 그 알림이 알려 주기만 하고 아무것도 할 수 없는 문장이 됩니다.
+
 const STATUS_LABEL: Record<string, string> = {
   alive: '보관 중',
   pending_verification: '사망 심사 중',
@@ -118,6 +121,22 @@ export default function LegacyVaultScreen() {
     }
   }
 
+  const handleCancelDeath = async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const { cancelLocalDeathVerification } = await import('../lib/local-server')
+      await cancelLocalDeathVerification()
+      await loadVault()
+    } catch (e) {
+      console.error('Failed to cancel death verification:', e)
+      setError(e instanceof Error && e.message ? e.message : '사망 심사를 취소하지 못했습니다.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleDownloadShare = () => {
     if (!familyShare) return
     const url = URL.createObjectURL(new Blob([familyShare], { type: 'text/plain' }))
@@ -129,6 +148,7 @@ export default function LegacyVaultScreen() {
   }
 
   const isSetup = vault?.isVaultSetup === true
+  const isPendingDeath = vault?.deathVerificationStatus === 'pending_verification'
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F8F6F9]">
@@ -169,6 +189,27 @@ export default function LegacyVaultScreen() {
                 {isSetup ? (STATUS_LABEL[vault.deathVerificationStatus ?? 'alive'] ?? '보관 중') : '아직 열지 않음'}
               </p>
             </section>
+
+            {isPendingDeath && (
+              <section
+                className="mb-4 rounded-2xl border-2 border-[#9E3B3B] bg-white px-5 py-4"
+                style={{ boxShadow: '0 2px 12px rgba(42,40,48,0.08)' }}
+              >
+                <h2 className="text-[15px] font-bold text-[#9E3B3B]">사망 신고가 접수되었습니다</h2>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#5A565F]">
+                  가족 중 한 분이 사망을 신고했습니다. 유예 기간이 지나면 다른 가족의 승인으로 기록이 전수됩니다.
+                  잘못된 신고라면 지금 취소해 주세요.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleCancelDeath}
+                  disabled={busy}
+                  className="mt-3 h-11 w-full rounded-xl bg-[#9E3B3B] text-[14px] font-bold text-white active:opacity-80 disabled:opacity-50"
+                >
+                  사망 신고 취소하기
+                </button>
+              </section>
+            )}
 
             <section
               className="mb-4 rounded-2xl bg-white px-5 py-4"

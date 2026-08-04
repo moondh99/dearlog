@@ -3981,6 +3981,15 @@ export function createApp() {
           institutionShareReleased: vault.institutionShareReleased,
           encryptedMemories: vault.encryptedMemories,
           encryptedAutobiography: vault.encryptedAutobiography,
+          // 심사 화면이 "누가 신고했는지"와 "언제 승인할 수 있는지"를 알아야 한다.
+          // 이게 없으면 화면은 승인 버튼을 열어 두고 서버 403 을 받아야만 이유를 알 수 있다.
+          // 남은 유예는 서버가 계산해서 준다. 유예 길이는 서버 환경변수라 화면이 알 수 없다.
+          deathTriggeredById: vault.deathTriggeredById,
+          deathTriggeredAt: vault.deathTriggeredAt,
+          deathReviewRemainingMs:
+            vault.deathVerificationStatus === 'pending_verification'
+              ? deathReviewRemainingMs(vault.deathTriggeredAt)
+              : 0,
           createdAt: vault.createdAt,
           updatedAt: vault.updatedAt
         }
