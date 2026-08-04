@@ -32,7 +32,11 @@ const STATUS_LABEL: Record<string, string> = {
 
 function formatRemaining(ms: number) {
   const hours = Math.ceil(ms / (60 * 60 * 1000))
-  return hours > 24 ? `${Math.floor(hours / 24)}일 ${hours % 24}시간` : `${hours}시간`
+  if (hours <= 24) return `${hours}시간`
+  const days = Math.floor(hours / 24)
+  const rest = hours % 24
+  // 기본 유예가 72시간이라 "3일 0시간"이 가장 흔한 문구가 된다.
+  return rest === 0 ? `${days}일` : `${days}일 ${rest}시간`
 }
 
 function formatTriggeredAt(value: string) {
@@ -91,6 +95,9 @@ export default function LegacyReviewScreen() {
     if (busy) return
     setBusy(true)
     setError(null)
+    // 앞서 열어 둔 기록을 지우고 시작한다. 남겨 두면 조각이 틀려 실패했을 때
+    // "열지 못했습니다"라는 문구 아래에 직전에 연 본문이 그대로 붙어 있다.
+    setUnlocked(null)
     try {
       let familyShare: Share
       try {
