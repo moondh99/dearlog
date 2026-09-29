@@ -32,6 +32,10 @@ document and `README.md` still described as missing. Reconciled against `src/App
   tests in `server/app.test.ts` and `server/publication-html.browser.test.ts` failed in Linux
   containers that have no system Chrome. Covered by `server/chrome-path.test.ts`.
 - `README.md` and `PRD_Dearlog.md` updated to match the table above.
+- `POST /api/auth/phone` no longer has the legacy find-or-create branch. Omitting `isLogin`
+  used to return an existing account's token from the phone number alone, with no name check.
+  `isLogin` must now be a boolean or the request gets 400. The app and QA scripts already send it.
+  Covered by three tests in `server/legacy-api.test.ts`, which fail against the old code.
 
 ### Verification (2026-09-29, Linux cloud container, Node v22.22.2)
 
@@ -42,6 +46,7 @@ document and `README.md` still described as missing. Reconciled against `src/App
 | `npm test` before the Chrome fallback | 37 files passed, 2 failed (6 tests): `Chrome 실행 파일을 찾을 수 없습니다` |
 | `npm test` with `CHROME_PATH` set, before the fallback | Passed: 39 files / 333 tests |
 | `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
+| `npm test` after the login fix | Passed: 40 files / 337 tests |
 | `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
 | `npm audit` | 15 findings (1 low, 7 moderate, 7 high). See the `Dependency advisories` risk row |
 

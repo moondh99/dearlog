@@ -1766,7 +1766,14 @@ export function createApp() {
         return;
       }
 
-      const isLogin = req.body.isLogin !== undefined ? !!req.body.isLogin : undefined;
+      // 로그인인지 가입인지 반드시 밝혀야 한다. 예전에는 isLogin 을 빼고 보내면
+      // 번호가 이미 있을 때 이름 확인 없이 그 계정의 토큰을 내줬다. 번호만 알면
+      // 남의 계정으로 들어갈 수 있었다. 앱과 스크립트는 모두 isLogin 을 보낸다.
+      if (typeof req.body.isLogin !== 'boolean') {
+        res.status(400).json({ error: '로그인인지 회원가입인지 알 수 없는 요청입니다.' });
+        return;
+      }
+      const isLogin = req.body.isLogin;
       const name = req.body.name ? String(req.body.name).trim() : '';
       const birthDate = normalizeBirthDate(req.body.birthDate);
       if (birthDate === undefined) {
@@ -1775,27 +1782,6 @@ export function createApp() {
       }
 
       const existing = await prisma.user.findUnique({ where: { phoneNumber } });
-
-      if (isLogin === undefined) {
-        // Legacy find-or-create behavior
-        if (existing) {
-          res.json({ ...serializeAuthResponse(existing), isNew: false });
-          return;
-        }
-        const user = await prisma.user.create({
-          data: {
-            phoneNumber,
-            role: 'guardian',
-            name: name || '보호자',
-            birthDate,
-            preferredName: '보호자',
-            guardianName: name || '보호자',
-            guardianPreferredName: '보호자',
-          },
-        });
-        res.status(201).json({ ...serializeAuthResponse(user), isNew: true });
-        return;
-      }
 
       if (isLogin) {
         if (!existing) {
