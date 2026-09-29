@@ -164,6 +164,44 @@ describe('Digital Legacy Vault API', () => {
     expect(dbVault?.serverShare).toBe(mockVaultData.serverShare);
   });
 
+  // 금고는 부모님만 연다. 연결된 보호자라도 대신 열거나 덮어쓸 수 없다.
+  it('POST /api/legacy/vault refuses a linked guardian creating the senior vault', async () => {
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send(mockVaultData);
+
+    expect(res.status).toBe(403);
+    expect(await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } })).toBeNull();
+  });
+
+  it('POST /api/legacy/vault refuses a linked guardian overwriting an existing vault', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        encryptedMemories: '{"data":"original"}',
+        serverShare: '{"share":"original_server"}',
+        institutionShare: '{"share":"original_institution"}',
+        deathVerificationStatus: 'pending_verification',
+        deathTriggeredById: 'test_guardian',
+        deathTriggeredAt: new Date(),
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send({ ...mockVaultData, serverShare: '{"share":"attacker"}' });
+
+    expect(res.status).toBe(403);
+    const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+    expect(vault?.serverShare).toBe('{"share":"original_server"}');
+    expect(vault?.deathVerificationStatus).toBe('pending_verification');
+  });
+
   it('GET /api/legacy/vault returns vault config once created', async () => {
     // Setup vault first
     await prisma.legacyVault.create({

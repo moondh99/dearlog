@@ -41,6 +41,10 @@ document and `README.md` still described as missing. Reconciled against `src/App
   used to return an existing account's token from the phone number alone, with no name check.
   `isLogin` must now be a boolean or the request gets 400. The app and QA scripts already send it.
   Covered by three tests in `server/legacy-api.test.ts`, which fail against the old code.
+- `POST /api/legacy/vault` is now `requireRole('senior')`. A linked guardian could previously open the
+  senior's vault (holding the key shares) or overwrite an existing one, replacing the shares and resetting
+  a pending death review to `alive`. `scripts/db-table-coverage-qa.mjs` now creates the vault with the
+  senior token. Two tests in `server/legacy-api.test.ts` fail against the old code.
 - Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
   - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
     `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).
@@ -268,7 +272,7 @@ Notes:
 | Test configuration drift | Resolved; current tests are included and the full suite passes | Keep the excludes limited to vendor/generated/reference-project paths |
 | Server AI proxy operations | Browser API key exposure removed; proxy calls rate-limited, audited, summarized in the guardian My Page dashboard, threshold-checked, routed to operators, pruned by retention | Set real production operator IDs, keep `AI_PROXY_DASHBOARD_TOKEN` in the team secret store, review thresholds after live traffic |
 | Auth token operations | Signed Bearer tokens preferred and dev headers blocked outside allowed environments; no refresh/revocation storage yet | Set a strong production `AUTH_TOKEN_SECRET`, add refresh/revocation policy, keep `ALLOW_DEV_AUTH_HEADERS` off in production |
-| Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. `POST /api/legacy/vault` still accepts guardian callers server-side; only the route guard keeps the screen senior-only | Treat as demo-only until key management, legal, and audit review are done |
+| Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. `POST /api/legacy/vault` is senior-only on the server too. `POST /api/legacy/reset` still lets a linked guardian delete the senior's vault | Treat as demo-only until key management, legal, and audit review are done |
 | Memory-level data sovereignty | All five purposes are enforced at consumers and revocation/deletion is retroactive for generated books. `Memory`/`MemoryConsentSettings`/`MemoryVectorEntry` are demo-seed only, and `GET /api/memories` still returns `Memory` bodies when its chatbot consent is revoked. Complete deletion scope/policy is unresolved | Decide the `Memory` table cleanup, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |
 | PDF implementation duplication | Resolved; unused client component and both unused PDF dependencies were removed | Keep server publication rendering as the single supported PDF path |
 | Weekly family quiz | Documented as a planned feature with no implementation | Design and implement, or drop it from product materials |
