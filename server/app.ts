@@ -4193,12 +4193,12 @@ export function createApp() {
     }
   });
 
-  app.post('/api/legacy/reset', requireRole('senior', 'guardian'), async (req, res, next) => {
+  // 해지도 금고를 연 부모님만 한다. 금고가 잠긴 동안에는 가족에게 본문이 가려지는데,
+  // 보호자가 해지할 수 있으면 금고를 지워 그 잠금을 스스로 풀 수 있었다.
+  app.post('/api/legacy/reset', requireRole('senior'), async (req, res, next) => {
     try {
-      const seniorId = req.user!.role === 'senior'
-        ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
-        
+      const seniorId = req.user!.id;
+
       await prisma.legacyVault.deleteMany({
         where: { seniorId }
       });

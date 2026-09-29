@@ -120,7 +120,7 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 | `POST` | `/api/legacy/approve-death` | Guardian | Target senior resolved through guardian link; requires pending verification |
 | `POST` | `/api/legacy/cancel-death` | Senior/Guardian | Senior self or guardian-linked senior; requires pending verification |
 | `GET` | `/api/legacy/shares` | Guardian | Target senior resolved through guardian link; requires released state |
-| `POST` | `/api/legacy/reset` | Senior/Guardian | Senior self or guardian-linked senior |
+| `POST` | `/api/legacy/reset` | Senior | Senior self only. Guardians get 403 even when linked: deleting the vault would lift the lock that hides vaulted records from family |
 
 ## File Delivery
 
