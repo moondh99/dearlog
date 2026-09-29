@@ -48,6 +48,13 @@ document and `README.md` still described as missing. Reconciled against `src/App
 - `POST /api/legacy/reset` is now `requireRole('senior')` as well. A linked guardian could delete the
   senior's vault and so lift the lock that hides vaulted records from family. The only app caller is the
   senior-only `/parent/vault` screen. One test in `server/legacy-api.test.ts` fails against the old code.
+- `scripts/db-table-coverage-qa.mjs` had been failing at `approve-death` since #15 (403: the review window
+  had not elapsed). It now reads the pending review from `GET /api/legacy/vault` and, only for the QA senior
+  it created in that run, moves `deathTriggeredAt` back past the window before approving, so the server's
+  `LEGACY_DEATH_REVIEW_HOURS` stays untouched for real families. Reproduced the 403 against a local server
+  with the default 72 h window, then ran the fixed script end to end: all 13 table deltas and
+  `released|1|1` passed. (The container has no `sqlite3` CLI; the run used a `node:sqlite` stand-in with
+  the same list-mode output.) The script expects a seeded DB (`npm run db:seed`) for chapter rows.
 - Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
   - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
     `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).

@@ -254,6 +254,28 @@ async function main() {
     headers: guardianAuth,
     body: JSON.stringify({ seniorId: senior.id }),
   });
+
+  // 사망 신고는 유예(LEGACY_DEATH_REVIEW_HOURS, 기본 72시간)가 지나야 승인된다. 이 QA가
+  // 사흘을 기다릴 수는 없고, 서버의 유예를 0으로 낮추면 같은 서버의 실제 가족 보호도 함께
+  // 사라진다. 그래서 서버 설정은 그대로 두고, 이번 실행이 만든 QA 부모님의 금고 행에 한해
+  // 신고 시각을 유예보다 앞으로 옮긴다. 연결된 보호자가 한 명뿐이라 신고한 보호자가
+  // 유예 뒤에 직접 승인할 수 있다(두 명 이상이면 다른 보호자가 승인해야 한다).
+  const pending = await api(`/api/legacy/vault?seniorId=${encodeURIComponent(senior.id)}`, {
+    headers: guardianAuth,
+  });
+  assert(
+    pending.vault?.deathVerificationStatus === 'pending_verification',
+    `death report did not start a review: ${pending.vault?.deathVerificationStatus}`,
+  );
+  const remainingMs = Number(pending.vault.deathReviewRemainingMs ?? 0);
+  if (remainingMs > 0) {
+    // Prisma 는 SQLite DateTime 을 epoch 밀리초 정수로 저장한다.
+    const triggeredMs = new Date(pending.vault.deathTriggeredAt).getTime();
+    assert(Number.isFinite(triggeredMs), `death report has no trigger time: ${pending.vault.deathTriggeredAt}`);
+    const backdatedMs = triggeredMs - remainingMs - 60_000;
+    sqlite(`UPDATE "LegacyVault" SET deathTriggeredAt = ${backdatedMs} WHERE seniorId = ${sqlString(senior.id)};`);
+  }
+
   await api('/api/legacy/approve-death', {
     method: 'POST',
     headers: guardianAuth,
