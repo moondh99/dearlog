@@ -726,28 +726,43 @@ describe('Digital Legacy Vault API', () => {
       expect(res.body.error).toContain('가입되지 않은 휴대폰 번호입니다');
     });
 
-    it('falls back to find-or-create when isLogin is undefined for legacy clients', async () => {
-      // Existing
+    // 예전에는 isLogin 을 빼면 번호만으로 기존 계정의 토큰을 내줬다.
+    it('does not issue a token for an existing number when isLogin is missing', async () => {
       await prisma.user.create({
         data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
       });
 
-      const resExisting = await request(app)
+      const res = await request(app)
         .post('/api/auth/phone')
         .send({ phoneNumber: '01033334444' }); // no name, no isLogin
 
-      expect(resExisting.status).toBe(200);
-      expect(resExisting.body.user.name).toBe('김유신');
-      expect(resExisting.body.authToken).toEqual(expect.any(String));
+      expect(res.status).toBe(400);
+      expect(res.body.authToken).toBeUndefined();
+      expect(res.body.user).toBeUndefined();
+    });
 
-      // New
-      const resNew = await request(app)
+    it('does not create an account when isLogin is missing', async () => {
+      const res = await request(app)
         .post('/api/auth/phone')
         .send({ phoneNumber: '01077778888', name: '신규자' }); // no isLogin
 
-      expect(resNew.status).toBe(201);
-      expect(resNew.body.user.name).toBe('신규자');
-      expect(resNew.body.authToken).toEqual(expect.any(String));
+      expect(res.status).toBe(400);
+      expect(await prisma.user.findUnique({ where: { phoneNumber: '01077778888' } })).toBeNull();
+    });
+
+    it('rejects a non-boolean isLogin instead of guessing', async () => {
+      await prisma.user.create({
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+      });
+
+      // 문자열 'false' 를 참으로 읽으면 로그인 분기로, 거짓으로 읽으면 가입 분기로 간다.
+      // 어느 쪽으로도 추측하지 않는다.
+      const res = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: 'true' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.authToken).toBeUndefined();
     });
   });
 
