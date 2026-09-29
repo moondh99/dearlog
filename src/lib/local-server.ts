@@ -452,10 +452,32 @@ export function fetchLocalAIProxyAuditSummary(windowMinutes = 60) {
   });
 }
 
-export function registerLocalPhoneAccount(phoneNumber: string, name?: string, isLogin?: boolean, birthDate?: string) {
+export type PhoneOtpPurpose = 'login' | 'signup';
+
+export function requestLocalPhoneOtp(phoneNumber: string, purpose: PhoneOtpPurpose) {
+  return api<{ ok: boolean; expiresInSeconds: number; resendAfterSeconds: number }>('/api/auth/otp/request', {
+    method: 'POST',
+    body: JSON.stringify({ phoneNumber, purpose }),
+  });
+}
+
+export function verifyLocalPhoneOtp(phoneNumber: string, purpose: PhoneOtpPurpose, code: string) {
+  return api<{ verificationToken: string; expiresInSeconds: number }>('/api/auth/otp/verify', {
+    method: 'POST',
+    body: JSON.stringify({ phoneNumber, purpose, code }),
+  });
+}
+
+export function registerLocalPhoneAccount(
+  phoneNumber: string,
+  name: string,
+  isLogin: boolean,
+  birthDate: string | undefined,
+  verificationToken: string,
+) {
   return api<{ user: LocalAuthUser; authToken: string; isNew: boolean }>('/api/auth/phone', {
     method: 'POST',
-    body: JSON.stringify({ phoneNumber, name, isLogin, birthDate }),
+    body: JSON.stringify({ phoneNumber, name, isLogin, birthDate, verificationToken }),
   });
 }
 

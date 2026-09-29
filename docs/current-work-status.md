@@ -55,6 +55,16 @@ document and `README.md` still described as missing. Reconciled against `src/App
   with the default 72 h window, then ran the fixed script end to end: all 13 table deltas and
   `released|1|1` passed. (The container has no `sqlite3` CLI; the run used a `node:sqlite` stand-in with
   the same list-mode output.) The script expects a seeded DB (`npm run db:seed`) for chapter rows.
+- Phone OTP for login and signup. `POST /api/auth/otp/request` sends a 6-digit code (`crypto.randomInt`,
+  hashed in memory, 3 min, 60 s resend gap, per-phone 5 / per-IP 50 sends per window); `POST /api/auth/otp/verify`
+  allows 5 tries per code and returns a single-use 10-minute token bound to phone + purpose;
+  `POST /api/auth/phone` requires that token and only reveals a name mismatch after it. SMS delivery is
+  pluggable (`server/sms.ts`): unset `SMS_PROVIDER` means no codes and login/signup return 503 (fail-closed,
+  not keyed on `NODE_ENV`, same as the auth settings); `SMS_PROVIDER=dev` writes codes to the server log and
+  `server/data/sms-outbox.jsonl` (gitignored) for local dev and QA. No real SMS vendor is wired yet, so the
+  pilot cannot log in until one is. The signup screen's code step used to accept any 6 digits; it now calls
+  the server, and login gained a code step with resend. The unreachable `/auth/verify` page (also accepted any
+  code) was removed. Both QA scripts read the code from the dev outbox.
 - Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
   - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
     `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).
@@ -83,6 +93,8 @@ document and `README.md` still described as missing. Reconciled against `src/App
 | `npm test` with `CHROME_PATH` set, before the fallback | Passed: 39 files / 333 tests |
 | `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
 | `npm test` after the login fix | Passed: 40 files / 337 tests |
+| `npm test` after phone OTP | Passed: 41 files / 358 tests. Forcing the token check to pass fails 4 of the new OTP tests |
+| Phone OTP against real servers | `SMS_PROVIDER=dev`: `db-table-coverage-qa.mjs` passed end to end; Chromium (390 px) completed signup and login through the code step, and a wrong code showed "4번 더 입력할 수 있습니다". Unset `SMS_PROVIDER`: `otp/request` 503, `auth/phone` without a token 401 |
 | `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
 | `npm audit` | 15 findings (1 low, 7 moderate, 7 high) before the dependency pass below |
 | `npm audit` after the dependency pass | 0 vulnerabilities; `npm ci` from a clean `node_modules` with npm 10.9.7 also reports 0 |
@@ -281,6 +293,7 @@ Notes:
 | --- | --- | --- |
 | Test configuration drift | Resolved; current tests are included and the full suite passes | Keep the excludes limited to vendor/generated/reference-project paths |
 | Server AI proxy operations | Browser API key exposure removed; proxy calls rate-limited, audited, summarized in the guardian My Page dashboard, threshold-checked, routed to operators, pruned by retention | Set real production operator IDs, keep `AI_PROXY_DASHBOARD_TOKEN` in the team secret store, review thresholds after live traffic |
+| SMS vendor for OTP | Login and signup now require a phone code, but only the dev sender exists. With `SMS_PROVIDER` unset the pilot returns 503 for login and signup | Pick a vendor (Solapi, NCP SENS, …), register the sender number, implement `SmsSender` in `server/sms.ts`, then set `SMS_PROVIDER` on the pilot |
 | Auth token operations | Signed Bearer tokens preferred and dev headers blocked outside allowed environments; no refresh/revocation storage yet | Set a strong production `AUTH_TOKEN_SECRET`, add refresh/revocation policy, keep `ALLOW_DEV_AUTH_HEADERS` off in production |
 | Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. Creating (`POST /api/legacy/vault`) and revoking (`POST /api/legacy/reset`) the vault are senior-only on the server too | Treat as demo-only until key management, legal, and audit review are done |
 | Memory-level data sovereignty | All five purposes are enforced at consumers and revocation/deletion is retroactive for generated books. `Memory`/`MemoryConsentSettings`/`MemoryVectorEntry` are demo-seed only, and `GET /api/memories` still returns `Memory` bodies when its chatbot consent is revoked. Complete deletion scope/policy is unresolved | Decide the `Memory` table cleanup, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |

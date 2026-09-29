@@ -6,6 +6,8 @@ import { useAuthStore } from './store/authStore';
 
 const localServerMocks = vi.hoisted(() => ({
   registerLocalPhoneAccount: vi.fn(),
+  requestLocalPhoneOtp: vi.fn(),
+  verifyLocalPhoneOtp: vi.fn(),
   updateLocalUserProfile: vi.fn(),
   updateLocalUserRole: vi.fn(),
   loginWithInvitationToken: vi.fn(),
@@ -22,6 +24,8 @@ const localServerMocks = vi.hoisted(() => ({
 
 vi.mock('./lib/local-server', () => ({
   registerLocalPhoneAccount: localServerMocks.registerLocalPhoneAccount,
+  requestLocalPhoneOtp: localServerMocks.requestLocalPhoneOtp,
+  verifyLocalPhoneOtp: localServerMocks.verifyLocalPhoneOtp,
   updateLocalUserProfile: localServerMocks.updateLocalUserProfile,
   updateLocalUserRole: localServerMocks.updateLocalUserRole,
   loginWithInvitationToken: localServerMocks.loginWithInvitationToken,
@@ -100,6 +104,11 @@ describe('auth and onboarding flow', () => {
   beforeEach(() => {
     resetAuthStore();
     vi.useRealTimers();
+    localServerMocks.requestLocalPhoneOtp.mockReset();
+    localServerMocks.verifyLocalPhoneOtp.mockReset();
+    localServerMocks.registerLocalPhoneAccount.mockReset();
+    localServerMocks.requestLocalPhoneOtp.mockResolvedValue({ ok: true, expiresInSeconds: 180, resendAfterSeconds: 60 });
+    localServerMocks.verifyLocalPhoneOtp.mockResolvedValue({ verificationToken: 'otp-token', expiresInSeconds: 600 });
     localServerMocks.registerLocalPhoneAccount.mockResolvedValue({
       user: guardianUser(),
       authToken: 'login-token',
@@ -146,10 +155,16 @@ describe('auth and onboarding flow', () => {
     fireEvent.change(screen.getByPlaceholderText('010-0000-0000'), {
       target: { value: '010-1234-5678' },
     });
-    fireEvent.click(screen.getAllByRole('button', { name: '로그인' }).at(-1)!);
+    fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
+    fireEvent.change(await screen.findByLabelText('인증번호'), {
+      target: { value: '654321' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
 
     expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
-    expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01012345678', '김보호', true, undefined);
+    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01012345678', 'login');
+    expect(localServerMocks.verifyLocalPhoneOtp).toHaveBeenCalledWith('01012345678', 'login', '654321');
+    expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01012345678', '김보호', true, undefined, 'otp-token');
     expect(useAuthStore.getState()).toMatchObject({
       role: 'child',
       userId: 'guardian-1',
@@ -175,11 +190,11 @@ describe('auth and onboarding flow', () => {
       target: { value: '010-2222-3333' },
     });
     fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
-    fireEvent.change(screen.getByLabelText('인증번호'), {
+    fireEvent.change(await screen.findByLabelText('인증번호'), {
       target: { value: '123456' },
     });
     fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
-    fireEvent.change(screen.getByPlaceholderText('예: 민준, 김민준'), {
+    fireEvent.change(await screen.findByPlaceholderText('예: 민준, 김민준'), {
       target: { value: '김보호' },
     });
     fireEvent.change(screen.getByPlaceholderText('예: 1997-07-04'), {
@@ -202,11 +217,63 @@ describe('auth and onboarding flow', () => {
       });
     });
     expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
+    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01022223333', 'signup');
+    expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01022223333', '김보호', false, '1997-07-04', 'otp-token');
     expect(useAuthStore.getState()).toMatchObject({
       role: 'child',
       phoneNumber: '01022223333',
       authToken: 'profile-token',
     });
+  });
+
+  it('keeps the user on the code step when the server rejects the code', async () => {
+    localServerMocks.verifyLocalPhoneOtp.mockRejectedValueOnce(new Error('인증번호가 맞지 않습니다. 4번 더 입력할 수 있습니다.'));
+
+    render(
+      <MemoryRouter initialEntries={['/auth']}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '로그인' }));
+    fireEvent.change(await screen.findByPlaceholderText('이름을 입력해주세요'), {
+      target: { value: '김보호' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('010-0000-0000'), {
+      target: { value: '010-1234-5678' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
+    fireEvent.change(await screen.findByLabelText('인증번호'), {
+      target: { value: '000000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
+
+    expect(await screen.findByText('인증번호가 맞지 않습니다. 4번 더 입력할 수 있습니다.')).toBeInTheDocument();
+    expect(screen.getByLabelText('인증번호')).toBeInTheDocument();
+    expect(localServerMocks.registerLocalPhoneAccount).not.toHaveBeenCalled();
+    expect(useAuthStore.getState().authToken).toBeNull();
+  });
+
+  it('stays on the phone step and shows why when the code cannot be sent', async () => {
+    localServerMocks.requestLocalPhoneOtp.mockRejectedValueOnce(
+      new Error('인증번호 문자를 보낼 수 없어 지금은 로그인과 가입을 할 수 없습니다. 운영자에게 문의해 주세요.'),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/auth']}>
+        <AppRoutes />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '회원가입' }));
+    fireEvent.change(await screen.findByPlaceholderText('010-0000-0000'), {
+      target: { value: '010-2222-3333' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
+
+    expect(await screen.findByText(/인증번호 문자를 보낼 수 없어/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('인증번호')).not.toBeInTheDocument();
+    expect(localServerMocks.registerLocalPhoneAccount).not.toHaveBeenCalled();
   });
 
   it('auto logs in from an invitation token and opens the parent welcome step', async () => {
