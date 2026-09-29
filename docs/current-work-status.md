@@ -36,6 +36,23 @@ document and `README.md` still described as missing. Reconciled against `src/App
   used to return an existing account's token from the phone number alone, with no name check.
   `isLogin` must now be a boolean or the request gets 400. The app and QA scripts already send it.
   Covered by three tests in `server/legacy-api.test.ts`, which fail against the old code.
+- Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
+  - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
+    `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).
+  - Transitive, within existing ranges: `@xmldom/xmldom` 0.9.12, `browserslist` 4.29.2,
+    `baseline-browser-mapping` 2.11.26, `nanoid` 3.3.19, `undici` 7.30.0.
+  - `prisma` 6.19.3 is the newest 6.x and pins `deepmerge-ts` 7.1.5 (fixed in 8.0.0). Prisma 7 is a
+    breaking migration, so `package.json` `overrides` pins `@prisma/config` → `deepmerge-ts` ^8.0.2 instead.
+    `@prisma/config` only calls `deepmerge()` as the c12 merger when loading a `prisma.config.*` file;
+    8.0's breaking changes are in `deepmergeInto`, type names, and Map merging. Verified by loading a
+    temporary `prisma.config.ts` with `prisma validate --config`. Drop the override once Prisma ships
+    `deepmerge-ts` 8.
+  - `@types/react` is now an explicit devDependency. It was only installed as an optional peer of
+    `zustand` / `@testing-library/react`; npm 11 prunes optional peers and `npm run lint` then fails with
+    JSX `key` errors.
+  - npm 10.9.7 crashes (`Cannot read properties of null (reading 'edgesOut')`) in `npm audit fix` and
+    when upgrading `vitest`. The `vitest`, `@types/react`, transitive, and override steps were run with
+    `npx npm@11`; the resulting lockfile (v3) installs cleanly with npm 10 `npm ci`.
 
 ### Verification (2026-09-29, Linux cloud container, Node v22.22.2)
 
@@ -48,7 +65,9 @@ document and `README.md` still described as missing. Reconciled against `src/App
 | `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
 | `npm test` after the login fix | Passed: 40 files / 337 tests |
 | `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
-| `npm audit` | 15 findings (1 low, 7 moderate, 7 high). See the `Dependency advisories` risk row |
+| `npm audit` | 15 findings (1 low, 7 moderate, 7 high) before the dependency pass below |
+| `npm audit` after the dependency pass | 0 vulnerabilities; `npm ci` from a clean `node_modules` with npm 10.9.7 also reports 0 |
+| After the dependency pass | `npm run lint` passed, `npm test` 40 files / 337 tests passed, `npm run build` passed, `npm run db:generate` and `npm run db:migrate` passed, `npm run server:dev` served `/api/health` |
 
 ## Codebase Consolidation (2026-07-30)
 
@@ -250,7 +269,7 @@ Notes:
 | Weekly family quiz | Documented as a planned feature with no implementation | Design and implement, or drop it from product materials |
 | Presentation assets | Existing `artifacts/capstone-demo/` files are preserved snapshots, but there is no regeneration command | Capture new assets from live routes if a new presentation package is needed |
 | Public tunnel | Local `/api/health` is healthy, but `https://dear-log.com/api/health` returned Cloudflare error 1033 during the 2026-07-30 pass | Restart the named `dearlog` tunnel only when public access is intentionally required |
-| Dependency advisories | 2026-07-31: reduced from 15 to 3. 2026-09-29: back to 15 (1 low, 7 moderate, 7 high) as new advisories were published. Direct packages flagged: `multer` (high), `prisma` (high, via `@prisma/config`/`deepmerge-ts`), `express` (moderate, via `qs`/`body-parser`), `vitest` (moderate). `npm audit` offers the `prisma` fix only as a semver-major change to `prisma@6.12.0` | Not addressed in this pass. Review with non-force `npm audit fix` plus lint/test/build; do not use `npm audit fix --force` |
+| Dependency advisories | 2026-09-29: 0. It had climbed back to 15 after new advisories; fixed by in-range upgrades plus one `overrides` entry for `deepmerge-ts` under `@prisma/config` (see `This pass`) | Remove the `deepmerge-ts` override when Prisma updates it; re-run `npm audit` periodically; do not use `npm audit fix --force` |
 
 ## Recommended Next Steps
 
@@ -265,7 +284,8 @@ Notes:
    retention period, guardian authority, and reauthentication.
 5. ~~Enforce `familyRead`, `posthumous`, and `sensitive` at all downstream consumers.~~ Done
    (#7, #8); see `docs/consent-enforcement-design.md`.
-6. Triage the 15 `npm audit` findings measured on 2026-09-29 (see the risk table).
+6. ~~Triage the 15 `npm audit` findings.~~ Done 2026-09-29 (0 remaining). Remove the `deepmerge-ts`
+   override once Prisma ships `deepmerge-ts` 8.
 7. When public access is wanted, restart the Cloudflare named tunnel and run `npm run pilot:public:check`.
 8. Complete key-management, legal, and audit review before treating the digital legacy vault as
    production-ready. The UI is wired (#14–#16).
