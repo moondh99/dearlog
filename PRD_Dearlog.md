@@ -1,6 +1,7 @@
 # Dearlog PRD (내부 개발 참고용)
 
 작성일: 2026-06-28
+최종 갱신: 2026-09-29 (코드 대조)
 작성 범위: Dearlog 서비스 전체 (웹앱 + iOS 네이티브 패키징)
 대상: 내부 개발팀
 
@@ -53,13 +54,16 @@
 ### 6.2 인터뷰 (보호자 → 시니어)
 
 - 보호자가 질문 등록(공통 질문 풀 + 사진 기반 자동 생성 질문 + 직접 작성).
-- 시니어는 음성으로 답변(`InterviewRecord`, `FreeSpeechRecord`), 통화형 인터뷰 스케줄링(`InterviewSchedule`, `InterviewSession`)도 지원.
+- 시니어는 음성으로 답변(`InterviewRecord`, `FreeSpeechRecord`). 인터뷰 예약(`InterviewSchedule`)과 예약 시각에 앱 안에서 음성 인터뷰를 띄우는 호출(`InterviewSession`, `server/app-call.ts`)을 지원. 예전 Twilio 전화 인터뷰 경로는 호출부가 없어 2026-07-31에 제거됨.
 - 답변은 STT로 텍스트화되어 원문 음성 조각과 함께 보관 (근거 추적 가능).
 
 ### 6.3 검수 및 동의
 
-- 보호자가 답변/기억(`Memory`)을 검수, 태그(`MemoryTag`) 정리.
-- 시니어 또는 보호자가 공개 범위와 활용 동의를 `MemoryConsentSettings`에서 조정. 기억별 활용 중지는 구현 완료. 완전 삭제는 미구현이며, 파생물·백업·보존 기간·재인증 정책을 정한 뒤 붙인다.
+- 답변 검수 상태는 `InterviewRecord.reviewStatus`(`pending` / `applied` / `revision_requested`)로 관리한다.
+- 시니어 또는 보호자가 동의 설정 화면에서 목적별 동의 5종(`publish`, `chatbot`, `familyRead`, `posthumous`, `sensitive`)을 조정. 동의는 `InterviewRecord` 컬럼에 저장하고, 사진(`Photo`)은 챗봇 근거가 아니어서 `chatbot`을 뺀 4종을 둔다. `Memory`/`MemoryConsentSettings`는 운영 코드에서 만들어지지 않는다(데모 시드 전용).
+- 각 목적은 소비 지점에서 집행된다: `publish`(출판 입력·표지), `chatbot`(분신 대화 chunk), `familyRead`(보호자 조회 응답 마스킹), `sensitive`(출판·표지·분신 대화·자서전 초안에서 제외), `posthumous`(유산 전수 뒤에도 미동의 기록 마스킹). 상세는 `docs/consent-enforcement-design.md`.
+- 철회와 삭제는 이미 만든 결과물에 소급 적용된다. `publish`/`sensitive` 철회나 책에 들어가는 사진 삭제 뒤에는 그 전에 만든 PDF와 미리보기를 가족이 열 수 없고(409, 다시 만들기 안내), 챗봇 동의 철회는 브라우저에 남은 지난 대화까지 지운다.
+- 기록별 활용 중지(5종 일괄 철회)는 구현 완료. 완전 삭제는 미구현이며, 파생물·백업·보존 기간·재인증 정책을 정한 뒤 붙인다.
 
 ### 6.4 자서전 제작
 
@@ -70,16 +74,20 @@
 ### 6.5 구독 재방문 루프
 
 - 저장된 기억 기반 AI 분신(`나의 분신`) 대화 — `src/lib/agents/digitalTwin.ts`의 한국어 토큰 스코어링으로 chunk를 고른다. `MemoryVectorEntry`는 존재하지만 이 경로에서 사용하지 않는다.
-- 가족 질문, 주간 가족 퀴즈, 기념일/다음 인터뷰 알림(`Notification`, `PushSubscription`).
+- 가족 질문, 주간 가족 퀴즈(미구현), 기념일/다음 인터뷰 알림(`Notification`, `PushSubscription`). 마이페이지에서 Web Push 구독을 켜고 끄며(서비스워커 등록·해지와 서버 구독 행 삭제), 쌓인 알림을 알림함에서 읽는다. VAPID 키가 없어도 알림 행은 저장된다.
 - 캘린더(`CalendarEvent`)로 인터뷰 일정과 가족 이벤트 관리.
 
-### 6.6 디지털 유산 (실험적, 프로토타입)
+### 6.6 디지털 유산 (실험적, 화면 연결 완료)
 
-- `LegacyVault` — 암호화된 콘텐츠/공유 정책을 저장하는 프로토타입. **법무/감사/키관리 검토 전까지는 데모 전용으로 취급** (release policy가 시뮬레이션 단계).
+- 시니어가 `/parent/vault`에서 금고를 연다. 보호자가 대신 열면 부모님 기록의 열쇠를 보호자가 쥐게 되므로 화면은 시니어 역할에만 열려 있다(`RoleGuard`). 단 `POST /api/legacy/vault`는 서버에서 보호자 호출도 받는다. 열쇠는 Shamir 방식 3-of-3으로 나눈다. 서버가 두 조각(`serverShare`, `institutionShare`)을 같은 DB 행에 들고 있으므로 임계값을 2로 두면 서버 혼자 열 수 있어서 3으로 둔다. 가족 조각은 서버로 보내지 않고 화면에서 보여 주거나 파일로 저장한다. 분할 난수는 `crypto.getRandomValues`.
+- 금고가 잠긴 동안에는 시니어 본인을 포함해 누구도 앱에서 답변 본문을 읽을 수 없다. 원문은 DB에 그대로 남고 읽는 시점에 가려진다. 되돌리는 길은 금고 해지다.
+- 보호자는 `/child/legacy`에서 사망 심사를 진행한다. 신고 → 유예(`LEGACY_DEATH_REVIEW_HOURS`, 기본 72시간) → 다른 보호자의 승인 → 전수 순서다. 신고한 보호자는 자기 신고를 승인할 수 없고, 연결된 보호자가 한 명뿐이면 유예 동안 시니어가 취소하지 않은 것을 확인으로 삼는다. 심사 중 재신고는 막고, 시니어 본인이나 보호자가 `POST /api/legacy/cancel-death`로 취소할 수 있다. 유산 알림은 시니어와 연결된 보호자 전원이 받는다.
+- 전수 뒤 보호자가 가족 조각과 서버 조각을 합쳐 기록을 연다. `posthumous`를 철회한 기록은 전수 뒤에도 가려진다.
+- **법무/감사/키관리 검토 전까지는 데모 전용으로 취급**.
 
 ## 7. 데이터 모델 개요 (Prisma/SQLite)
 
-핵심 엔티티: `User`(단일 테이블에 senior/guardian 속성 모두 포함), `GuardianSeniorLink`, `Invitation`, `Chapter`/`Question`, `Photo`, `InterviewSchedule`/`InterviewSession`/`InterviewRecord`/`FreeSpeechRecord`, `Memory`/`MemoryTag`/`MemoryConsentSettings`/`MemoryVectorEntry`, `AutobiographyDraft`, `CoverDesign`/`PublicationDraftCache`/`PublicationPreviewJob`/`PublicationRequest`, `CalendarEvent`, `Notification`/`PushSubscription`, `LegacyVault`, `AiProxyAuditLog`.
+핵심 엔티티(24개): `User`(단일 테이블에 senior/guardian 속성 모두 포함), `GuardianSeniorLink`, `Invitation`, `Chapter`/`Question`, `Photo`, `InterviewSchedule`/`InterviewSession`/`InterviewRecord`/`FreeSpeechRecord`, `Memory`/`MemoryTag`/`MemoryConsentSettings`/`MemoryVectorEntry`, `AutobiographyDraft`, `CoverDesign`/`PublicationDraftCache`/`PublicationPreviewJob`/`PublicationRequest`, `CalendarEvent`, `Notification`/`PushSubscription`, `LegacyVault`, `AiProxyAuditLog`. 이 중 `Memory`/`MemoryTag`/`MemoryConsentSettings`/`MemoryVectorEntry`는 운영 코드에서 만들어지지 않는다(데모 시드 전용). 정리는 마이그레이션이 필요해 별도 과제로 둔다.
 
 가족 단위 데이터 소유권은 `seniorId`/`guardianId` 기준으로 분리된다. 변경 라우트의 소유권 검사 현황은 `docs/route-authorization-matrix.md`를 기준으로 본다. 2026-07-31 감사에서 발견된 미검사 라우트와 자동 연결 경로는 수정했고 `server/auth-boundary.test.ts`로 회귀 테스트한다.
 
@@ -87,22 +95,22 @@
 
 - 프론트엔드: React 19 + TypeScript + Vite, Zustand(persist) 상태관리, Tailwind 유틸리티 스타일.
 - 백엔드: Express + Prisma + SQLite, 로컬 단일 서버(`localhost:8787`)로 동작.
-- AI 연동: 브라우저에 API 키를 넣지 않고, 서버의 `/api/ai/*` 프록시를 통해 Mindlogic FactChat Gateway(주) / OpenAI(embeddings 등 일부)를 호출. 사용자·엔드포인트별 분당 요청/단위 rate limit과 감사 로그(`AiProxyAuditLog`) 운영.
+- AI 연동: 브라우저에 API 키를 넣지 않고, 서버의 `/api/ai/*` 프록시를 통해 Mindlogic FactChat Gateway(주) / OpenAI(embeddings, TTS, STT)를 호출. 사용자·엔드포인트별 분당 요청/단위 rate limit과 감사 로그(`AiProxyAuditLog`) 운영.
 - 공개 접근: Cloudflare Named Tunnel로 구입 도메인 `dear-log.com` → 사용자 개인 Mac의 로컬 서버로 포워딩.
 - iOS 네이티브: Capacitor로 `dist/`를 패키징(`webDir: 'dist'`), 커스텀 URL 스킴 `dearlog://`로 딥링크 처리. Apple Developer Program 미가입 상태로 TestFlight/App Store 배포 및 Universal Link는 보류.
-- PDF 생성: 서버 렌더링 단일 경로. 클라이언트 번들에 PDF 엔진이 없다.
+- PDF 생성: 서버 렌더링 단일 경로. 클라이언트 번들에 PDF 엔진이 없다. Chrome은 `CHROME_PATH` → `PUPPETEER_EXECUTABLE_PATH` → 시스템 Chrome/Chromium → Playwright가 받아 둔 Chromium(`PLAYWRIGHT_BROWSERS_PATH`, `~/.cache/ms-playwright`) 순서로 찾는다.
 
 ## 9. 비기능 요구사항 및 알려진 리스크
 
 | 영역 | 현황 | 권장 조치 |
 | --- | --- | --- |
-| 인증 강도 | `/api/auth/phone` 로그인이 전화번호+이름 일치만으로 통과, rate limit 없음 | OTP 또는 추가 인증요소, 로그인 시도 rate limit 추가 (출시 전 권장) |
+| 인증 강도 | `/api/auth/phone` 로그인에 OTP 등 소유 확인이 없음. 로그인 시도는 전화번호별(기본 10회)·IP별(기본 100회)로 10분 창 안에서 제한됨 | OTP 또는 추가 인증요소 (출시 전 권장) |
 | 토큰 체계 | Bearer 토큰은 서버 서명(HMAC) + 만료시간 적용, 초대 토큰은 1회용 + 만료/폐기 검사 적용 | 양호. 토큰 refresh/revocation 저장소는 아직 없음 — 추가 검토 필요 |
 | 파일 접근 | 사진/음성/PDF는 DB 소유권 확인 + 단기 서명 토큰(기본 10분) | 양호 |
 | 운영 안정성 | 백엔드가 사용자 개인 Mac에서 구동, Mac 절전/재시작 시 서비스 중단 | 실 운영 전 클라우드 호스팅 이전 필요 (iOS 심사 거절 리스크와도 연결) |
 | AI 프록시 | rate limit, 감사 로그, 운영 대시보드, 알림 라우팅까지 구현됨 | 실 트래픽 관찰 후 임계값 재조정 |
-| 디지털 유산 금고 | 암호화 저장은 있으나 release policy 시뮬레이션 단계 | 법무/감사/키관리 검토 전 정식 출시 제외 |
-| 번들 크기 | 초기 JS 약 284KB(gzip 91KB). 클라이언트 PDF 엔진 없음 | 양호, 추가 경량화는 선택 사항 |
+| 디지털 유산 금고 | 금고 개설·사망 심사 화면까지 연결, 3-of-3 분할과 두 사람 확인(신고자 승인 금지·유예·취소) 적용 | 법무/감사/키관리 검토 전 정식 출시 제외 |
+| 번들 크기 | 초기 JS 약 286KB(gzip 92KB, 2026-09-29 측정). 클라이언트 PDF 엔진 없음 | 양호, 추가 경량화는 선택 사항 |
 | 테스트 | 수치는 `npm test` 실행 출력으로 확인한다. 최근 측정값은 `docs/current-work-status.md` 참고 | 구버전 제외 목록은 정리 완료 |
 
 ## 10. iOS 패키징 현황 (이번 작업분)
@@ -115,12 +123,13 @@
 
 ## 11. 다음 단계 제안 (우선순위)
 
-1. 로그인 인증 강도 보강 (OTP 또는 rate limit) — 가족 개인정보를 다루는 서비스 특성상 우선 처리.
+1. 로그인 인증 강도 보강 (OTP) — 가족 개인정보를 다루는 서비스 특성상 우선 처리. 시도 횟수 제한은 적용됨.
 2. 백엔드를 개인 Mac 의존에서 클라우드 호스팅으로 이전 — 운영 안정성 + App Store 심사 리스크 동시 해결.
 3. Apple Developer Program 가입 후 Universal Link, Associated Domains, `PrivacyInfo.xcprivacy` 설정.
-4. 디지털 유산 금고 기능의 법무/보안 검토 및 정식 출시 여부 결정.
-5. 구버전 데모 테스트 정리, 토큰 refresh/revocation 정책 추가.
+4. 디지털 유산 금고 기능의 법무/보안 검토 및 정식 출시 여부 결정 (화면 연결은 완료).
+5. 토큰 refresh/revocation 정책 추가. (구버전 데모 테스트 정리는 완료)
+6. 쓰이지 않는 `Memory` 계열 테이블 정리와 기억 단위 완전 삭제 정책 결정.
 
 ---
 
-부록: 위 내용은 `README.md`, `docs/current-work-status.md`, `server/prisma/schema.prisma`, `server/app.ts`, `server/auth.ts`, `NEXT_AGENT_PROMPT.md` 코드/문서를 직접 확인하여 작성했습니다.
+부록: 위 내용은 `README.md`, `docs/current-work-status.md`, `server/prisma/schema.prisma`, `server/app.ts`, `server/auth.ts`, `NEXT_AGENT_PROMPT.md` 코드/문서를 직접 확인하여 작성했습니다. 2026-09-29 갱신 때는 `src/App.tsx`, `server/app.ts`, `server/publication-html.ts`, `docs/consent-enforcement-design.md`와 2026-07-31~08-05 커밋(#8~#16)을 대조했습니다.

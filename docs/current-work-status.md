@@ -1,6 +1,49 @@
 # Current Work Status
 
-Last checked: 2026-07-31
+Last checked: 2026-09-29
+
+Sections dated 2026-07-30/31 below are kept as a historical log. Where they disagree with
+`Changes Since 2026-07-31`, the newer section wins.
+
+## Changes Since 2026-07-31 (reconciled 2026-09-29)
+
+The last code commit is `d393118` (2026-08-05). Merged PRs #2–#16 changed several things this
+document and `README.md` still described as missing. Reconciled against `src/App.tsx`,
+`server/app.ts`, and the commit messages:
+
+| Area | Change | Commits |
+| --- | --- | --- |
+| Dead code | `/twilio/voice`, `/twilio/status`, `/twilio/recording`, the `/twilio/media` WebSocket, `server/phone.ts`, `server/realtime-bridge.ts`, and unused deps (`twilio`, `date-fns`, `motion`, `autoprefixer`, `@capacitor/camera`) removed. Phone interviews had already been replaced by the in-app call (`server/app-call.ts`) | `b45bd7f` (#3) |
+| Route count | `server/app.ts` now registers 71 `/api/*` routes plus the SPA catch-all, and no `/twilio/*` routes | — |
+| Auth | `AUTH_TOKEN_SECRET` is required in every environment (empty → login 503, no public fallback secret). Login attempts are rate-limited per phone number (default 10) and per IP (default 100) in a 10-minute window. `/settings` is registered only in dev or when built with `VITE_ENABLE_DEMO_SETTINGS=true`; `/calendar` now requires login | `c5a5bc9` (#2), `fce203e` (#4) |
+| Consent | All five purposes moved onto `InterviewRecord` columns (photos carry four; no `chatbot`) and are enforced at consumers: `publish` (publication input, cover), `chatbot` (twin chunks), `familyRead` (guardian-facing masking), `sensitive` (publication, cover, twin, draft), `posthumous` (masked even after vault release). See `docs/consent-enforcement-design.md` | `4094743`, `79671aa` (#7, #8) |
+| Retroactive consent | `publish`/`sensitive` revocation and deleting a book-eligible photo block previously generated PDFs and preview jobs for family (409). Consent toggles that do not affect the book no longer block it. Chatbot revocation deletes older chat sessions from browser storage | `ccf903b`, `2e2322b`, `fdc8740`, `0012b17`, `5eea731` (#10, #11) |
+| Publication | Failures end in `failed` instead of staying `generating`; recoverable preview errors are capped at 6 attempts. Chrome is launched once per process and reused | `3cdbf41` (#9), `5412715` (#6) |
+| Chapters | Chapter titles come only from `server/domain/constants.ts` `FIXED_CHAPTERS`; screens derive from `src/lib/chapters.ts`. The old app-side labels (e.g. `hobbies` = '일과 삶') are gone | `ac67fae` (#12) |
+| Web Push | My Page push toggle reflects the real browser subscription, registers `public/push-sw.js`, and unsubscribes (new `DELETE /api/push-subscriptions`). Notifications are readable in a My Page inbox even without VAPID keys | `0454795` (#13) |
+| Digital legacy vault | `/parent/vault` (senior: create, show/save family share, revoke, cancel a death report) and `/child/legacy` (guardian: report, approve, cancel, open records after release). 3-of-3 Shamir split with `crypto.getRandomValues`. The reporter cannot approve their own report (single-guardian families fall back to the review window), approval waits `LEGACY_DEATH_REVIEW_HOURS` (default 72), and every linked guardian plus the senior is notified. `POST /api/legacy/cancel-death` added | `d668551`, `a7a9cc1`, `d393118` (#14–#16) |
+
+### This pass (2026-09-29)
+
+- `server/publication-html.ts` now falls back to a Playwright-downloaded Chromium
+  (`$PLAYWRIGHT_BROWSERS_PATH/chromium-<rev>/chrome-linux/chrome`, then
+  `~/.cache/ms-playwright`, newest revision first) after `CHROME_PATH`,
+  `PUPPETEER_EXECUTABLE_PATH`, and the system Chrome/Chromium paths. Without it, the six PDF
+  tests in `server/app.test.ts` and `server/publication-html.browser.test.ts` failed in Linux
+  containers that have no system Chrome. Covered by `server/chrome-path.test.ts`.
+- `README.md` and `PRD_Dearlog.md` updated to match the table above.
+
+### Verification (2026-09-29, Linux cloud container, Node v22.22.2)
+
+| Command | Result |
+| --- | --- |
+| `npm ci` | Passed |
+| `npm run lint` | Passed |
+| `npm test` before the Chrome fallback | 37 files passed, 2 failed (6 tests): `Chrome 실행 파일을 찾을 수 없습니다` |
+| `npm test` with `CHROME_PATH` set, before the fallback | Passed: 39 files / 333 tests |
+| `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
+| `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
+| `npm audit` | 15 findings (1 low, 7 moderate, 7 high). See the `Dependency advisories` risk row |
 
 ## Codebase Consolidation (2026-07-30)
 
@@ -196,13 +239,13 @@ Notes:
 | Test configuration drift | Resolved; current tests are included and the full suite passes | Keep the excludes limited to vendor/generated/reference-project paths |
 | Server AI proxy operations | Browser API key exposure removed; proxy calls rate-limited, audited, summarized in the guardian My Page dashboard, threshold-checked, routed to operators, pruned by retention | Set real production operator IDs, keep `AI_PROXY_DASHBOARD_TOKEN` in the team secret store, review thresholds after live traffic |
 | Auth token operations | Signed Bearer tokens preferred and dev headers blocked outside allowed environments; no refresh/revocation storage yet | Set a strong production `AUTH_TOKEN_SECRET`, add refresh/revocation policy, keep `ALLOW_DEV_AUTH_HEADERS` off in production |
-| Digital legacy vault | Server API and model work, but no live UI calls them and the client crypto modules (`shamir.ts`, `encryption.ts`) have no importers; release policy is simulated | Treat as demo-only until UI, key management, legal, and audit review are done |
-| Memory-level data sovereignty | Five purposes and reversible stop-use are now live; three downstream purposes are not fully enforced and complete deletion scope/policy is unresolved | Enforce every purpose at consumers, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |
+| Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. `POST /api/legacy/vault` still accepts guardian callers server-side; only the route guard keeps the screen senior-only | Treat as demo-only until key management, legal, and audit review are done |
+| Memory-level data sovereignty | All five purposes are enforced at consumers and revocation/deletion is retroactive for generated books. `Memory`/`MemoryConsentSettings`/`MemoryVectorEntry` are demo-seed only, and `GET /api/memories` still returns `Memory` bodies when its chatbot consent is revoked. Complete deletion scope/policy is unresolved | Decide the `Memory` table cleanup, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |
 | PDF implementation duplication | Resolved; unused client component and both unused PDF dependencies were removed | Keep server publication rendering as the single supported PDF path |
 | Weekly family quiz | Documented as a planned feature with no implementation | Design and implement, or drop it from product materials |
 | Presentation assets | Existing `artifacts/capstone-demo/` files are preserved snapshots, but there is no regeneration command | Capture new assets from live routes if a new presentation package is needed |
 | Public tunnel | Local `/api/health` is healthy, but `https://dear-log.com/api/health` returned Cloudflare error 1033 during the 2026-07-30 pass | Restart the named `dearlog` tunnel only when public access is intentionally required |
-| Dependency advisories | Reduced from 15 to 3: 2 high React Router RSC-only entries and 1 low Windows `tsx → esbuild` dev-server entry. The current published React Router line has no audit-clean upgrade, and this SPA does not use RSC | Keep the documented exception narrow, monitor for a patched Router release and a `tsx` update, and never downgrade to 7.11.0 or use `npm audit fix --force` |
+| Dependency advisories | 2026-07-31: reduced from 15 to 3. 2026-09-29: back to 15 (1 low, 7 moderate, 7 high) as new advisories were published. Direct packages flagged: `multer` (high), `prisma` (high, via `@prisma/config`/`deepmerge-ts`), `express` (moderate, via `qs`/`body-parser`), `vitest` (moderate). `npm audit` offers the `prisma` fix only as a semver-major change to `prisma@6.12.0` | Not addressed in this pass. Review with non-force `npm audit fix` plus lint/test/build; do not use `npm audit fix --force` |
 
 ## Recommended Next Steps
 
@@ -215,7 +258,12 @@ Notes:
 3. Run a signed-in, non-demo browser pass against the intended API target before a real family pilot.
 4. Define complete-delete semantics: references, publication/cache copies, `LegacyVault`, backups,
    retention period, guardian authority, and reauthentication.
-5. Enforce `familyRead`, `posthumous`, and `sensitive` at all downstream consumers.
-6. Monitor React Router and `tsx` for patched releases; keep the current three audit findings documented.
+5. ~~Enforce `familyRead`, `posthumous`, and `sensitive` at all downstream consumers.~~ Done
+   (#7, #8); see `docs/consent-enforcement-design.md`.
+6. Triage the 15 `npm audit` findings measured on 2026-09-29 (see the risk table).
 7. When public access is wanted, restart the Cloudflare named tunnel and run `npm run pilot:public:check`.
-8. Complete UI, key-management, legal, and audit review before treating the digital legacy vault as production-ready.
+8. Complete key-management, legal, and audit review before treating the digital legacy vault as
+   production-ready. The UI is wired (#14–#16).
+9. Decide whether to drop the unused `Memory` table family and how `GET /api/memories` should
+   treat revoked chatbot consent.
+10. Handle the `/?callSessionId=...` link that in-app call notifications carry; nothing reads it yet.
