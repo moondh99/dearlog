@@ -31,7 +31,12 @@ document and `README.md` still described as missing. Reconciled against `src/App
   `PUPPETEER_EXECUTABLE_PATH`, and the system Chrome/Chromium paths. Without it, the six PDF
   tests in `server/app.test.ts` and `server/publication-html.browser.test.ts` failed in Linux
   containers that have no system Chrome. Covered by `server/chrome-path.test.ts`.
-- `README.md` and `PRD_Dearlog.md` updated to match the table above.
+- `README.md` and `PRD_Dearlog.md` updated to match the table above. `docs/technical-architecture.md`
+  followed in a separate change: removed files (`SelectModeScreen.tsx`, `server/phone.ts`,
+  `server/realtime-bridge.ts`) and Twilio config dropped; consent, retroactive gating, vault,
+  push, chapters, and publication failure handling rewritten against the code; the chatbot section now
+  says transcript chunks come from `InterviewRecord` and are relabeled `UNVERIFIED` → `ESTIMATED`
+  (the old text only described the demo-only `Memory` path).
 - `POST /api/auth/phone` no longer has the legacy find-or-create branch. Omitting `isLogin`
   used to return an existing account's token from the phone number alone, with no name check.
   `isLogin` must now be a boolean or the request gets 400. The app and QA scripts already send it.
