@@ -14,14 +14,14 @@ Dearlog는 부모님의 기억을 AI 인터뷰로 수집하고 가족이 함께 
 | 상태 | Zustand 스토어 8개 (`src/store/*.ts`). 각 스토어는 `persist`로 localStorage 캐시를 두고 서버와 동기화 |
 | 서버 통신 | `src/lib/local-server.ts` 단일 API 클라이언트 (약 1,150줄) |
 | AI | 프론트 에이전트 7개(`src/lib/agents/*.ts`)가 서버 AI 프록시(`/api/ai/*`)를 호출. 브라우저에는 API 키가 없음 |
-| 백엔드 | Express(`server/app.ts`, 기본 포트 8787) + Prisma/SQLite. `/api/*` 라우트 71개, SPA catch-all 1개 |
+| 백엔드 | Express(`server/app.ts`, 기본 포트 8787) + Prisma/SQLite. `/api/*` 라우트 73개, SPA catch-all 1개 |
 | 데이터 | Prisma 모델 24개 (`server/prisma/schema.prisma`) |
 | 인쇄물 | 서버에서 HTML을 조판하고 `puppeteer-core`로 A5/B5 PDF 렌더 (`server/publication-html.ts`) |
 | 모바일 | Capacitor iOS. `dearlog:` 커스텀 스킴 딥링크 처리 (`src/App.tsx`의 `DeepLinkListener`) |
 
 ## 핵심 기능
 
-- 휴대폰 번호 기반 로그인/가입. 가입은 자녀(보호자) 계정이고, 부모님은 자녀가 보낸 초대 링크로 들어옵니다
+- 휴대폰 인증번호(OTP)를 거치는 로그인/가입. 가입은 자녀(보호자) 계정이고, 부모님은 자녀가 보낸 초대 링크로 들어옵니다
 - 자녀가 부모님을 초대하는 링크 발급·재발급·폐기와 부모님 자동 로그인(`/parent/autologin?token=...`)
 - 부모님 화면: 질문 카드 낭독(TTS), 마이크 녹음, 서버 STT, AI 정리, 충돌 플래그 표시
 - 자녀 화면: 사진 업로드 → 서버 사진 분석 → 추천 질문 자동 생성 → 가족 질문 등록
@@ -84,7 +84,7 @@ Dearlog는 가족의 모든 기억을 무한정 수집하지 않고, 서버에 �
 | --- | --- | --- |
 | `/` | `/splash`로 리다이렉트 | 공개 |
 | `/splash`, `/intro` | 스플래시, 서비스 소개 | 공개 |
-| `/auth`, `/auth/verify` | 휴대폰 인증, 코드 확인 | 공개 |
+| `/auth` | 로그인·가입과 휴대폰 인증번호 확인 | 공개 |
 | `/parent/autologin` | 초대 토큰 자동 로그인 | 공개 |
 | `/parent/welcome` | 부모님 최소 프로필 입력 | 부모님 |
 | `/parent` | 부모님 홈 | 부모님 |
@@ -126,11 +126,11 @@ Dearlog는 가족의 모든 기억을 무한정 수집하지 않고, 서버에 �
 
 ## 서버 구조
 
-`server/app.ts`에 `/api/*` 라우트 71개와 빌드된 프론트를 돌려주는 catch-all 1개가 등록돼 있습니다. 예전의 `/twilio/*` 전화 인터뷰 웹훅은 앱 내 음성 인터뷰(`server/app-call.ts`)로 대체되면서 제거됐습니다. 주요 묶음은 다음과 같습니다.
+`server/app.ts`에 `/api/*` 라우트 73개와 빌드된 프론트를 돌려주는 catch-all 1개가 등록돼 있습니다. 예전의 `/twilio/*` 전화 인터뷰 웹훅은 앱 내 음성 인터뷰(`server/app-call.ts`)로 대체되면서 제거됐습니다. 주요 묶음은 다음과 같습니다.
 
 | 묶음 | 대표 엔드포인트 |
 | --- | --- |
-| 인증/초대 | `POST /api/auth/phone`, `POST /api/auth/token-login`, `POST /api/invitations`, `POST /api/invitations/:id/rotate`, `DELETE /api/invitations/:id`, `GET /api/family-members` |
+| 인증/초대 | `POST /api/auth/otp/request`, `POST /api/auth/otp/verify`, `POST /api/auth/phone`, `POST /api/auth/token-login`, `POST /api/invitations`, `POST /api/invitations/:id/rotate`, `DELETE /api/invitations/:id`, `GET /api/family-members` |
 | AI 프록시 | `POST /api/ai/chat-completions`, `POST /api/ai/embeddings`, `GET /api/ai/audit-summary` |
 | 음성 | `POST /api/uploads/audio`, `POST /api/audio/speech`, `POST /api/audio/transcriptions` |
 | 인터뷰 | `POST /api/interview-sessions`(+ pause/accept/end), `POST /api/interview-records`, `PATCH /api/interview-records/:id`, `PATCH /api/interview-records/bulk-consent` |
@@ -167,6 +167,8 @@ npm run dev
 로컬 API 서버는 기본적으로 `http://localhost:8787`에서 실행되고, 프론트 개발 서버는 `http://localhost:3000`에서 실행됩니다. 프론트는 `VITE_LOCAL_API_URL`이 없으면 로컬 개발 환경에서 자동으로 `http://localhost:8787`을 호출합니다.
 
 `.env`의 `AUTH_TOKEN_SECRET`은 로컬에서도 채워야 합니다. 비어 있으면 로그인이 503으로 실패합니다(예전처럼 공개된 고정 시크릿으로 대체되지 않습니다). 로그인 시도는 전화번호별·IP별로 제한되며 `AUTH_ATTEMPT_WINDOW_MS`, `AUTH_ATTEMPT_LIMIT_PER_PHONE`, `AUTH_ATTEMPT_LIMIT_PER_IP`로 조정합니다.
+
+로그인과 가입은 휴대폰 인증번호를 거칩니다(`/api/auth/otp/request` → `/api/auth/otp/verify` → `/api/auth/phone`). 인증번호는 6자리, 3분 동안 유효하고, 번호마다 5번까지 입력할 수 있으며, 다시 받기는 1분 간격입니다. `SMS_PROVIDER`가 비어 있으면 인증번호를 보내지 않으므로 **로그인과 가입이 503으로 막힙니다**. 로컬 개발과 QA에서는 `SMS_PROVIDER=dev`로 켜면 인증번호가 서버 로그와 `server/data/sms-outbox.jsonl`에 남습니다. 실제 문자 업체는 아직 연결되지 않았습니다(`server/sms.ts`). 발송 횟수는 `AUTH_OTP_SEND_LIMIT_PER_PHONE`(기본 5), `AUTH_OTP_SEND_LIMIT_PER_IP`(기본 50)로 조정합니다.
 
 인쇄용 PDF를 만들려면 Chrome이나 Chromium이 필요합니다. 찾는 순서는 `출판 파이프라인` 절을 참고하세요. 어디에도 없으면 `CHROME_PATH`를 지정합니다.
 
@@ -273,7 +275,7 @@ npm run build    # vite build
 
 구현 완료(화면에서 도달 가능):
 
-- 휴대폰 번호 기반 로그인/가입과 온보딩
+- 휴대폰 인증번호(OTP) 기반 로그인/가입과 온보딩. 문자 발송은 교체 가능한 구조이고 지금은 개발용 발송(`SMS_PROVIDER=dev`)만 있습니다
 - 자녀-부모 초대 링크 발급/재발급/폐기와 부모님 자동 로그인
 - Express/SQLite 기반 로컬 API와 Prisma 데이터 모델
 - 서버 동기화 기반 기억/사진/질문/자서전/일정/동의 상태 관리
@@ -304,7 +306,8 @@ npm run build    # vite build
 향후 작업:
 
 - 주간 가족 퀴즈: 구현 없음. 저장된 기억을 가족 대화로 되돌리는 재방문 루프 기능으로 새로 설계·구현 필요
-- 실제 SMS/OTP 인증(현재는 OTP 없이 전화번호와 이름이 맞으면 로그인되고 시도 횟수만 제한), 토큰 갱신/폐기, 세션 운영 정책
+- 실제 문자 업체 연결(솔라피, NCP SENS 등). 지금은 개발용 발송만 있어서 운영 서버는 `SMS_PROVIDER`를 설정하기 전까지 로그인과 가입이 막힙니다
+- 토큰 갱신/폐기, 세션 운영 정책
 - 운영용 DB/스토리지/백업 정책
 - 카카오톡 링크/전화형 인터뷰 같은 저마찰 참여 채널
 - 디지털 유산 금고 키 관리, 법무/개인정보 검토

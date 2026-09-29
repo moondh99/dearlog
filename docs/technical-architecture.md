@@ -39,7 +39,7 @@ flowchart LR
 | 상태 | `src/store/authStore.ts`, `interviewStore.ts`, `childStore.ts`, `autobiographyStore.ts`, `calendarStore.ts`, `consentStore.ts`, `scheduledCallStore.ts`, `devModeStore.ts` | Zustand 스토어 8개. `persist`로 localStorage 캐시를 두고 `src/lib/local-server.ts`로 서버와 동기화 |
 | 서버 통신 | `src/lib/local-server.ts` | 단일 API 클라이언트(약 1,150줄). Bearer 토큰 부착, 파일 업로드/다운로드, Web Push 서비스워커 등록·구독, 모든 도메인 호출 |
 | 챕터 정의 | `src/lib/chapters.ts` | 서버 `FIXED_CHAPTERS`를 그대로 가져다 쓰고 화면용 설명문만 덧붙인다. 화면 쪽에 따로 둔 챕터 목록은 없다 |
-| 인증/온보딩 | `src/pages/SplashScreen.tsx`, `IntroScreen.tsx`, `AuthScreen.tsx`, `VerifyPage.tsx`, `AutoLoginScreen.tsx`, `ParentWelcomeScreen.tsx` | 휴대폰 번호 로그인/가입, 초대 토큰 자동 로그인, 부모님 최소 프로필 |
+| 인증/온보딩 | `src/pages/SplashScreen.tsx`, `IntroScreen.tsx`, `AuthScreen.tsx`, `AutoLoginScreen.tsx`, `ParentWelcomeScreen.tsx` | 휴대폰 인증번호(OTP) 로그인/가입, 초대 토큰 자동 로그인, 부모님 최소 프로필 |
 | 부모님 화면 | `src/pages/ParentHomeScreen.tsx`, `ParentInterviewScreen.tsx`, `ParentProgressScreen.tsx`, `ParentTranscriptScreen.tsx`, `src/components/BottomNav.tsx` | 질문 낭독, 녹음, STT, AI 정리, 원문/정리본 비교 |
 | 자녀 화면 | `src/pages/ChildHomeScreen.tsx`, `ChildQuestionsScreen.tsx`, `ChildPhotosScreen.tsx`, `ChildProgressScreen.tsx`, `ChildChaptersScreen.tsx`, `CreateRecordSpaceScreen.tsx`, `src/components/ChildBottomNav.tsx` | 질문 등록/재구성, 사진 업로드와 GPS 마스킹, 진행률, 기록 공간 생성과 초대 |
 | 분신 대화 | `src/pages/ChatbotScreen.tsx`, `src/lib/agents/digitalTwin.ts` | 기억 chunk 선택, 근거 배지, `원문 보기` 토글, 챗봇 동의 철회 시 지난 대화 삭제 |
@@ -67,7 +67,12 @@ sequenceDiagram
   participant AI as FactChat/OpenAI
 
   Child->>App: 휴대폰 로그인
-  App->>API: POST /api/auth/phone (isLogin 필수)
+  App->>API: POST /api/auth/otp/request
+  API-->>Child: 인증번호 문자 (SMS_PROVIDER)
+  Child->>App: 인증번호 입력
+  App->>API: POST /api/auth/otp/verify
+  API-->>App: 한 번짜리 확인 토큰
+  App->>API: POST /api/auth/phone (isLogin + 확인 토큰)
   API-->>App: 서명 Bearer 토큰
   App->>Store: 토큰/역할 저장
   Child->>App: 사진 업로드
@@ -101,7 +106,7 @@ sequenceDiagram
 
 ## 4. 서버 구조
 
-`server/app.ts`에 `/api/*` 71개와 빌드된 프론트를 돌려주는 catch-all 1개가 등록돼 있다. 예전의 `/twilio/*` 전화 인터뷰 웹훅과 `/twilio/media` WebSocket은 앱 내 음성 인터뷰(`server/app-call.ts`)로 대체되면서 2026-07-31에 제거됐다. Prisma 모델은 24개다.
+`server/app.ts`에 `/api/*` 73개와 빌드된 프론트를 돌려주는 catch-all 1개가 등록돼 있다. 예전의 `/twilio/*` 전화 인터뷰 웹훅과 `/twilio/media` WebSocket은 앱 내 음성 인터뷰(`server/app-call.ts`)로 대체되면서 2026-07-31에 제거됐다. Prisma 모델은 24개다.
 
 | 파일 | 역할 |
 | --- | --- |
@@ -119,11 +124,18 @@ sequenceDiagram
 | `server/publication.ts` | 미리보기 잡 상태기계, 초안 캐시, 재시도, 인쇄물 생성 |
 | `server/publication-html.ts` | A5/B5 조판 HTML 생성과 `puppeteer-core` PDF 렌더. Chrome은 프로세스당 한 번 띄워 재사용한다 |
 | `server/storage.ts` | 사진/음성/PDF 로컬 저장, 파일 키, 업로드 크기·필드 제한(사진 20 MiB, 음성 25 MiB) |
+| `server/sms.ts`, `server/phone-verification.ts` | 인증번호 문자 발송(설정이 없으면 발송하지 않음, `dev`는 로그·파일, 업체 구현은 미연결)과 인증번호·확인 토큰 보관(단일 인스턴스 메모리) |
 | `server/push.ts`, `server/app-call.ts`, `server/worker.ts` | Web Push 발송(VAPID 키가 없어도 `Notification` 행은 남김), 앱 내 인터뷰 호출, 백그라운드 워커 |
 
 라우트 묶음과 권한 경계는 `README.md`의 `서버 구조` 표와 `docs/route-authorization-matrix.md`를 참고한다.
 
-로그인(`POST /api/auth/phone`)은 `isLogin`이 불리언이어야 받는다. 로그인은 전화번호와 이름이 일치해야 하고, 가입은 새 번호여야 한다. 시도 횟수는 전화번호별(기본 10회)·IP별(기본 100회)로 10분 창 안에서 제한한다. OTP 같은 소유 확인은 아직 없다.
+로그인과 가입은 휴대폰 인증을 거친다.
+
+1. `POST /api/auth/otp/request`: 로그인이면 가입된 번호에만, 가입이면 새 번호에만 6자리 인증번호를 보낸다. 번호는 `crypto.randomInt`로 뽑고 해시만 보관한다. `SMS_PROVIDER`가 없으면 503. 다시 받기는 1분 간격, 발송은 번호별(기본 5회)·IP별(기본 50회)로 10분 창 안에서 제한한다.
+2. `POST /api/auth/otp/verify`: 3분 안에, 인증번호마다 5번까지 맞혀 볼 수 있다. 맞히면 번호와 용도(login/signup)에 묶인 10분짜리 한 번짜리 확인 토큰을 준다.
+3. `POST /api/auth/phone`: `isLogin`이 불리언이어야 하고 확인 토큰이 필요하다. 로그인은 토큰을 확인한 뒤에야 이름 일치 여부를 알려 준다. 인증 없이 이름을 대입해 맞는지 볼 수 없게 하려는 것이다. 성공하면 토큰을 소비한다. 시도 횟수는 번호별(기본 10회)·IP별(기본 100회)로 제한한다.
+
+인증번호와 토큰은 로그인 시도 제한처럼 서버 메모리에 있어서, 서버를 다시 켜면 진행 중이던 인증은 사라진다.
 
 ### 출판 파이프라인
 
@@ -244,7 +256,7 @@ flowchart TD
 
 | 구분 | 구현 완료 | 프로토타입/향후 작업 |
 | --- | --- | --- |
-| 인증 | 휴대폰 번호+이름 로그인(`isLogin` 필수), 로그인 시도 횟수 제한, 서버 서명 Bearer 토큰(`AUTH_TOKEN_SECRET` 필수), 초대 링크 발급/재발급/폐기와 만료, 부모님 자동 로그인 | OTP/실제 SMS 발송, 토큰 갱신/폐기 저장소, 계정 복구 |
+| 인증 | 휴대폰 인증번호(OTP) 로그인·가입(발송 제한, 5회 입력, 한 번짜리 확인 토큰), 로그인 시도 횟수 제한, 서버 서명 Bearer 토큰(`AUTH_TOKEN_SECRET` 필수), 초대 링크 발급/재발급/폐기와 만료, 부모님 자동 로그인 | 실제 문자 업체 연결(없으면 운영 서버 로그인 불가), 토큰 갱신/폐기 저장소, 계정 복구 |
 | 온보딩 | 자녀 기록 공간 생성, 부모님 최소 프로필 | 카카오톡/전화형 참여, 다중 가족 권한 세분화 |
 | 기억 기록 | 질문 낭독(TTS), 녹음, 서버 STT, AI 정리, 충돌 플래그, 서버 저장 | 화자 분리, 장시간 세션 안정화, STT 품질 고도화 |
 | 사진 | 파일명·EXIF 촬영일 추론, 서버 사진 분석 기반 질문 생성, GPS 마스킹, JPEG EXIF 제거, 사진별 동의 4종 | HEIC/PNG 메타데이터, 역지오코딩, 인물 태깅 |
@@ -266,7 +278,7 @@ flowchart TD
 | 에이전트 | `src/lib/agents/digitalTwin.test.ts`, `calendarTrigger.test.ts`, `ghostwriter*.test.ts`, `verification.test.ts` |
 | 속성 기반 테스트 | `src/lib/agents/*.property.test.ts` (fast-check) |
 | 보안 유틸 | `src/lib/security/encryption.test.ts`, `src/lib/security/shamir.test.ts`(계수를 `Math.random`이 아닌 `crypto.getRandomValues`로 뽑는지) |
-| 서버 API | `server/app.test.ts`, `server/legacy-api.test.ts`(로그인 검증, 유산 금고), `server/auth-boundary.test.ts`, `server/consent-enforcement.test.ts`, `server/revocation-retroactive.test.ts`, `server/publication-failure-states.test.ts`, `server/push-subscriptions.test.ts`, `server/storage.test.ts`, `server/ai-clients.test.ts` |
+| 서버 API | `server/app.test.ts`, `server/legacy-api.test.ts`(로그인·OTP 검증, 유산 금고), `server/phone-verification.test.ts`(인증번호 만료·재발송·1회 사용), `server/auth-boundary.test.ts`, `server/consent-enforcement.test.ts`, `server/revocation-retroactive.test.ts`, `server/publication-failure-states.test.ts`, `server/push-subscriptions.test.ts`, `server/storage.test.ts`, `server/ai-clients.test.ts` |
 | PDF 렌더 | `server/publication-html.browser.test.ts`(브라우저 재사용·크래시 복구), `server/chrome-path.test.ts`(Chrome 찾기) |
 
 검증 명령:

@@ -21,6 +21,8 @@ backups/
 # Local Dearlog server data
 server/data/*.db
 server/data/*.db-*
+# 개발용 인증번호 발송 기록(SMS_PROVIDER=dev)
+server/data/sms-outbox.jsonl
 server/storage/audio/*
 server/storage/photos/*
 server/storage/pdfs/*

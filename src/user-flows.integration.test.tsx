@@ -8,6 +8,8 @@ import { useInterviewStore } from './store/interviewStore';
 
 const flowMocks = vi.hoisted(() => ({
   registerLocalPhoneAccount: vi.fn(),
+  requestLocalPhoneOtp: vi.fn(async () => ({ ok: true, expiresInSeconds: 180, resendAfterSeconds: 60 })),
+  verifyLocalPhoneOtp: vi.fn(async () => ({ verificationToken: 'otp-token', expiresInSeconds: 600 })),
   updateLocalUserProfile: vi.fn(),
   loginWithInvitationToken: vi.fn(),
   createParentInvitation: vi.fn(),
@@ -29,6 +31,8 @@ const flowMocks = vi.hoisted(() => ({
 
 vi.mock('./lib/local-server', () => ({
   registerLocalPhoneAccount: flowMocks.registerLocalPhoneAccount,
+  requestLocalPhoneOtp: flowMocks.requestLocalPhoneOtp,
+  verifyLocalPhoneOtp: flowMocks.verifyLocalPhoneOtp,
   updateLocalUserProfile: flowMocks.updateLocalUserProfile,
   loginWithInvitationToken: flowMocks.loginWithInvitationToken,
   createParentInvitation: flowMocks.createParentInvitation,
@@ -228,11 +232,11 @@ describe('core route flows', () => {
       target: { value: '010-2222-3333' },
     });
     fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
-    fireEvent.change(screen.getByLabelText('인증번호'), {
+    fireEvent.change(await screen.findByLabelText('인증번호'), {
       target: { value: '123456' },
     });
     fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
-    fireEvent.change(screen.getByPlaceholderText('예: 민준, 김민준'), {
+    fireEvent.change(await screen.findByPlaceholderText('예: 민준, 김민준'), {
       target: { value: '김보호' },
     });
     fireEvent.change(screen.getByPlaceholderText('예: 1997-07-04'), {

@@ -21,7 +21,16 @@ import {
   resetRunningPublicationPreviewJobs,
   startLocalPublicationPreviewJob,
 } from './publication';
+import {
+  consumeVerificationToken,
+  discardOtpCode,
+  isOtpPurpose,
+  isVerificationTokenValid,
+  issueOtpCode,
+  verifyOtpCode,
+} from './phone-verification';
 import { sendWebPush } from './push';
+import { getSmsSender } from './sms';
 import { audioUpload, isAllowedPhotoMimeType, photoUpload, resolveLocalFileKey } from './storage';
 
 function normalizePhoneNumber(value: unknown) {
@@ -1742,6 +1751,108 @@ export function createApp() {
     }
   });
 
+  // 휴대폰 인증번호 발송. 로그인과 가입 모두 이 번호를 받은 사람만 진행할 수 있다.
+  // 예전에는 이름과 번호만 맞으면 로그인됐고, 이름은 가족이라면 누구나 안다.
+  app.post('/api/auth/otp/request', async (req, res, next) => {
+    try {
+      const phoneNumber = normalizePhoneNumber(req.body.phoneNumber);
+      if (!/^01[016789]\d{7,8}$/.test(phoneNumber)) {
+        res.status(400).json({ error: '휴대폰 번호를 다시 확인해 주세요.' });
+        return;
+      }
+      const purpose = req.body.purpose;
+      if (!isOtpPurpose(purpose)) {
+        res.status(400).json({ error: '로그인인지 회원가입인지 알 수 없는 요청입니다.' });
+        return;
+      }
+
+      // 발송마다 문자 요금이 나간다. 번호 하나에 몰아 보내는 것과 여러 번호로 뿌리는 것을 각각 막는다.
+      const sendChecks = [
+        checkAuthAttemptLimit(`otp-send:phone:${phoneNumber}`, positiveInt(Number(process.env.AUTH_OTP_SEND_LIMIT_PER_PHONE ?? 5), 5)),
+        checkAuthAttemptLimit(`otp-send:ip:${req.ip ?? 'unknown'}`, positiveInt(Number(process.env.AUTH_OTP_SEND_LIMIT_PER_IP ?? 50), 50)),
+      ];
+      const sendBlocked = sendChecks.find((check) => !check.allowed);
+      if (sendBlocked) {
+        res.setHeader('Retry-After', String(sendBlocked.retryAfterSeconds));
+        res.status(429).json({ error: '인증번호 요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      const sender = getSmsSender();
+      if (!sender) {
+        res.status(503).json({ error: '인증번호 문자를 보낼 수 없어 지금은 로그인과 가입을 할 수 없습니다. 운영자에게 문의해 주세요.' });
+        return;
+      }
+
+      // 가입되지 않은 번호로 로그인 문자를, 이미 가입된 번호로 가입 문자를 보내지 않는다.
+      const existing = await prisma.user.findUnique({ where: { phoneNumber }, select: { id: true } });
+      if (purpose === 'login' && !existing) {
+        res.status(404).json({ error: '가입되지 않은 휴대폰 번호입니다. 회원가입을 진행해 주세요.' });
+        return;
+      }
+      if (purpose === 'signup' && existing) {
+        res.status(400).json({ error: '이미 가입된 휴대폰 번호입니다. 로그인해 주세요.' });
+        return;
+      }
+
+      const issued = issueOtpCode(phoneNumber, purpose);
+      if (issued.ok === false) {
+        res.setHeader('Retry-After', String(issued.retryAfterSeconds));
+        res.status(429).json({ error: `인증번호는 ${issued.retryAfterSeconds}초 뒤에 다시 받을 수 있습니다.` });
+        return;
+      }
+
+      try {
+        await sender.send(phoneNumber, `[Dearlog] 인증번호는 ${issued.code}입니다. 3분 안에 입력해 주세요.`);
+      } catch (error) {
+        discardOtpCode(phoneNumber, purpose);
+        console.error('[dearlog] sms send failed', { provider: sender.name, error: error instanceof Error ? error.message : String(error) });
+        res.status(502).json({ error: '인증번호 문자를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      res.json({ ok: true, expiresInSeconds: issued.expiresInSeconds, resendAfterSeconds: issued.resendAfterSeconds });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/auth/otp/verify', async (req, res, next) => {
+    try {
+      const phoneNumber = normalizePhoneNumber(req.body.phoneNumber);
+      const purpose = req.body.purpose;
+      if (!/^01[016789]\d{7,8}$/.test(phoneNumber) || !isOtpPurpose(purpose)) {
+        res.status(400).json({ error: '인증 요청을 다시 확인해 주세요.' });
+        return;
+      }
+
+      // 번호 하나는 인증번호마다 5번까지만 맞혀 볼 수 있다(verifyOtpCode). 여러 번호를 훑는
+      // 대입은 IP 한도로 막는다.
+      const verifyCheck = checkAuthAttemptLimit(`otp-verify:ip:${req.ip ?? 'unknown'}`, positiveInt(Number(process.env.AUTH_ATTEMPT_LIMIT_PER_IP ?? 100), 100));
+      if (!verifyCheck.allowed) {
+        res.setHeader('Retry-After', String(verifyCheck.retryAfterSeconds));
+        res.status(429).json({ error: '인증 시도가 너무 잦습니다. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
+      const result = verifyOtpCode(phoneNumber, purpose, String(req.body.code ?? ''));
+      if (result.ok === false) {
+        const message = {
+          missing: '인증번호를 먼저 받아 주세요.',
+          expired: '인증번호 입력 시간이 지났습니다. 인증번호를 다시 받아 주세요.',
+          mismatch: `인증번호가 맞지 않습니다. ${result.remainingAttempts ?? 0}번 더 입력할 수 있습니다.`,
+          too_many: '인증번호를 너무 많이 틀렸습니다. 인증번호를 다시 받아 주세요.',
+        }[result.reason];
+        res.status(400).json({ error: message, reason: result.reason });
+        return;
+      }
+
+      res.json({ verificationToken: result.verificationToken, expiresInSeconds: result.expiresInSeconds });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/api/auth/phone', async (req, res, next) => {
     try {
       const phoneNumber = normalizePhoneNumber(req.body.phoneNumber);
@@ -1782,6 +1893,15 @@ export function createApp() {
       }
 
       const existing = await prisma.user.findUnique({ where: { phoneNumber } });
+      const purpose = isLogin ? 'login' : 'signup';
+      const verificationToken = req.body.verificationToken;
+      // 인증번호를 받은 사람만 진행한다. 이름 일치 여부도 인증 뒤에만 알려 준다.
+      // 그러지 않으면 번호만 아는 사람이 이름을 하나씩 넣어 보며 맞는지 확인할 수 있다.
+      const requireVerification = () => {
+        if (isVerificationTokenValid(verificationToken, phoneNumber, purpose)) return true;
+        res.status(401).json({ error: '휴대폰 인증이 필요합니다. 인증번호를 다시 받아 주세요.' });
+        return false;
+      };
 
       if (isLogin) {
         if (!existing) {
@@ -1792,10 +1912,12 @@ export function createApp() {
           res.status(400).json({ error: '이름을 입력해 주세요.' });
           return;
         }
+        if (!requireVerification()) return;
         if (existing.name.trim() !== name) {
           res.status(400).json({ error: '이름이 일치하지 않습니다. 다시 입력해 주세요.' });
           return;
         }
+        consumeVerificationToken(verificationToken);
         res.json({ ...serializeAuthResponse(existing), isNew: false });
       } else {
         // Signup
@@ -1807,6 +1929,8 @@ export function createApp() {
           res.status(400).json({ error: '이름을 입력해 주세요.' });
           return;
         }
+        if (!requireVerification()) return;
+        consumeVerificationToken(verificationToken);
         const user = await prisma.user.create({
           data: {
             phoneNumber,

@@ -9,7 +9,6 @@ import type { UserRole } from './types/user'
 const SplashScreen = lazy(() => import('./pages/SplashScreen'))
 const IntroScreen = lazy(() => import('./pages/IntroScreen'))
 const AuthScreen = lazy(() => import('./pages/AuthScreen'))
-const VerifyPage = lazy(() => import('./pages/VerifyPage'))
 const AutoLoginScreen = lazy(() => import('./pages/AutoLoginScreen'))
 const ParentWelcomeScreen = lazy(() => import('./pages/ParentWelcomeScreen'))
 const ParentHomeScreen = lazy(() => import('./pages/ParentHomeScreen'))
@@ -123,7 +122,6 @@ export function AppRoutes() {
             <Route path="/splash" element={<SplashScreen />} />
             <Route path="/intro" element={<IntroScreen />} />
             <Route path="/auth" element={<AuthScreen />} />
-            <Route path="/auth/verify" element={<VerifyPage />} />
             <Route path="/parent/autologin" element={<AutoLoginScreen />} />
             <Route path="/parent/welcome" element={<RoleGuard allowedRole="parent"><ParentWelcomeScreen /></RoleGuard>} />
             <Route path="/parent" element={<RoleGuard allowedRole="parent"><ParentHomeScreen /></RoleGuard>} />
