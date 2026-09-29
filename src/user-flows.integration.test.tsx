@@ -231,6 +231,9 @@ describe('core route flows', () => {
     fireEvent.change(await screen.findByPlaceholderText('010-0000-0000'), {
       target: { value: '010-2222-3333' },
     });
+    fireEvent.change(screen.getByPlaceholderText('example@gmail.com'), {
+      target: { value: 'guardian@example.com' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
     fireEvent.change(await screen.findByLabelText('인증번호'), {
       target: { value: '123456' },

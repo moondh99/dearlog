@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
-// 휴대폰 인증번호와, 인증을 마친 뒤 가입·로그인에 한 번 쓰는 확인 토큰을 보관한다.
+// 로그인·가입 인증번호와, 인증을 마친 뒤 가입·로그인에 한 번 쓰는 확인 토큰을 보관한다.
+// 계정은 휴대폰 번호로 구분하고, 인증번호는 destination(지금은 이메일)으로 보낸다.
 // ponytail: 로그인 시도 제한(authAttemptBuckets)과 같이 단일 인스턴스 메모리 저장이다.
 // 서버를 다시 켜면 진행 중이던 인증은 사라지고 사용자는 번호를 다시 받는다.
 // 인스턴스를 늘리면 공유 저장소로 옮긴다.
@@ -12,8 +13,8 @@ export const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 export const OTP_MAX_VERIFY_ATTEMPTS = 5;
 export const OTP_TICKET_TTL_MS = 10 * 60 * 1000;
 
-type PendingCode = { codeHash: Buffer; expiresAt: number; attempts: number; sentAt: number };
-type Ticket = { phoneNumber: string; purpose: OtpPurpose; expiresAt: number };
+type PendingCode = { codeHash: Buffer; destination: string; expiresAt: number; attempts: number; sentAt: number };
+type Ticket = { phoneNumber: string; purpose: OtpPurpose; destination: string; expiresAt: number };
 
 const pendingCodes = new Map<string, PendingCode>();
 const tickets = new Map<string, Ticket>();
@@ -43,7 +44,7 @@ export function isOtpPurpose(value: unknown): value is OtpPurpose {
   return value === 'login' || value === 'signup';
 }
 
-export function issueOtpCode(phoneNumber: string, purpose: OtpPurpose, now = Date.now()):
+export function issueOtpCode(phoneNumber: string, purpose: OtpPurpose, destination: string, now = Date.now()):
   | { ok: true; code: string; expiresInSeconds: number; resendAfterSeconds: number }
   | { ok: false; retryAfterSeconds: number } {
   const key = codeKey(phoneNumber, purpose);
@@ -55,7 +56,7 @@ export function issueOtpCode(phoneNumber: string, purpose: OtpPurpose, now = Dat
 
   // Math.random 은 출력 몇 개로 내부 상태를 되돌릴 수 있다. 인증번호는 암호학적 난수로 뽑는다.
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
-  pendingCodes.set(key, { codeHash: hashCode(code), expiresAt: now + OTP_CODE_TTL_MS, attempts: 0, sentAt: now });
+  pendingCodes.set(key, { codeHash: hashCode(code), destination, expiresAt: now + OTP_CODE_TTL_MS, attempts: 0, sentAt: now });
   prune(now);
   return {
     ok: true,
@@ -97,22 +98,24 @@ export function verifyOtpCode(phoneNumber: string, purpose: OtpPurpose, code: st
   // 인증번호는 한 번만 쓴다. 맞힌 뒤에는 가입·로그인에 한 번 쓰는 토큰으로 바꿔 준다.
   pendingCodes.delete(key);
   const verificationToken = crypto.randomBytes(24).toString('base64url');
-  tickets.set(verificationToken, { phoneNumber, purpose, expiresAt: now + OTP_TICKET_TTL_MS });
+  // 인증번호를 받은 곳을 토큰에 실어 둔다. 가입은 요청 본문의 주소가 아니라 이 주소를 저장한다.
+  tickets.set(verificationToken, { phoneNumber, purpose, destination: entry.destination, expiresAt: now + OTP_TICKET_TTL_MS });
   prune(now);
   return { ok: true, verificationToken, expiresInSeconds: OTP_TICKET_TTL_MS / 1000 };
 }
 
-// 토큰이 이 번호·용도로 발급됐고 아직 유효한지만 본다. 쓰지는 않는다.
+// 토큰이 이 번호·용도로 발급됐고 아직 유효하면 인증번호를 받은 곳을 돌려준다. 쓰지는 않는다.
 // 로그인에서 이름이 틀렸을 때 인증을 처음부터 다시 받게 하지 않으려고 확인과 소비를 나눴다.
-export function isVerificationTokenValid(token: unknown, phoneNumber: string, purpose: OtpPurpose, now = Date.now()) {
-  if (typeof token !== 'string' || !token) return false;
+export function findVerificationTicket(token: unknown, phoneNumber: string, purpose: OtpPurpose, now = Date.now()) {
+  if (typeof token !== 'string' || !token) return null;
   const ticket = tickets.get(token);
-  if (!ticket) return false;
+  if (!ticket) return null;
   if (now >= ticket.expiresAt) {
     tickets.delete(token);
-    return false;
+    return null;
   }
-  return ticket.phoneNumber === phoneNumber && ticket.purpose === purpose;
+  if (ticket.phoneNumber !== phoneNumber || ticket.purpose !== purpose) return null;
+  return { destination: ticket.destination };
 }
 
 export function consumeVerificationToken(token: string) {

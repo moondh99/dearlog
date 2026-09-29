@@ -107,7 +107,7 @@ describe('auth and onboarding flow', () => {
     localServerMocks.requestLocalPhoneOtp.mockReset();
     localServerMocks.verifyLocalPhoneOtp.mockReset();
     localServerMocks.registerLocalPhoneAccount.mockReset();
-    localServerMocks.requestLocalPhoneOtp.mockResolvedValue({ ok: true, expiresInSeconds: 180, resendAfterSeconds: 60 });
+    localServerMocks.requestLocalPhoneOtp.mockResolvedValue({ ok: true, expiresInSeconds: 180, resendAfterSeconds: 60, sentTo: 'gu*****@example.com' });
     localServerMocks.verifyLocalPhoneOtp.mockResolvedValue({ verificationToken: 'otp-token', expiresInSeconds: 600 });
     localServerMocks.registerLocalPhoneAccount.mockResolvedValue({
       user: guardianUser(),
@@ -162,7 +162,7 @@ describe('auth and onboarding flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
 
     expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
-    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01012345678', 'login');
+    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01012345678', 'login', undefined);
     expect(localServerMocks.verifyLocalPhoneOtp).toHaveBeenCalledWith('01012345678', 'login', '654321');
     expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01012345678', '김보호', true, undefined, 'otp-token');
     expect(useAuthStore.getState()).toMatchObject({
@@ -189,10 +189,14 @@ describe('auth and onboarding flow', () => {
     fireEvent.change(await screen.findByPlaceholderText('010-0000-0000'), {
       target: { value: '010-2222-3333' },
     });
+    fireEvent.change(screen.getByPlaceholderText('example@gmail.com'), {
+      target: { value: 'guardian@example.com' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
     fireEvent.change(await screen.findByLabelText('인증번호'), {
       target: { value: '123456' },
     });
+    expect(screen.getByText(/gu\*+@example\.com 메일함으로 보낸/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '인증하기' }));
     fireEvent.change(await screen.findByPlaceholderText('예: 민준, 김민준'), {
       target: { value: '김보호' },
@@ -217,7 +221,7 @@ describe('auth and onboarding flow', () => {
       });
     });
     expect(await screen.findByText('부모님의 이야기를 함께 기록해요')).toBeInTheDocument();
-    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01022223333', 'signup');
+    expect(localServerMocks.requestLocalPhoneOtp).toHaveBeenCalledWith('01022223333', 'signup', 'guardian@example.com');
     expect(localServerMocks.registerLocalPhoneAccount).toHaveBeenCalledWith('01022223333', '김보호', false, '1997-07-04', 'otp-token');
     expect(useAuthStore.getState()).toMatchObject({
       role: 'child',
@@ -256,7 +260,7 @@ describe('auth and onboarding flow', () => {
 
   it('stays on the phone step and shows why when the code cannot be sent', async () => {
     localServerMocks.requestLocalPhoneOtp.mockRejectedValueOnce(
-      new Error('인증번호 문자를 보낼 수 없어 지금은 로그인과 가입을 할 수 없습니다. 운영자에게 문의해 주세요.'),
+      new Error('인증번호를 보낼 수 없어 지금은 로그인과 가입을 할 수 없습니다. 운영자에게 문의해 주세요.'),
     );
 
     render(
@@ -269,9 +273,12 @@ describe('auth and onboarding flow', () => {
     fireEvent.change(await screen.findByPlaceholderText('010-0000-0000'), {
       target: { value: '010-2222-3333' },
     });
+    fireEvent.change(screen.getByPlaceholderText('example@gmail.com'), {
+      target: { value: 'guardian@example.com' },
+    });
     fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }));
 
-    expect(await screen.findByText(/인증번호 문자를 보낼 수 없어/)).toBeInTheDocument();
+    expect(await screen.findByText(/인증번호를 보낼 수 없어/)).toBeInTheDocument();
     expect(screen.queryByLabelText('인증번호')).not.toBeInTheDocument();
     expect(localServerMocks.registerLocalPhoneAccount).not.toHaveBeenCalled();
   });

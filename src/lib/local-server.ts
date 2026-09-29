@@ -454,10 +454,11 @@ export function fetchLocalAIProxyAuditSummary(windowMinutes = 60) {
 
 export type PhoneOtpPurpose = 'login' | 'signup';
 
-export function requestLocalPhoneOtp(phoneNumber: string, purpose: PhoneOtpPurpose) {
-  return api<{ ok: boolean; expiresInSeconds: number; resendAfterSeconds: number }>('/api/auth/otp/request', {
+// 로그인이면 계정에 등록된 이메일로, 가입이면 email 로 인증번호가 간다. sentTo 는 가린 주소다.
+export function requestLocalPhoneOtp(phoneNumber: string, purpose: PhoneOtpPurpose, email?: string) {
+  return api<{ ok: boolean; expiresInSeconds: number; resendAfterSeconds: number; sentTo?: string }>('/api/auth/otp/request', {
     method: 'POST',
-    body: JSON.stringify({ phoneNumber, purpose }),
+    body: JSON.stringify({ phoneNumber, purpose, email }),
   });
 }
 

@@ -168,7 +168,22 @@ npm run dev
 
 `.env`의 `AUTH_TOKEN_SECRET`은 로컬에서도 채워야 합니다. 비어 있으면 로그인이 503으로 실패합니다(예전처럼 공개된 고정 시크릿으로 대체되지 않습니다). 로그인 시도는 전화번호별·IP별로 제한되며 `AUTH_ATTEMPT_WINDOW_MS`, `AUTH_ATTEMPT_LIMIT_PER_PHONE`, `AUTH_ATTEMPT_LIMIT_PER_IP`로 조정합니다.
 
-로그인과 가입은 휴대폰 인증번호를 거칩니다(`/api/auth/otp/request` → `/api/auth/otp/verify` → `/api/auth/phone`). 인증번호는 6자리, 3분 동안 유효하고, 번호마다 5번까지 입력할 수 있으며, 다시 받기는 1분 간격입니다. `SMS_PROVIDER`가 비어 있으면 인증번호를 보내지 않으므로 **로그인과 가입이 503으로 막힙니다**. 로컬 개발과 QA에서는 `SMS_PROVIDER=dev`로 켜면 인증번호가 서버 로그와 `server/data/sms-outbox.jsonl`에 남습니다. 실제 문자 업체는 아직 연결되지 않았습니다(`server/sms.ts`). 발송 횟수는 `AUTH_OTP_SEND_LIMIT_PER_PHONE`(기본 5), `AUTH_OTP_SEND_LIMIT_PER_IP`(기본 50)로 조정합니다.
+로그인과 가입은 휴대폰 인증번호를 거칩니다(`/api/auth/otp/request` → `/api/auth/otp/verify` → `/api/auth/phone`). 인증번호는 6자리, 3분 동안 유효하고, 번호마다 5번까지 입력할 수 있으며, 다시 받기는 1분 간격입니다. 계정은 휴대폰 번호로 구분하고, 인증번호는 **계정에 등록된 이메일**로 갑니다. 가입할 때는 입력한 이메일로 인증번호를 받고, 인증에 성공한 그 주소가 계정에 저장됩니다. 로그인 인증번호는 요청에 다른 주소가 적혀 있어도 등록된 이메일로만 보내고, 화면에는 `md*****@gmail.com`처럼 가린 주소만 보여 줍니다. 발송 횟수는 `AUTH_OTP_SEND_LIMIT_PER_PHONE`(기본 5), `AUTH_OTP_SEND_LIMIT_PER_IP`(기본 50)로 조정합니다.
+
+`OTP_PROVIDER`가 비어 있으면 인증번호를 보내지 않으므로 **로그인과 가입이 503으로 막힙니다**.
+
+- `OTP_PROVIDER=gmail`: Gmail SMTP로 보냅니다.
+  1. 발송 전용 Google 계정을 만들고 [2단계 인증](https://myaccount.google.com/signinoptions/two-step-verification)을 켭니다.
+  2. [앱 비밀번호](https://myaccount.google.com/apppasswords)를 발급합니다.
+  3. `.env`에 `GMAIL_USER`(그 Gmail 주소)와 `GMAIL_APP_PASSWORD`(16자리 앱 비밀번호)를 넣습니다.
+  - 개인 Gmail은 하루 약 500명까지 보낼 수 있고, 받는 쪽 스팸함에 들어갈 수 있습니다. 정식 출시 전에는 거래용 메일 서비스나 문자 업체로 옮기는 것이 맞습니다(`server/otp-sender.ts`에 발송 구현을 하나 더하면 됩니다).
+- `OTP_PROVIDER=dev`: 로컬 개발과 QA용입니다. 인증번호가 서버 로그와 `server/data/otp-outbox.jsonl`에 남습니다.
+
+이메일 칸이 생기기 전에 가입한 계정은 이메일이 비어 있어 로그인할 수 없습니다(409). 운영자가 본인에게 받은 주소를 넣어 줍니다.
+
+```bash
+npm run user:set-email -- 010-1234-5678 someone@gmail.com
+```
 
 인쇄용 PDF를 만들려면 Chrome이나 Chromium이 필요합니다. 찾는 순서는 `출판 파이프라인` 절을 참고하세요. 어디에도 없으면 `CHROME_PATH`를 지정합니다.
 
@@ -275,7 +290,7 @@ npm run build    # vite build
 
 구현 완료(화면에서 도달 가능):
 
-- 휴대폰 인증번호(OTP) 기반 로그인/가입과 온보딩. 문자 발송은 교체 가능한 구조이고 지금은 개발용 발송(`SMS_PROVIDER=dev`)만 있습니다
+- 인증번호(OTP) 기반 로그인/가입과 온보딩. 인증번호는 계정에 등록된 이메일로 Gmail SMTP를 통해 보냅니다(`OTP_PROVIDER=gmail`)
 - 자녀-부모 초대 링크 발급/재발급/폐기와 부모님 자동 로그인
 - Express/SQLite 기반 로컬 API와 Prisma 데이터 모델
 - 서버 동기화 기반 기억/사진/질문/자서전/일정/동의 상태 관리
@@ -306,7 +321,8 @@ npm run build    # vite build
 향후 작업:
 
 - 주간 가족 퀴즈: 구현 없음. 저장된 기억을 가족 대화로 되돌리는 재방문 루프 기능으로 새로 설계·구현 필요
-- 실제 문자 업체 연결(솔라피, NCP SENS 등). 지금은 개발용 발송만 있어서 운영 서버는 `SMS_PROVIDER`를 설정하기 전까지 로그인과 가입이 막힙니다
+- 인증번호 발송을 개인 Gmail에서 거래용 메일 서비스나 문자 업체로 옮기기(하루 발송 한도, 스팸함 문제)
+- 로그인한 사용자가 직접 이메일을 바꾸는 화면(바꿀 때 새 주소로 인증)
 - 토큰 갱신/폐기, 세션 운영 정책
 - 운영용 DB/스토리지/백업 정책
 - 카카오톡 링크/전화형 인터뷰 같은 저마찰 참여 채널

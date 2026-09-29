@@ -11,6 +11,8 @@ model User {
   id                     String                  @id @default(uuid())
   name                   String
   phoneNumber            String?                 @unique
+  // 로그인 인증번호를 받는 주소. 가입 때 인증번호로 확인한 주소만 들어간다.
+  email                  String?
   role                   String
   birthDate              String?
   birthDecade            String?
