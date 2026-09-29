@@ -3882,12 +3882,14 @@ export function createApp() {
     }
   });
 
-  app.post('/api/legacy/vault', requireRole('senior', 'guardian'), async (req, res, next) => {
+  // 금고는 기록의 주인인 부모님만 연다. 예전에는 연결된 보호자도 부를 수 있어서,
+  // 보호자가 대신 열면 부모님 기록의 열쇠를 보호자가 쥐었고, 이미 있는 금고를
+  // 덮어써 조각을 바꾸거나 진행 중인 사망 심사를 alive 로 되돌릴 수도 있었다.
+  // 화면(/parent/vault)만 막아 두면 API를 직접 불러 우회할 수 있다.
+  app.post('/api/legacy/vault', requireRole('senior'), async (req, res, next) => {
     try {
-      const seniorId = req.user!.role === 'senior'
-        ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
-        
+      const seniorId = req.user!.id;
+
       const {
         encryptedMemories,
         encryptedAutobiography,
@@ -4191,12 +4193,12 @@ export function createApp() {
     }
   });
 
-  app.post('/api/legacy/reset', requireRole('senior', 'guardian'), async (req, res, next) => {
+  // 해지도 금고를 연 부모님만 한다. 금고가 잠긴 동안에는 가족에게 본문이 가려지는데,
+  // 보호자가 해지할 수 있으면 금고를 지워 그 잠금을 스스로 풀 수 있었다.
+  app.post('/api/legacy/reset', requireRole('senior'), async (req, res, next) => {
     try {
-      const seniorId = req.user!.role === 'senior'
-        ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
-        
+      const seniorId = req.user!.id;
+
       await prisma.legacyVault.deleteMany({
         where: { seniorId }
       });

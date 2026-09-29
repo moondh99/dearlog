@@ -238,11 +238,11 @@ async function main() {
     }),
   });
 
+  // 금고는 부모님만 연다(서버가 보호자 호출을 거절한다).
   await api('/api/legacy/vault', {
     method: 'POST',
-    headers: guardianAuth,
+    headers: seniorAuth,
     body: JSON.stringify({
-      seniorId: senior.id,
       encryptedMemories: JSON.stringify({ runId, memoryId }),
       encryptedAutobiography: JSON.stringify({ title: 'DB QA 자서전' }),
       serverShare: JSON.stringify({ x: 2, y: `server-${runId}` }),

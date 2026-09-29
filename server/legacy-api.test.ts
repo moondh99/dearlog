@@ -164,6 +164,44 @@ describe('Digital Legacy Vault API', () => {
     expect(dbVault?.serverShare).toBe(mockVaultData.serverShare);
   });
 
+  // 금고는 부모님만 연다. 연결된 보호자라도 대신 열거나 덮어쓸 수 없다.
+  it('POST /api/legacy/vault refuses a linked guardian creating the senior vault', async () => {
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send(mockVaultData);
+
+    expect(res.status).toBe(403);
+    expect(await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } })).toBeNull();
+  });
+
+  it('POST /api/legacy/vault refuses a linked guardian overwriting an existing vault', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        encryptedMemories: '{"data":"original"}',
+        serverShare: '{"share":"original_server"}',
+        institutionShare: '{"share":"original_institution"}',
+        deathVerificationStatus: 'pending_verification',
+        deathTriggeredById: 'test_guardian',
+        deathTriggeredAt: new Date(),
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send({ ...mockVaultData, serverShare: '{"share":"attacker"}' });
+
+    expect(res.status).toBe(403);
+    const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+    expect(vault?.serverShare).toBe('{"share":"original_server"}');
+    expect(vault?.deathVerificationStatus).toBe('pending_verification');
+  });
+
   it('GET /api/legacy/vault returns vault config once created', async () => {
     // Setup vault first
     await prisma.legacyVault.create({
@@ -635,6 +673,46 @@ describe('Digital Legacy Vault API', () => {
     } finally {
       await fs.rm(playableFilePath, { force: true });
     }
+  });
+
+  // 금고가 잠긴 동안 가족에게는 본문이 가려진다. 보호자가 해지할 수 있으면 금고를 지워
+  // 그 잠금을 스스로 풀 수 있으므로, 해지도 부모님만 한다.
+  it('POST /api/legacy/reset refuses a linked guardian and keeps the vault locked', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        deathVerificationStatus: 'alive'
+      }
+    });
+    await prisma.interviewRecord.create({
+      data: {
+        id: 'rec_vaulted',
+        userId: 'test_senior',
+        chapterId: 'childhood',
+        audioFileKey: 'audio/vaulted.raw',
+        transcriptText: '금고에 넣어 둔 이야기',
+      }
+    });
+    const guardian = { 'x-user-id': 'test_guardian', 'x-user-role': 'guardian' };
+
+    const res = await request(app)
+      .post('/api/legacy/reset')
+      .set(guardian)
+      .send({ seniorId: 'test_senior' });
+
+    expect(res.status).toBe(403);
+    expect(await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } })).not.toBeNull();
+
+    // 해지가 막혔으니 보호자에게는 여전히 가려진 문구가 간다.
+    const records = await request(app)
+      .get('/api/interview-records')
+      .query({ seniorId: 'test_senior' })
+      .set(guardian);
+    expect(records.status).toBe(200);
+    expect(records.body.records).toHaveLength(1);
+    expect(records.body.records[0].transcriptText)
+      .toBe('[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]');
   });
 
   it('POST /api/legacy/reset deletes vault config', async () => {

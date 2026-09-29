@@ -114,12 +114,13 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 | `POST` | `/api/publication-preview-jobs` | Senior/Guardian | Senior self or guardian-linked senior |
 | `GET` | `/api/publication-preview-jobs/:id` | Senior/Guardian | Job senior must be accessible |
 | `GET` | `/api/publication-preview` | Senior/Guardian | Senior self or guardian-linked senior |
-| `POST` | `/api/legacy/vault` | Senior/Guardian | Senior self or guardian-linked senior |
+| `POST` | `/api/legacy/vault` | Senior | Senior self only. Guardians get 403 even when linked: whoever opens the vault holds the key shares, and an upsert would overwrite shares and reset a pending death review |
 | `GET` | `/api/legacy/vault` | Senior/Guardian | Senior self or guardian-linked senior |
 | `POST` | `/api/legacy/trigger-death` | Guardian | Target senior resolved through guardian link |
 | `POST` | `/api/legacy/approve-death` | Guardian | Target senior resolved through guardian link; requires pending verification |
+| `POST` | `/api/legacy/cancel-death` | Senior/Guardian | Senior self or guardian-linked senior; requires pending verification |
 | `GET` | `/api/legacy/shares` | Guardian | Target senior resolved through guardian link; requires released state |
-| `POST` | `/api/legacy/reset` | Senior/Guardian | Senior self or guardian-linked senior |
+| `POST` | `/api/legacy/reset` | Senior | Senior self only. Guardians get 403 even when linked: deleting the vault would lift the lock that hides vaulted records from family |
 
 ## File Delivery
 
