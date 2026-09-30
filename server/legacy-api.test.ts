@@ -12,16 +12,17 @@ let storageDir: typeof import('./storage').storageDir;
 let resetAIClientsForTests: typeof import('./ai-clients').resetAIClientsForTests;
 let createApp: typeof import('./app').createApp;
 let resetPhoneVerificationForTests: typeof import('./phone-verification').resetPhoneVerificationForTests;
-let lastTestSmsTo: typeof import('./sms').lastTestSmsTo;
-let clearTestSmsOutbox: typeof import('./sms').clearTestSmsOutbox;
+let lastTestOtpTo: typeof import('./otp-sender').lastTestOtpTo;
+let clearTestOtpOutbox: typeof import('./otp-sender').clearTestOtpOutbox;
 let app: any;
 
-// 로그인·가입 전에 휴대폰 인증을 마친다. 테스트용 발송(SMS_PROVIDER=test)이 모아 둔 문자에서
-// 인증번호를 읽어 확인하고, 가입·로그인에 쓰는 한 번짜리 토큰을 돌려준다.
-async function verifyPhone(phoneNumber: string, purpose: 'login' | 'signup') {
-  const sent = await request(app).post('/api/auth/otp/request').send({ phoneNumber, purpose });
+// 로그인·가입 전에 인증을 마친다. 테스트용 발송(OTP_PROVIDER=test)이 모아 둔 인증번호를 읽어
+// 확인하고, 가입·로그인에 쓰는 한 번짜리 토큰을 돌려준다. 인증번호는 이메일로 간다.
+// 로그인 계정은 이 기본 주소(<번호>@example.com)로 만들어 둔다.
+async function verifyPhone(phoneNumber: string, purpose: 'login' | 'signup', email = `${phoneNumber}@example.com`) {
+  const sent = await request(app).post('/api/auth/otp/request').send({ phoneNumber, purpose, email });
   expect(sent.status).toBe(200);
-  const code = /(\d{6})/.exec(lastTestSmsTo(phoneNumber) ?? '')?.[1];
+  const code = lastTestOtpTo(email.trim().toLowerCase());
   expect(code).toMatch(/^\d{6}$/);
   const verified = await request(app).post('/api/auth/otp/verify').send({ phoneNumber, purpose, code });
   expect(verified.status).toBe(200);
@@ -59,7 +60,7 @@ beforeAll(async () => {
   ({ resetAIClientsForTests } = await import('./ai-clients'));
   ({ createApp } = await import('./app'));
   ({ resetPhoneVerificationForTests } = await import('./phone-verification'));
-  ({ lastTestSmsTo, clearTestSmsOutbox } = await import('./sms'));
+  ({ lastTestOtpTo, clearTestOtpOutbox } = await import('./otp-sender'));
   await initLocalDatabase();
   app = createApp();
 });
@@ -70,13 +71,13 @@ afterAll(async () => {
 
 beforeEach(async () => {
   process.env.ALLOW_DEV_AUTH_HEADERS = 'true';
-  process.env.SMS_PROVIDER = 'test';
+  process.env.OTP_PROVIDER = 'test';
   // 발송 횟수 제한은 메모리 카운터라 테스트 사이에 쌓인다. 여기서는 넉넉히 두고,
   // 제한 자체는 'limits how many codes one number can request' 에서 따로 본다.
   process.env.AUTH_OTP_SEND_LIMIT_PER_PHONE = '1000';
   process.env.AUTH_OTP_SEND_LIMIT_PER_IP = '1000';
   resetPhoneVerificationForTests();
-  clearTestSmsOutbox();
+  clearTestOtpOutbox();
   process.env.FACTCHAT_API_KEY = '';
   process.env.FACTCHAT_BASE_URL = 'https://factchat-cloud.mindlogic.ai/v1/gateway';
   process.env.FACTCHAT_CHAT_MODEL = 'gpt-5-mini';
@@ -794,7 +795,7 @@ describe('Digital Legacy Vault API', () => {
 
     it('succeeds login when phone and name match existing user', async () => {
       await prisma.user.create({
-        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444', email: '01033334444@example.com' }
       });
 
       const verificationToken = await verifyPhone('01033334444', 'login');
@@ -810,7 +811,7 @@ describe('Digital Legacy Vault API', () => {
 
     it('fails login when phone exists but name does not match', async () => {
       await prisma.user.create({
-        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444', email: '01033334444@example.com' }
       });
 
       const verificationToken = await verifyPhone('01033334444', 'login');
@@ -834,7 +835,7 @@ describe('Digital Legacy Vault API', () => {
     // 예전에는 isLogin 을 빼면 번호만으로 기존 계정의 토큰을 내줬다.
     it('does not issue a token for an existing number when isLogin is missing', async () => {
       await prisma.user.create({
-        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444', email: '01033334444@example.com' }
       });
 
       const res = await request(app)
@@ -857,7 +858,7 @@ describe('Digital Legacy Vault API', () => {
 
     it('rejects a non-boolean isLogin instead of guessing', async () => {
       await prisma.user.create({
-        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444', email: '01033334444@example.com' }
       });
 
       // 문자열 'false' 를 참으로 읽으면 로그인 분기로, 거짓으로 읽으면 가입 분기로 간다.
@@ -874,17 +875,17 @@ describe('Digital Legacy Vault API', () => {
   describe('phone OTP', () => {
     beforeEach(async () => {
       await prisma.user.create({
-        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444', email: '01033334444@example.com' }
       });
     });
 
     it('refuses to send codes or log in when no SMS provider is configured', async () => {
-      delete process.env.SMS_PROVIDER;
+      delete process.env.OTP_PROVIDER;
 
       const sent = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
 
       expect(sent.status).toBe(503);
-      expect(lastTestSmsTo('01033334444')).toBeNull();
+      expect(lastTestOtpTo('01033334444@example.com')).toBeNull();
     });
 
     it('does not log in with the right name but no verification', async () => {
@@ -908,7 +909,7 @@ describe('Digital Legacy Vault API', () => {
 
     it('rejects a wrong code and burns the code after five misses', async () => {
       await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
-      const code = /(\d{6})/.exec(lastTestSmsTo('01033334444') ?? '')![1];
+      const code = lastTestOtpTo('01033334444@example.com')!;
       const wrong = code === '000000' ? '111111' : '000000';
 
       for (let i = 1; i <= 4; i += 1) {
@@ -957,19 +958,61 @@ describe('Digital Legacy Vault API', () => {
       expect(wrongPurpose.body.authToken).toBeUndefined();
     });
 
-    it('does not text unregistered numbers for login or registered numbers for signup', async () => {
-      const loginUnknown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01099999999', purpose: 'login' });
-      const signupKnown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'signup' });
+    it('does not send codes for unregistered numbers on login or registered numbers on signup', async () => {
+      const loginUnknown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01099999999', purpose: 'login', email: 'someone@example.com' });
+      const signupKnown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'signup', email: 'someone@example.com' });
 
       expect(loginUnknown.status).toBe(404);
       expect(signupKnown.status).toBe(400);
-      expect(lastTestSmsTo('01099999999')).toBeNull();
-      expect(lastTestSmsTo('01033334444')).toBeNull();
+      expect(lastTestOtpTo('someone@example.com')).toBeNull();
+      expect(lastTestOtpTo('01033334444@example.com')).toBeNull();
+    });
+
+    // 이메일 칸이 생기기 전에 가입한 계정은 운영자가 이메일을 넣기 전까지 인증번호를 받을 곳이 없다.
+    it('refuses to log in an account that has no email yet', async () => {
+      await prisma.user.create({ data: { name: '예전계정', role: 'guardian', phoneNumber: '01044445555' } });
+
+      const res = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01044445555', purpose: 'login' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('이메일');
+    });
+
+    // 요청에 적힌 주소로 보내면, 번호만 아는 사람이 자기 메일로 인증번호를 받아 갈 수 있다.
+    it('sends login codes only to the registered email, never to an address in the request', async () => {
+      const res = await request(app)
+        .post('/api/auth/otp/request')
+        .send({ phoneNumber: '01033334444', purpose: 'login', email: 'attacker@example.com' });
+
+      expect(res.status).toBe(200);
+      expect(lastTestOtpTo('attacker@example.com')).toBeNull();
+      expect(lastTestOtpTo('01033334444@example.com')).toMatch(/^\d{6}$/);
+      // 번호만 아는 사람에게 주소 전체를 알려 주지 않는다.
+      expect(res.body.sentTo).not.toBe('01033334444@example.com');
+      expect(res.body.sentTo).toMatch(/^01\*+@example\.com$/);
+    });
+
+    it('stores the email that received the code, not an email sent later with the signup', async () => {
+      const verificationToken = await verifyPhone('01088889999', 'signup', 'Real.Person@Example.com');
+
+      const res = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01088889999', name: '새가족', isLogin: false, email: 'other@example.com', verificationToken });
+
+      expect(res.status).toBe(201);
+      const user = await prisma.user.findUnique({ where: { phoneNumber: '01088889999' } });
+      expect(user?.email).toBe('real.person@example.com');
+    });
+
+    it('rejects signup codes without a valid email', async () => {
+      const res = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01088889999', purpose: 'signup', email: 'not-an-email' });
+
+      expect(res.status).toBe(400);
     });
 
     it('limits how many codes one number can request', async () => {
       process.env.AUTH_OTP_SEND_LIMIT_PER_PHONE = '2';
-      await prisma.user.create({ data: { name: '제한', role: 'guardian', phoneNumber: '01066667777' } });
+      await prisma.user.create({ data: { name: '제한', role: 'guardian', phoneNumber: '01066667777', email: 'limit@example.com' } });
       const statuses: number[] = [];
       for (let i = 0; i < 3; i += 1) {
         // 재발송 간격(1분)에 걸리지 않도록 매번 진행 중인 번호를 지운다.

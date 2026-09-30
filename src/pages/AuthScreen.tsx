@@ -12,6 +12,7 @@ type LoginStep = 'details' | 'code'
 
 const PHONE_ERROR_MESSAGE = '휴대폰 번호를 010-0000-0000 형식으로 입력해 주세요.'
 const BIRTH_DATE_ERROR_MESSAGE = '생년월일을 1999-02-04 형식으로 입력해 주세요.'
+const EMAIL_ERROR_MESSAGE = '인증번호를 받을 이메일 주소를 확인해 주세요.'
 
 function phoneDigits(value: string) {
   return value.replace(/[^\d]/g, '').slice(0, 11)
@@ -26,6 +27,10 @@ function formatKoreanPhoneNumber(value: string) {
 
 function isCompletePhoneNumber(value: string) {
   return /^01[016789]\d{7,8}$/.test(phoneDigits(value))
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
 function formatBirthDate(value: string) {
@@ -50,6 +55,10 @@ export default function AuthScreen() {
   const [loginStep, setLoginStep] = useState<LoginStep>('details')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
+  // 가입 때 인증번호를 받을 이메일. 로그인 인증번호도 이 주소로 간다.
+  const [email, setEmail] = useState('')
+  // 서버가 알려 준, 인증번호를 보낸 주소(가린 형태).
+  const [sentTo, setSentTo] = useState<string | null>(null)
   const [birthDate, setBirthDate] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
   // 인증번호를 맞힌 뒤 서버가 내주는 한 번짜리 토큰. 가입·로그인 요청에 함께 보낸다.
@@ -98,12 +107,14 @@ export default function AuthScreen() {
     setInviteHint(false)
   }
 
-  // 인증번호 문자를 보낸다. 가입이면 새 번호인지, 로그인이면 가입된 번호인지 서버가 먼저 확인한다.
+  // 인증번호를 보낸다. 가입이면 입력한 이메일로, 로그인이면 계정에 등록된 이메일로 간다.
+  // 가입이면 새 번호인지, 로그인이면 가입된 번호인지 서버가 먼저 확인한다.
   const sendVerificationCode = async (purpose: Tab) => {
     setOtpBusy(true)
     setErrorMsg(null)
     try {
-      await requestLocalPhoneOtp(phoneDigits(phone), purpose)
+      const res = await requestLocalPhoneOtp(phoneDigits(phone), purpose, purpose === 'signup' ? email.trim() : undefined)
+      setSentTo(res.sentTo ?? null)
       return true
     } catch (e: any) {
       setErrorMsg(e.message || '인증번호를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.')
@@ -116,6 +127,10 @@ export default function AuthScreen() {
   const handleSignupPhoneSubmit = async () => {
     if (!isCompletePhoneNumber(phone)) {
       setErrorMsg(PHONE_ERROR_MESSAGE)
+      return
+    }
+    if (!isValidEmail(email)) {
+      setErrorMsg(EMAIL_ERROR_MESSAGE)
       return
     }
     resetVerification()
@@ -302,7 +317,7 @@ export default function AuthScreen() {
               계정을 만들어주세요
             </h1>
             <p className="absolute left-6 top-[169.19px] w-[340px] text-[12px] font-normal leading-[18px] text-[#7A767F]">
-              번호로 인증 후 바로 시작할 수 있어요.
+              이메일로 받은 인증번호로 확인한 뒤 바로 시작할 수 있어요.
             </p>
 
             <label className="absolute left-6 top-[227.19px] w-[340px]">
@@ -323,8 +338,26 @@ export default function AuthScreen() {
               />
             </label>
 
+            <label className="absolute left-6 top-[311px] w-[340px]">
+              <span className="block text-[11px] font-medium uppercase leading-[16.5px] tracking-[1.65px] text-[#7A767F]">
+                이메일
+              </span>
+              <input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setErrorMsg(null)
+                }}
+                placeholder="example@gmail.com"
+                className="mt-[9.81px] h-11 w-full rounded-[14px] border border-[#E0DBE8] bg-white px-4 text-[16px] font-normal text-[#2A2830] outline-none transition placeholder:text-[#7A767F]/50 focus:border-[#9485BE] focus:ring-4 focus:ring-[#9485BE]/10"
+              />
+            </label>
+
             {errorMsg && (
-              <div className="absolute left-6 top-[360px] flex w-[340px] items-start gap-3 rounded-[14px] border border-[#FF3B30]/20 bg-[#FF3B30]/10 p-4">
+              <div className="absolute left-6 top-[432px] flex w-[340px] items-start gap-3 rounded-[14px] border border-[#FF3B30]/20 bg-[#FF3B30]/10 p-4">
                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#FF3B30]" aria-hidden="true" />
                 <p className="text-[13px] font-medium leading-relaxed text-[#FF3B30]">
                   {errorMsg}
@@ -332,14 +365,14 @@ export default function AuthScreen() {
               </div>
             )}
 
-            <p className="absolute left-6 top-[319.69px] w-[340px] text-[11px] font-normal leading-[16.5px] text-[#7A767F]">
-              인증번호가 문자로 전송됩니다.
+            <p className="absolute left-6 top-[397px] w-[340px] text-[11px] font-normal leading-[16.5px] text-[#7A767F]">
+              인증번호가 이메일로 전송됩니다. 로그인할 때도 이 이메일로 받아요.
             </p>
 
             <button
               type="button"
               onClick={handleSignupPhoneSubmit}
-              disabled={!phone.trim() || otpBusy}
+              disabled={!phone.trim() || !email.trim() || otpBusy}
               className="absolute left-6 top-[716.5px] h-[51px] w-[340px] rounded-[14px] bg-[#2A2830] text-center text-[14px] font-medium leading-[21px] tracking-[0.06em] text-[#F7F5FB] transition-transform active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100"
             >
               {otpBusy ? '보내는 중…' : '인증번호 받기'}
@@ -380,7 +413,7 @@ export default function AuthScreen() {
               입력해주세요
             </h1>
             <p className="absolute left-6 top-[169.19px] w-[340px] text-[12px] font-normal leading-[18px] text-[#7A767F]">
-              {phone ? `${phone}로 전송된` : '문자로 전송된'} 6자리 번호를 입력해주세요.
+              {sentTo ? `${sentTo} 메일함으로 보낸` : '이메일로 보낸'} 6자리 번호를 입력해주세요.
             </p>
 
             <label className="absolute left-6 top-[227.19px] w-[340px]">
@@ -737,7 +770,7 @@ export default function AuthScreen() {
       <div className="mt-6 flex items-center justify-between border-t border-[#E0DBE8] pt-5">
         <div className="flex items-center gap-2">
           <span className="h-1.5 w-1.5 rounded-full bg-[#9485BE]" />
-          <span className="text-[12px] text-[#7A767F]">휴대폰 본인 확인</span>
+          <span className="text-[12px] text-[#7A767F]">등록된 이메일로 인증번호 발송</span>
         </div>
         <span className="font-serif text-[13px] text-[#9485BE]">안전하게 보호됨</span>
       </div>

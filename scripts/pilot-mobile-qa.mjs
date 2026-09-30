@@ -8,12 +8,13 @@ const API_URL = process.env.PILOT_QA_API_URL || 'http://localhost:8788';
 const CHROME_PATH = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const FIXTURE_PHOTO = process.env.PILOT_QA_PHOTO || path.resolve('src/assets/figma/parent-record-photo.jpg');
 const SCREENSHOT_DIR = process.env.PILOT_QA_SCREENSHOT_DIR || path.resolve('artifacts/pilot-mobile-qa');
-const SMS_OUTBOX_PATH = process.env.SMS_DEV_OUTBOX_PATH || path.resolve('server/data/sms-outbox.jsonl');
+const OTP_OUTBOX_PATH = process.env.OTP_DEV_OUTBOX_PATH || path.resolve('server/data/otp-outbox.jsonl');
 
 const stamp = `${Date.now()}`.slice(-8);
 const guardianName = `모바일QA자녀${stamp}`;
 const seniorName = `모바일QA부모${stamp}`;
 const guardianPhone = `010${stamp}`;
+const guardianEmail = `mobileqa+${stamp}@example.invalid`;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -38,22 +39,22 @@ async function api(pathname, options = {}) {
   return body;
 }
 
-// 가입·로그인에는 휴대폰 인증이 필요하다. QA 는 서버를 SMS_PROVIDER=dev 로 띄워 두고,
-// 개발용 발송이 남긴 파일에서 인증번호를 읽어 인증을 마친다. 실제 문자 업체를 쓰는
-// 운영 서버에는 이 방법으로 가입할 수 없다(그래야 한다).
-async function verifyPhoneWithDevOutbox(phoneNumber, purpose) {
+// 가입·로그인에는 인증번호 확인이 필요하다. 인증번호는 이메일로 간다. QA 는 서버를
+// OTP_PROVIDER=dev 로 띄워 두고, 개발용 발송이 남긴 파일에서 인증번호를 읽어 인증을 마친다.
+// 실제로 메일을 보내는 운영 서버에는 이 방법으로 가입할 수 없다(그래야 한다).
+async function verifyWithDevOutbox(phoneNumber, purpose, email) {
   try {
     await api('/api/auth/otp/request', {
       method: 'POST',
-      body: JSON.stringify({ phoneNumber, purpose }),
+      body: JSON.stringify({ phoneNumber, purpose, email }),
     });
   } catch (error) {
-    throw new Error(`인증번호 요청 실패. QA 서버를 SMS_PROVIDER=dev 로 띄웠는지 확인하세요. (${error.message})`);
+    throw new Error(`인증번호 요청 실패. QA 서버를 OTP_PROVIDER=dev 로 띄웠는지 확인하세요. (${error.message})`);
   }
-  const lines = fs.existsSync(SMS_OUTBOX_PATH) ? fs.readFileSync(SMS_OUTBOX_PATH, 'utf8').split('\n').filter(Boolean) : [];
-  const entry = lines.reverse().map((line) => JSON.parse(line)).find((sent) => sent.to === phoneNumber);
+  const lines = fs.existsSync(OTP_OUTBOX_PATH) ? fs.readFileSync(OTP_OUTBOX_PATH, 'utf8').split('\n').filter(Boolean) : [];
+  const entry = lines.reverse().map((line) => JSON.parse(line)).find((sent) => sent.to === email);
   const code = /(\d{6})/.exec(entry?.text ?? '')?.[1];
-  assert(code, `개발용 발송 파일에서 ${phoneNumber} 의 인증번호를 찾지 못했습니다: ${SMS_OUTBOX_PATH}`);
+  assert(code, `개발용 발송 파일에서 ${email} 의 인증번호를 찾지 못했습니다: ${OTP_OUTBOX_PATH}`);
   const verified = await api('/api/auth/otp/verify', {
     method: 'POST',
     body: JSON.stringify({ phoneNumber, purpose, code }),
@@ -122,7 +123,7 @@ async function main() {
       name: guardianName,
       isLogin: false,
       birthDate: '1999-02-04',
-      verificationToken: await verifyPhoneWithDevOutbox(guardianPhone, 'signup'),
+      verificationToken: await verifyWithDevOutbox(guardianPhone, 'signup', guardianEmail),
     }),
   });
   const invitationResponse = await api('/api/invitations', {

@@ -21,8 +21,8 @@ Source of truth: `server/app.ts`. This matrix documents the intended authorizati
 | --- | --- | --- | --- |
 | `GET` | `/api/health` | Public | Health and storage path only |
 | `GET` | `/api/me` | Public | Returns current attached user or `null`; useful for auth debugging |
-| `POST` | `/api/auth/otp/request` | Public | Sends a 6-digit code (login: registered numbers only; signup: new numbers only). 503 when `SMS_PROVIDER` is unset. Per-phone/IP send limits and a 60 s resend gap |
-| `POST` | `/api/auth/otp/verify` | Public | 3-minute code, 5 tries per code; returns a single-use 10-minute verification token bound to phone + purpose |
+| `POST` | `/api/auth/otp/request` | Public | Sends a 6-digit code by email. Login: registered numbers only, always to the account's stored email (any `email` in the body is ignored; 409 if none). Signup: new numbers only, to the given email. Returns only a masked address. 503 when `OTP_PROVIDER` is unset, 502 if sending fails. Per-phone/IP send limits and a 60 s resend gap |
+| `POST` | `/api/auth/otp/verify` | Public | 3-minute code, 5 tries per code; returns a single-use 10-minute verification token bound to phone + purpose and carrying the address that received the code (signup stores that address) |
 | `POST` | `/api/auth/phone` | Public | Login/signup entrypoint; requires boolean `isLogin` and a matching verification token (401 otherwise, checked before the name); returns signed auth token |
 | `POST` | `/api/auth/token-login` | Public | Invitation-token login; rejects expired/revoked tokens |
 | `GET` | `/api/push-public-key` | Public | Returns VAPID public key |
