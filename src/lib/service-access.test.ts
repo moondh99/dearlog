@@ -58,3 +58,14 @@ describe('client restriction before network or device actions', () => {
     expect(network.mock.calls[0][0]).not.toContain('seniorId=')
   })
 })
+
+
+describe('shared request normalization', () => {
+  it.each(['/API/PUBLICATION-PREVIEW/', '/api/ai/AUDIT-SUMMARY/?source=qa'])('blocks the read side effect at %s', path => {
+    expect(() => assertServiceRequestAllowed(path)).toThrow()
+  })
+  it('keeps the explicit existing login exception consistent with Express case and slash routing', () => {
+    expect(() => assertServiceRequestAllowed('/API/AUTH/PHONE/', { method: 'post', body: JSON.stringify({ isLogin: true }) })).not.toThrow()
+    expect(() => assertServiceRequestAllowed('/API/AUTH/PHONE/', { method: 'post', body: JSON.stringify({ isLogin: 'true' }) })).toThrow()
+  })
+})
