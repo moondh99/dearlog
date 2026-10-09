@@ -74,9 +74,10 @@ describe('authorized read-only archive flows', () => {
   })
   it('preserves an existing self-linked guardian record space without choosing another user', async () => {
     login('child')
-    mocks.family.mockResolvedValue({ members: [parent, { id: 'guardian-1', name: '본인', role: 'child', isMe: true }] })
+    mocks.family.mockResolvedValue({ members: [{ id: 'guardian-1', name: '본인', role: 'child', isMe: true }, parent] })
     open()
     const select = await screen.findByRole('combobox', { name: '연결된 기존 기록 공간' })
+    expect(select).toHaveValue(parent.id)
     fireEvent.change(select, { target: { value: 'guardian-1' } })
     await waitFor(() => expect(mocks.records).toHaveBeenLastCalledWith('guardian-1'))
     expect(screen.getByRole('option', { name: '내 계정의 기존 기록' })).toBeInTheDocument()
