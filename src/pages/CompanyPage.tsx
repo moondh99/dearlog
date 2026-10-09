@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, BookOpen, Mail, Maximize2, X } from 'lucide-react'
-import { Link } from 'react-router-dom'
 import './CompanyPage.css'
 
 const steps = [
@@ -10,8 +9,8 @@ const steps = [
   { title: '한 사람의 삶을 기록합니다', text: '확인한 이야기를 챕터별로 모읍니다. 가족이 읽고 간직할 자서전으로 이어갑니다.' },
 ]
 
-function ServiceLink({ className = '' }: { className?: string }) {
-  return <Link to="/auth" className={`company-service-link ${className}`}><span>로그인·가입 화면 보기<span className="company-service-caption">로그인·가입 화면으로 이동</span></span><ArrowUpRight size={18} aria-hidden="true" /></Link>
+function SampleLink({ className = '' }: { className?: string }) {
+  return <a href="#company-sample" className={`company-service-link ${className}`}><span>가상 자서전 읽어보기<span className="company-service-caption">로그인 없이 예시 체험</span></span><ArrowUpRight size={18} aria-hidden="true" /></a>
 }
 
 const screens = {
@@ -25,7 +24,7 @@ const faqs = [
   { question: '디어로그는 어떤 서비스인가요?', answer: '부모님의 음성 인터뷰를 가족이 함께 확인하고 자서전으로 남기는 서비스입니다. 가족이 질문을 건네고, 부모님이 이야기한 기억을 챕터별 기록으로 이어갑니다.' },
   { question: '기록은 어떤 순서로 만들어지나요?', answer: '질문 → 음성 인터뷰 → 가족 확인 → 챕터별 기록의 순서로 이어집니다. 가족은 질문을 준비하고, 인터뷰 뒤에는 원문과 정리본을 살펴볼 수 있습니다.' },
   { question: '가족은 어떤 역할을 하나요?', answer: '궁금했던 이야기를 질문으로 건네고, 정리된 글에 부모님이 말한 뜻이 잘 담겼는지 함께 확인합니다. 기억의 주인인 부모님의 이야기를 중심에 둡니다.' },
-  { question: '소개 페이지의 화면과 이야기는 실제인가요?', answer: '제품 화면은 실제 UI를 가상 데이터로 구성해 캡처했습니다. 읽어보기의 자서전은 설명을 위해 만든 가상 예시이며, 실제 가족의 인터뷰나 이용 후기가 아닙니다. 예시는 로그인 없이 읽을 수 있고, 로그인·가입 화면 보기는 로그인·가입 화면으로 연결됩니다.' },
+  { question: '소개 페이지의 화면과 이야기는 실제인가요?', answer: '제품 화면은 실제 UI를 가상 데이터로 구성해 캡처했습니다. 읽어보기의 자서전은 설명을 위해 만든 가상 예시이며, 실제 가족의 인터뷰나 이용 후기가 아닙니다. 현재 예시 체험과 문의를 받고 있습니다. 가상 자서전은 로그인이나 녹음 없이 읽을 수 있습니다.' },
   { question: '서비스 문의나 협업 제안은 어디로 보내나요?', answer: 'hello@dear-log.com으로 이메일을 보내주세요. 아래 문의 영역의 이메일 링크를 누르면 사용 중인 메일 앱에서 작성할 수 있습니다.' },
 ]
 
@@ -110,7 +109,7 @@ export default function CompanyPage() {
           <a href="#company-product">서비스 화면</a>
           <a href="#company-team">팀 소개</a>
         </nav>
-        <ServiceLink className="company-header-cta" />
+        <SampleLink className="company-header-cta" />
       </header>
 
       <main id="company-main" tabIndex={-1}>
@@ -120,10 +119,10 @@ export default function CompanyPage() {
             <h1 id="company-title">부모님의 목소리를,<br />우리 가족의<br className="company-desktop-break" /> 자서전으로.</h1>
             <p className="company-lead">질문에 답하신 부모님의 이야기를 가족이 함께 확인하고, 챕터별 기록으로 남깁니다.</p>
             <div className="company-hero-actions">
-              <ServiceLink />
-              <a className="company-text-link" href="#company-sample">가상 자서전 읽어보기</a>
+              <SampleLink />
+              <a className="company-text-link" href="mailto:hello@dear-log.com">이메일로 문의하기</a>
             </div>
-            <p className="company-hero-note">말하는 분의 기억을 존중하고, 가족의 확인을 거칩니다.</p>
+            <p className="company-hero-note">현재 예시 체험과 문의를 받고 있습니다.</p>
           </div>
           <figure className="company-hero-product">
             <div className="company-product-heading"><span>이야기는, 한 번의 질문에서</span><span aria-hidden="true">↘</span></div>
@@ -192,7 +191,7 @@ export default function CompanyPage() {
 
         <section id="company-team" className="company-team company-container" aria-labelledby="company-team-title">
           <div><p className="company-kicker">우리가 만드는 것</p><h2 id="company-team-title">안녕하세요,<br />디어로그 팀입니다.</h2><span className="company-stage">현재 사업화를 준비하고 있습니다</span></div>
-          <div className="company-team-copy"><p>우리는 부모님의 이야기가 가족 안에서 오래 읽히기를 바랍니다. 질문, 목소리 인터뷰 경험, 가족이 함께 확인하는 과정, 챕터별 기록 화면을 만들고 있습니다.</p><p>지금은 서비스를 다듬으며 사업화를 준비하고 있습니다. 가족의 기록에 관심이 있는 분, 디어로그와 협업을 이야기하고 싶은 분의 연락을 기다립니다.</p><h3>우리가 다듬는 세 가지 영역</h3><dl><div><dt>제품과 질문 설계</dt><dd>가족이 궁금했던 이야기를 질문으로 건넬 수 있게 합니다.</dd></div><div><dt>음성 인터뷰와 기록</dt><dd>부모님이 목소리로 답하고, 이야기를 글로 살펴보는 경험을 만듭니다.</dd></div><div><dt>가족 확인과 읽기</dt><dd>원문과 정리본을 함께 확인하고 챕터별 기록을 읽는 화면을 다듬습니다.</dd></div></dl></div>
+          <div className="company-team-copy"><p>우리는 부모님의 이야기가 가족 안에서 오래 읽히기를 바랍니다. 질문, 목소리 인터뷰 경험, 가족이 함께 확인하는 과정, 챕터별 기록 화면을 만들고 있습니다.</p><p>지금은 서비스를 다듬으며 사업화를 준비하고 있습니다. 당분간 가상 자서전 예시 체험과 이메일 문의를 받고 있습니다. 운영 주체는 디어로그 팀이며, 담당자는 문대한입니다.</p><p>앞으로 음성 원본을 계속 보관하며 가족이 다시 듣고 기록을 이어갈 수 있는 서비스를 만들고자 합니다. 구체적인 보관 기간과 운영 기준은 정비 중입니다.</p><h3>우리가 다듬는 세 가지 영역</h3><dl><div><dt>제품과 질문 설계</dt><dd>가족이 궁금했던 이야기를 질문으로 건넬 수 있게 합니다.</dd></div><div><dt>음성 인터뷰와 기록</dt><dd>부모님이 목소리로 답하고, 이야기를 글로 살펴보는 경험을 만듭니다.</dd></div><div><dt>가족 확인과 읽기</dt><dd>원문과 정리본을 함께 확인하고 챕터별 기록을 읽는 화면을 다듬습니다.</dd></div></dl></div>
         </section>
 
         <section className="company-faq company-container" aria-labelledby="company-faq-title"><div className="company-section-heading"><div><p className="company-kicker">디어로그가 궁금하다면</p><h2 id="company-faq-title">자주 묻는 질문</h2></div></div><div className="company-faq-list">{faqs.map(faq => <details key={faq.question}><summary>{faq.question}</summary><p>{faq.answer}</p></details>)}</div></section>

@@ -6,9 +6,9 @@ import puppeteer from 'puppeteer-core'
 
 // Separate, disposable browser profile: never attach to Chrome or a running CDP session.
 const origin = 'http://127.0.0.1:4330'
-const artifacts = path.resolve('artifacts/company-v2')
+const artifacts = path.resolve('artifacts/company-v3')
 await fs.mkdir(artifacts, { recursive: true })
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'dearlog-company-v2-edge-'))
+const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'dearlog-company-v3-edge-'))
 const browser = await puppeteer.launch({ executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', headless: true, userDataDir: profile, args: ['--no-first-run', '--disable-extensions', '--disable-background-networking'] })
 const report = { browser: 'Separate headless Microsoft Edge; temporary profile; no existing Chrome/CDP connection', origin, widths: [], keyboard: [], dialogs: [], faq: [], routes: [], errors: [], blockedApiRequests: [], notes: [] }
 
@@ -87,7 +87,8 @@ try {
     assert.equal(state.forms, 0)
     assert.equal(state.contrastFailures.length, 0, JSON.stringify(state.contrastFailures))
     assert(state.controls.every(control => control.height >= 44), JSON.stringify(state.controls))
-    assert(state.controls.some(control => control.href === '/auth'))
+    assert(state.controls.some(control => control.href === '#company-sample'))
+    assert(!state.controls.some(control => control.href === '/auth'))
     assert(state.controls.some(control => control.href === 'mailto:hello@dear-log.com'))
     assert(state.controls.some(control => control.href === '#company-sample'))
     assert(state.sample.text?.includes('가상'))
@@ -156,13 +157,15 @@ try {
   report.keyboard.push({ tabSequence })
 
   await loadCompany()
-  await page.$eval('.company-page a[href="/auth"]', element => element.focus())
+  await page.$eval('.company-service-link', element => element.focus())
   await page.keyboard.press('Enter')
-  await page.waitForFunction(() => location.pathname === '/auth' && document.body.textContent.includes('로그인'))
-  report.keyboard.push({ serviceCTA: 'Enter opens existing /auth' })
+  await page.waitForFunction(() => location.hash === '#company-sample')
+  assert(await page.$('.company-page'), 'Sample stays on the public company page')
+  assert.equal(await page.$eval('.company-hero-actions .company-text-link', element => element.getAttribute('href')), 'mailto:hello@dear-log.com')
+  report.keyboard.push({ sampleCTA: 'Enter opens fictional sample; secondary CTA is mailto' })
   await page.goBack({ waitUntil: 'networkidle0' })
-  assert(await page.$('.company-page'), 'Browser back from auth must return to company')
-  report.routes.push({ route: '/auth → browser Back → /company', result: 'pass' })
+  assert(await page.$('.company-page'), 'Browser back from sample keeps company')
+  report.routes.push({ route: 'company → sample → browser Back → company', result: 'pass' })
 
   await loadCompany()
   const anchorTargets = await page.$$eval('.company-nav a[href^="#"],.company-hero-actions a[href^="#"]', links => [...new Set(links.map(link => link.getAttribute('href')))])

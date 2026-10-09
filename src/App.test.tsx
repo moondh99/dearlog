@@ -85,7 +85,7 @@ describe('App routing', () => {
     expect(heading.closest('.company-page')).toBeInTheDocument();
     expect(heading.closest('.max-w-\\[390px\\]')).toBeNull();
     expect(screen.getByRole('link', { name: 'hello@dear-log.com' })).toHaveAttribute('href', 'mailto:hello@dear-log.com');
-    expect(screen.getAllByRole('link', { name: /로그인·가입 화면 보기/ })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: /가상 자서전 읽어보기/ })).toHaveLength(2);
     expect(document.querySelector('.company-page form')).toBeNull();
     expect(screen.getByText('현재 사업화를 준비하고 있습니다')).toBeInTheDocument();
     expect(screen.getByText('설명용 예시')).toBeInTheDocument();
@@ -93,14 +93,15 @@ describe('App routing', () => {
     expect(useAuthStore.getState().role).toBeNull();
   });
 
-  it('takes the company service CTA to the existing auth screen', async () => {
+  it('offers only fictional sample and email entry points from the company page', async () => {
     render(<MemoryRouter initialEntries={['/company']}><AppRoutes /></MemoryRouter>);
     await screen.findByRole('heading', { level: 1, name: /부모님의 목소리를/ });
-    fireEvent.click(screen.getAllByRole('link', { name: /로그인·가입 화면 보기/ })[0]);
-
-    expect(await screen.findByRole('heading', { name: 'Dearlog' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '로그인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '회원가입' })).toBeInTheDocument();
+    for (const link of screen.getAllByRole('link', { name: /가상 자서전 읽어보기/ })) {
+      expect(link).toHaveAttribute('href', '#company-sample');
+    }
+    expect(screen.getByRole('link', { name: '이메일로 문의하기' })).toHaveAttribute('href', 'mailto:hello@dear-log.com');
+    expect(document.querySelector('.company-page a[href="/auth"]')).toBeNull();
+    expect(useAuthStore.getState().role).toBeNull();
   });
 
   it('renders a shared loading state for lazy routes', () => {

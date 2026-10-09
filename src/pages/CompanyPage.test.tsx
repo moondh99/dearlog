@@ -38,11 +38,15 @@ describe('Company introduction review', () => {
     expect(within(sample).getByText('로그인 없이 읽는 가상 예시')).toBeInTheDocument()
     expect(within(sample).getByText(/실제 인터뷰나 이용 후기가 아닙니다/)).toBeInTheDocument()
     expect(sample.querySelector('input,textarea,form')).toBeNull()
-    expect(screen.getByRole('link', { name: '가상 자서전 읽어보기' })).toHaveAttribute('href', '#company-sample')
-    for (const link of screen.getAllByRole('link', { name: /로그인·가입 화면 보기/ })) {
-      expect(link).toHaveAttribute('href', '/auth')
-      expect(link).toHaveTextContent('로그인·가입 화면으로 이동')
+    for (const link of screen.getAllByRole('link', { name: /가상 자서전 읽어보기/ })) {
+      expect(link).toHaveAttribute('href', '#company-sample')
+      expect(link).toHaveTextContent('로그인 없이 예시 체험')
     }
+    expect(screen.getByRole('link', { name: '이메일로 문의하기' })).toHaveAttribute('href', 'mailto:hello@dear-log.com')
+    expect(document.querySelector('.company-page a[href="/auth"]')).toBeNull()
+    expect(screen.getByText('현재 예시 체험과 문의를 받고 있습니다.')).toBeInTheDocument()
+    expect(screen.getByText(/운영 주체는 디어로그 팀이며, 담당자는 문대한입니다/)).toBeInTheDocument()
+    expect(screen.getByText(/앞으로 음성 원본을 계속 보관/)).toHaveTextContent('구체적인 보관 기간과 운영 기준은 정비 중입니다.')
     expect(fetch).not.toHaveBeenCalled()
   })
 
