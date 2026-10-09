@@ -923,11 +923,14 @@ export async function startLocalPublicationPreviewJob(input: {
   return previewJobView(job);
 }
 
-export async function getLocalPublicationPreviewJob(jobId: string): Promise<LocalPublicationPreviewJobView | null> {
+export async function getLocalPublicationPreviewJob(
+  jobId: string,
+  { resume = true }: { resume?: boolean } = {},
+): Promise<LocalPublicationPreviewJobView | null> {
   const foundJob = await prisma.publicationPreviewJob.findUnique({ where: { id: jobId } });
-  const job = foundJob ? await reviveRecoverablePreviewJob(foundJob) : null;
+  const job = foundJob && resume ? await reviveRecoverablePreviewJob(foundJob) : foundJob;
   if (!job) return null;
-  if (job.status === 'queued') {
+  if (resume && job.status === 'queued') {
     void runPublicationPreviewJob(job.id);
   }
   const draft = job.status === 'ready' ? await loadDraftForJob(job) : null;

@@ -1,4 +1,6 @@
 import type { Memory, StoredPhoto, FamilyQuestion, ChapterStructure, ChapterNarrative } from './types';
+import { assertServiceRequestAllowed } from './service-access';
+import { SAMPLE_INQUIRY_ONLY } from '../../shared/service-access';
 
 const isLocalFrontend = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const API_BASE = import.meta.env.VITE_LOCAL_API_URL ?? (isLocalFrontend ? 'http://localhost:8787' : window.location.origin);
@@ -359,13 +361,14 @@ function pathHasSeniorId(path: string) {
 }
 
 async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
+  assertServiceRequestAllowed(path, options);
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const auth = readStoredAuth();
   if (auth?.authToken) {
     headers.set('Authorization', `Bearer ${auth.authToken}`);
   }
-  if (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true') {
+  if (!SAMPLE_INQUIRY_ONLY && (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true')) {
     headers.set('x-user-id', options.userId ?? getCurrentUserId(options.role));
     if (options.role) headers.set('x-user-role', options.role);
   }
@@ -375,7 +378,7 @@ async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
 
   const isAuthOrInviteAction = path.startsWith('/api/auth') || path.startsWith('/api/ai') || path.startsWith('/api/invitations') || path.startsWith('/api/family-members');
 
-  if (!isAuthOrInviteAction) {
+  if (!SAMPLE_INQUIRY_ONLY && !isAuthOrInviteAction) {
     const auth = readStoredAuth();
     if (auth?.role === 'guardian') {
       const activeSeniorId = getActiveSeniorIdFromLocalStorage();
@@ -409,13 +412,14 @@ async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
 }
 
 export async function synthesizeLocalQuestionSpeech(text: string) {
+  assertServiceRequestAllowed('/api/audio/speech', { method: 'POST' });
   const headers = new Headers();
   headers.set('Content-Type', 'application/json');
   const auth = readStoredAuth();
   if (auth?.authToken) {
     headers.set('Authorization', `Bearer ${auth.authToken}`);
   }
-  if (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true') {
+  if (!SAMPLE_INQUIRY_ONLY && (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true')) {
     headers.set('x-user-id', getCurrentUserId('senior'));
     headers.set('x-user-role', 'senior');
   }
@@ -726,7 +730,7 @@ export async function fetchLocalFileBlob(fileKey: string) {
   if (auth?.authToken) {
     headers.set('Authorization', `Bearer ${auth.authToken}`);
   }
-  if (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true') {
+  if (!SAMPLE_INQUIRY_ONLY && (import.meta.env.DEV || import.meta.env.VITE_ALLOW_DEV_AUTH_HEADERS === 'true')) {
     headers.set('x-user-id', getCurrentUserId(auth?.role ?? undefined));
     if (auth?.role) headers.set('x-user-role', auth.role);
   }
@@ -772,6 +776,7 @@ export async function getLocalPushSubscription() {
 }
 
 export async function registerLocalPushSubscription(vapidPublicKey: string, role: 'senior' | 'guardian' = 'guardian') {
+  assertServiceRequestAllowed('/api/push-subscriptions', { method: 'POST' });
   if (!supportsWebPush()) {
     throw new Error('이 브라우저는 Web Push를 지원하지 않습니다.');
   }
@@ -794,6 +799,7 @@ export async function registerLocalPushSubscription(vapidPublicKey: string, role
 }
 
 export async function unregisterLocalPushSubscription(role: 'senior' | 'guardian' = 'guardian') {
+  assertServiceRequestAllowed('/api/push-subscriptions', { method: 'DELETE' });
   const subscription = await getLocalPushSubscription();
   if (!subscription) return { deleted: 0 };
   const { endpoint } = subscription;
@@ -959,10 +965,11 @@ export function deleteLocalMemory(id: string) {
   });
 }
 
-export function fetchLocalPhotos() {
+export function fetchLocalPhotos(seniorId?: string | null) {
   const auth = readStoredAuth();
   const role = auth?.role === 'senior' ? 'senior' : 'guardian';
-  return api<{ photos: StoredPhoto[] }>('/api/photos', {
+  const query = seniorId ? `?seniorId=${encodeURIComponent(seniorId)}` : '';
+  return api<{ photos: StoredPhoto[] }>(`/api/photos${query}`, {
     role,
   });
 }

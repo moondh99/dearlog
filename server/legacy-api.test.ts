@@ -44,7 +44,7 @@ beforeAll(async () => {
   ({ resetAIClientsForTests } = await import('./ai-clients'));
   ({ createApp } = await import('./app'));
   await initLocalDatabase();
-  app = createApp();
+  app = createApp({ sampleInquiryOnly: false });
 });
 
 afterAll(async () => {

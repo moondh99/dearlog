@@ -43,7 +43,7 @@ beforeAll(async () => {
   ({ initLocalDatabase } = await import('./prisma/init'));
   ({ createApp } = await import('./app'));
   await initLocalDatabase();
-  app = createApp();
+  app = createApp({ sampleInquiryOnly: false });
 });
 
 afterAll(async () => {

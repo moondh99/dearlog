@@ -1,3 +1,5 @@
+import { SAMPLE_INQUIRY_ONLY } from '../shared/service-access';
+import { restrictIntake } from './intake-restriction';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -692,7 +694,7 @@ async function readVaultMaskContext(seniorId: string, isSelf: boolean) {
   };
 }
 
-async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: string) {
+async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: string, createSelfLink = true) {
   if (requestedSeniorId) {
     await assertGuardianCanAccessSenior(guardianId, requestedSeniorId);
     return requestedSeniorId;
@@ -710,11 +712,13 @@ async function resolveGuardianSeniorId(guardianId: string, requestedSeniorId?: s
   // 다른 가족의 시니어는 반드시 초대 플로우를 통해서만 연결됩니다.
   const selfUser = await prisma.user.findUnique({ where: { id: guardianId } });
   if (selfUser) {
-    await prisma.guardianSeniorLink.upsert({
-      where: { guardianId_seniorId: { guardianId, seniorId: selfUser.id } },
-      update: {},
-      create: { guardianId, seniorId: selfUser.id },
-    });
+    if (createSelfLink) {
+      await prisma.guardianSeniorLink.upsert({
+        where: { guardianId_seniorId: { guardianId, seniorId: selfUser.id } },
+        update: {},
+        create: { guardianId, seniorId: selfUser.id },
+      });
+    }
     return selfUser.id;
   }
 
@@ -1452,11 +1456,13 @@ async function assertCurrentUserCanAccessLocalFile(user: RequestUser, fileKey: s
   return access;
 }
 
-export function createApp() {
-  void resetRunningPublicationPreviewJobs().catch((error) => {
+export function createApp({ sampleInquiryOnly = SAMPLE_INQUIRY_ONLY }: { sampleInquiryOnly?: boolean } = {}) {
+  if (!sampleInquiryOnly) void resetRunningPublicationPreviewJobs().catch((error) => {
     console.warn('Publication preview job recovery failed:', error);
   });
 
+  const resolveSeniorId = (guardianId: string, requestedSeniorId?: string) =>
+    resolveGuardianSeniorId(guardianId, requestedSeniorId, !sampleInquiryOnly);
   const app = express();
   const distDir = path.join(config.serverDir, '..', 'dist');
   const aiProxyRateBuckets = new Map<string, AiProxyRateBucket>();
@@ -1476,7 +1482,13 @@ export function createApp() {
     next();
   });
   app.use(express.json({ limit: '10mb' }));
+  if (sampleInquiryOnly) app.use('/api', restrictIntake);
   app.use(attachLocalUser);
+
+  app.get('/api/service-status', (_req, res) => {
+    res.header('Cache-Control', 'no-store');
+    res.json({ mode: sampleInquiryOnly ? 'sample-inquiry' : 'full-service', intakeOpen: !sampleInquiryOnly });
+  });
 
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, storage: config.storageDir });
@@ -2310,7 +2322,7 @@ export function createApp() {
       const seniorId = req.user
         ? req.user.role === 'senior'
           ? req.user.id
-          : await resolveGuardianSeniorId(req.user.id, req.query.seniorId?.toString())
+          : await resolveSeniorId(req.user.id, req.query.seniorId?.toString())
         : null;
 
       if (category && category !== 'common_questions' && !seniorId) {
@@ -2351,7 +2363,7 @@ export function createApp() {
         res.status(400).json({ error: '질문 내용을 입력해 주세요.' });
         return;
       }
-      let seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      let seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       let resolvedCategory = 'guardian_questions';
       let resolvedChapterId = chapterId || 'messages';
       let resolvedPhotoId: string | undefined;
@@ -2398,7 +2410,7 @@ export function createApp() {
         res.status(400).json({ error: '사진 파일이 필요합니다.' });
         return;
       }
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const fileKey = `photos/${path.basename(req.file.filename)}`;
       const capturedDate = String(req.body.capturedDate ?? '').trim();
       const photoLocation = String(req.body.location ?? '').trim();
@@ -2619,7 +2631,7 @@ export function createApp() {
 
   app.post('/api/interview-schedules', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const schedule = await prisma.interviewSchedule.create({
         data: {
           seniorId,
@@ -2666,7 +2678,7 @@ export function createApp() {
 
   app.post('/api/app-calls', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const result = await sendAppInterviewCall({
         seniorId,
         guardianId: req.user!.id,
@@ -2682,7 +2694,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const firstChapter = await prisma.chapter.findFirst({ orderBy: { order: 'asc' } });
       const session = await prisma.interviewSession.create({
         data: {
@@ -2756,7 +2768,7 @@ export function createApp() {
     try {
       const userId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.userId ? String(req.body.userId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.userId ? String(req.body.userId) : undefined);
       const question = req.body.questionId
         ? await assertCurrentUserCanAccessQuestion(req.user!, String(req.body.questionId))
         : null;
@@ -2904,7 +2916,7 @@ export function createApp() {
     try {
       const userId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
       const events = await prisma.calendarEvent.findMany({
         where: { userId },
         orderBy: { eventDate: 'asc' },
@@ -2926,7 +2938,7 @@ export function createApp() {
     try {
       const userId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.body.seniorId?.toString());
       const { eventType, eventDate, relatedPersons, recipientId } = req.body;
       const event = await prisma.calendarEvent.create({
         data: {
@@ -2974,7 +2986,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
       const chapters = await prisma.chapter.findMany({ orderBy: { order: 'asc' } });
       const rows = await Promise.all(chapters.map(async (chapter) => {
         const count = await prisma.interviewRecord.count({ where: { userId: seniorId, chapterId: chapter.id } });
@@ -3006,7 +3018,7 @@ export function createApp() {
 
   app.get('/api/free-speech', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+      const seniorId = await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
       const records = await prisma.freeSpeechRecord.findMany({
         where: { userId: seniorId },
         orderBy: { recordedAt: 'desc' },
@@ -3118,7 +3130,7 @@ export function createApp() {
 
   app.post('/api/nudges', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const result = await sendWebPush(seniorId, {
         type: 'nudge',
         title: 'Dearlog에서 기다리고 있어요',
@@ -3134,7 +3146,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       // 출판 동의를 철회한 기록은 표지 분석에도 넘기지 않습니다.
       // 여기를 거르지 않으면 책에서 빠진 이야기가 AI 제공자에게는 그대로 전송됩니다.
       // 민감정보 미동의 기록도 외부 AI 호출에서 제외합니다.
@@ -3188,7 +3200,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const cover = await prisma.coverDesign.findFirst({
         where: { userId: seniorId, confirmedAt: { not: null } },
         orderBy: { confirmedAt: 'desc' },
@@ -3242,7 +3254,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       const cover = await prisma.coverDesign.findFirst({
         where: { userId: seniorId, confirmedAt: { not: null } },
         orderBy: { confirmedAt: 'desc' },
@@ -3291,7 +3303,7 @@ export function createApp() {
       // 미리보기 초안도 PDF와 같은 본문을 담고 있습니다. 예전 job id 를 그대로 조회하면
       // 철회 전 책이 그대로 열리므로 같은 게이트를 지납니다.
       await assertPublicationOutputStillConsented(existing.userId, existing.createdAt, req.user);
-      const job = await getLocalPublicationPreviewJob(req.params.id);
+      const job = await getLocalPublicationPreviewJob(req.params.id, { resume: !sampleInquiryOnly });
       if (!job) {
         res.status(404).json({ error: '기록집 미리보기 작업을 찾을 수 없습니다.' });
         return;
@@ -3318,7 +3330,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
       const cover = await prisma.coverDesign.findFirst({
         where: { userId: seniorId, confirmedAt: { not: null } },
         orderBy: { confirmedAt: 'desc' },
@@ -3359,7 +3371,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
         
       const records = await prisma.interviewRecord.findMany({
         where: { userId: seniorId },
@@ -3388,7 +3400,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
 
       const memories = await prisma.memory.findMany({
         where: { userId: seniorId },
@@ -3476,7 +3488,7 @@ export function createApp() {
 
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId);
 
       const parsedContradictions = contradictions ? JSON.stringify(contradictions) : "[]";
 
@@ -3662,7 +3674,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
 
       const photos = await prisma.photo.findMany({
         where: { userId: seniorId },
@@ -3754,7 +3766,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
 
       const questions = await prisma.question.findMany({
         where: {
@@ -3840,7 +3852,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
 
       const draft = await prisma.autobiographyDraft.findUnique({
         where: { userId: seniorId }
@@ -3857,7 +3869,7 @@ export function createApp() {
       const { structure, narratives } = req.body;
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId);
 
       const draft = await prisma.autobiographyDraft.upsert({
         where: { userId: seniorId },
@@ -3884,7 +3896,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId);
 
       await prisma.autobiographyDraft.deleteMany({
         where: { userId: seniorId }
@@ -3900,7 +3912,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
         
       const {
         encryptedMemories,
@@ -3959,7 +3971,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+        : await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
         
       const vault = await prisma.legacyVault.findUnique({
         where: { seniorId }
@@ -4001,7 +4013,7 @@ export function createApp() {
 
   app.post('/api/legacy/trigger-death', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
 
       const vault = await prisma.legacyVault.findUnique({
         where: { seniorId }
@@ -4059,7 +4071,7 @@ export function createApp() {
 
   app.post('/api/legacy/approve-death', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+      const seniorId = await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
       
       const vault = await prisma.legacyVault.findUnique({
         where: { seniorId }
@@ -4134,7 +4146,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
 
       const vault = await prisma.legacyVault.findUnique({ where: { seniorId } });
 
@@ -4180,7 +4192,7 @@ export function createApp() {
 
   app.get('/api/legacy/shares', requireRole('guardian'), async (req, res, next) => {
     try {
-      const seniorId = await resolveGuardianSeniorId(req.user!.id, req.query.seniorId?.toString());
+      const seniorId = await resolveSeniorId(req.user!.id, req.query.seniorId?.toString());
       
       const vault = await prisma.legacyVault.findUnique({
         where: { seniorId }
@@ -4209,7 +4221,7 @@ export function createApp() {
     try {
       const seniorId = req.user!.role === 'senior'
         ? req.user!.id
-        : await resolveGuardianSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
+        : await resolveSeniorId(req.user!.id, req.body.seniorId ? String(req.body.seniorId) : undefined);
         
       await prisma.legacyVault.deleteMany({
         where: { seniorId }
