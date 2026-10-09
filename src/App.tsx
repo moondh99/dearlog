@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { App as CapacitorApp } from '@capacitor/app'
 import { useScheduledCall } from './hooks/useScheduledCall'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -31,6 +31,7 @@ const ChatbotScreen = lazy(() => import('./pages/ChatbotScreen'))
 const AutobiographyScreen = lazy(() => import('./pages/AutobiographyScreen'))
 const PublicationPreviewScreen = lazy(() => import('./pages/PublicationPreviewScreen'))
 const DemoSettingsScreen = lazy(() => import('./pages/DemoSettingsScreen'))
+const CompanyPage = lazy(() => import('./pages/CompanyPage'))
 
 function ScheduledCallMonitor() {
   useScheduledCall()
@@ -113,7 +114,7 @@ export function RouteFallback() {
   )
 }
 
-export function AppRoutes() {
+function ServiceRoutes() {
   return (
     <div className="mx-auto min-h-[100dvh] max-w-[390px] overflow-hidden bg-[#F8F6F9] shadow-[0_0_0_1px_rgba(224,219,232,0.55)]">
       <ErrorBoundary>
@@ -158,11 +159,26 @@ export function AppRoutes() {
   )
 }
 
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/company" element={<ErrorBoundary><Suspense fallback={<RouteFallback />}><CompanyPage /></Suspense></ErrorBoundary>} />
+      <Route path="*" element={<ServiceRoutes />} />
+    </Routes>
+  )
+}
+
+function ServiceMonitors() {
+  const { pathname } = useLocation()
+  // 회사 소개에서는 예약 인터뷰가 방문자를 서비스로 이동시키지 않게 한다.
+  if (/^\/company\/?$/i.test(pathname)) return null
+  return <><ScheduledCallMonitor /><DeepLinkListener /></>
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <ScheduledCallMonitor />
-      <DeepLinkListener />
+      <ServiceMonitors />
       <AppRoutes />
     </BrowserRouter>
   )
