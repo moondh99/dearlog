@@ -244,6 +244,18 @@ npm run demo:server -- --reset   # 데모 데이터를 처음 상태로 되돌�
 - 데모 화면은 `VITE_DEMO_MODE=true`로 빌드할 때만 전체 경로가 열립니다. 일반 `npm run build`는 변하지 않습니다.
 - 데모 DB 경로가 아니거나 `NODE_ENV=production`이면 데모 서버가 스스로 시작을 거부합니다.
 
+### 회사 페이지의 사용 영상 다시 만들기
+`/company`의 "영상으로 보기"(`public/company/service-demo.mp4`, 포스터 `service-demo-poster.jpg`)는 데모 화면을 녹화해 만든 약 40초의 무음 영상이고, 속의 가족과 이야기는 모두 가상입니다. 화면이 바뀌어 다시 찍어야 하면:
+
+```bash
+npm run demo:build && npm run demo:server   # 한 터미널에서
+# 책 미리보기 캐시가 있어야 합니다. 없으면 데모 서버에서 자서전 미리보기를 한 번 만들어 두세요
+# (미리보기 job 은 몇 분 걸립니다. #27 이후에는 npm run demo:prewarm).
+npm run company:video                       # 다른 터미널에서 영상 재생성(약 2분, 답변 저장 장면에서 AI 를 한 번 부른다)
+```
+
+녹화는 데모 DB 를 임시 폴더로 복사한 별도 서버(8791)에서 하므로 8790 데모와 그 데이터는 바뀌지 않습니다. `ffmpeg` 없이 Chrome 으로 인코딩합니다(macOS 의 Google Chrome 필요, 다른 경로는 `CHROME_PATH`). 장면은 `scripts/company-video.mjs` 의 `scenes` 에 있습니다.
+
 ### 브라우저 안에서만 도는 오프라인 시연 (기존 방식)
 
 > 접수 제한(#24) 이후 일반 빌드와 `npm run dev`에는 `/settings`가 열리지 않습니다. 아래 절차는 `npm run demo:build`로 만든 데모 화면(`dist-demo`)에서만 그대로 동작합니다.

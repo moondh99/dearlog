@@ -32,6 +32,18 @@ describe('Company introduction review', () => {
     vi.unstubAllGlobals()
   })
 
+  it('offers a captioned-by-text usage video that is silent, fictional and not autoplaying', () => {
+    renderCompany()
+    const section = screen.getByRole('region', { name: '질문 하나가 기록이 되는 과정' })
+    const video = section.querySelector('video')!
+    expect(video).toHaveAttribute('controls')
+    expect(video).toHaveAttribute('poster', '/company/service-demo-poster.jpg')
+    expect(video).not.toHaveAttribute('autoplay')
+    expect(video.querySelector('source')).toHaveAttribute('src', '/company/service-demo.mp4')
+    expect(video).toHaveAccessibleDescription(/부모님이 질문에 편하게 답합니다.*가족이 원문과 정리본을 함께 확인합니다.*한 권의 기록집으로 엮습니다/)
+    expect(within(section).getByText(/영상 속 가족과 이야기는 모두 가상/)).toBeInTheDocument()
+  })
+
   it('offers an explicitly fictional, read-only sample without account or API work', () => {
     renderCompany()
     const sample = screen.getByRole('region', { name: '한 질문이 한 장의 이야기로' })

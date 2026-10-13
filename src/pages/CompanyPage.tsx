@@ -159,6 +159,26 @@ export default function CompanyPage() {
           </ol>
         </section>
 
+        <section id="company-video" className="company-video company-container" aria-labelledby="company-video-title">
+          <div className="company-video-copy">
+            <p className="company-kicker">영상으로 보기</p>
+            <h2 id="company-video-title">질문 하나가 기록이 되는 과정</h2>
+            <p>부모님이 질문에 답하고, 가족이 함께 확인하고, 모인 이야기가 기록집으로 이어지는 약 40초의 무음 영상입니다.</p>
+            <ol id="company-video-steps" className="company-video-steps">
+              <li><strong>부모님이 질문에 편하게 답합니다.</strong> 말하기 어려우면 직접 입력해도 됩니다.</li>
+              <li><strong>가족이 원문과 정리본을 함께 확인합니다.</strong> 말한 뜻이 잘 담겼는지 살펴봅니다.</li>
+              <li><strong>모인 이야기를 한 권의 기록집으로 엮습니다.</strong> 챕터별 구성을 점검합니다.</li>
+            </ol>
+            <span className="company-video-note">실제 제품 화면 · 가상 데이터로 구성한 로컬 시연 · 영상 속 가족과 이야기는 모두 가상입니다.</span>
+          </div>
+          <div className="company-phone company-video-phone">
+            <video controls muted playsInline preload="metadata" poster="/company/service-demo-poster.jpg" width={390} height={928} aria-label="디어로그 사용 영상" aria-describedby="company-video-steps">
+              <source src="/company/service-demo.mp4" type="video/mp4" />
+              이 브라우저에서는 영상을 재생할 수 없습니다. 위의 세 단계 설명으로 내용을 확인할 수 있습니다.
+            </video>
+          </div>
+        </section>
+
         <section id="company-sample" className="company-sample company-container" aria-labelledby="company-sample-title">
           <div className="company-section-heading">
             <div><p className="company-kicker">로그인 없이 읽는 가상 예시</p><h2 id="company-sample-title">한 질문이 한 장의 이야기로</h2></div>
