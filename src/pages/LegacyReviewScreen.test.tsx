@@ -211,6 +211,38 @@ describe('LegacyReviewScreen', () => {
     expect(await screen.findByText(RECORD_TEXT)).toBeInTheDocument()
   })
 
+  it('유예가 딱 떨어지면 "3일 0시간"이라고 하지 않는다', async () => {
+    vault = {
+      isVaultSetup: true,
+      deathVerificationStatus: 'pending_verification',
+      deathTriggeredById: 'guardian-2',
+      deathTriggeredAt: new Date().toISOString(),
+      deathReviewRemainingMs: 72 * 60 * 60 * 1000,
+    }
+    renderScreen()
+
+    // 기본 유예가 72시간이라 이게 가장 흔한 문구다.
+    expect(await screen.findByText('3일 뒤에 승인할 수 있습니다.')).toBeInTheDocument()
+  })
+
+  it('한 번 연 뒤 조각을 잘못 넣으면 앞서 연 기록을 남겨 두지 않는다', async () => {
+    await buildReleasedVault()
+    const [wrongFamily] = splitSecret('c'.repeat(64), 3, 3)
+    renderScreen()
+
+    const input = await screen.findByLabelText('가족 열쇠 조각')
+    fireEvent.change(input, { target: { value: familyShare } })
+    fireEvent.click(screen.getByRole('button', { name: '기록 열기' }))
+    await screen.findByText(RECORD_TEXT)
+
+    // 실패 문구 아래에 직전에 연 본문이 그대로 붙어 있으면 열린 것으로 읽힌다.
+    fireEvent.change(input, { target: { value: JSON.stringify(wrongFamily) } })
+    fireEvent.click(screen.getByRole('button', { name: '기록 열기' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('조각이 맞지 않아')
+    await waitFor(() => expect(screen.queryByText(RECORD_TEXT)).not.toBeInTheDocument())
+  })
+
   it('가족 조각이 틀리면 서버가 가진 두 조각만으로 열리지 않는다', async () => {
     await buildReleasedVault()
     // 남의 조각. 서버가 들고 있는 두 조각과 합쳐도 열려서는 안 된다.
