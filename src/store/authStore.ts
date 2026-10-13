@@ -10,7 +10,7 @@ interface AuthState {
   phoneNumber: string
   authToken: string | null
   setRole: (role: UserRole) => Promise<void>
-  setUserName: (name: string, phone: string, isLogin: boolean, birthDate?: string) => Promise<void>
+  setUserName: (name: string, phone: string, isLogin: boolean, birthDate: string | undefined, verificationToken: string) => Promise<void>
   setTokenLoginState: (userId: string, userName: string, phoneNumber: string, authToken?: string | null) => void
   reset: () => void
 }
@@ -55,13 +55,13 @@ export const useAuthStore = create<AuthState>()(
           }
         }
       },
-      setUserName: async (name, phone, isLogin, birthDate) => {
+      setUserName: async (name, phone, isLogin, birthDate, verificationToken) => {
         const sanitizedPhone = phone?.replace(/[^\d]/g, '')
         if (!sanitizedPhone) {
           throw new Error('휴대폰 번호를 입력해 주세요.')
         }
         try {
-          const res = await registerLocalPhoneAccount(sanitizedPhone, name, isLogin, birthDate)
+          const res = await registerLocalPhoneAccount(sanitizedPhone, name, isLogin, birthDate, verificationToken)
           const user = res.user
           const frontendRole: UserRole = user.role === 'senior' ? 'parent' : 'child'
 

@@ -3,10 +3,11 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppRoutes } from './App'
 import { useAuthStore } from './store/authStore'
-const mocks = vi.hoisted(() => ({ login: vi.fn(), profile: vi.fn(), role: vi.fn(), tokenLogin: vi.fn() }))
+const mocks = vi.hoisted(() => ({ login: vi.fn(), profile: vi.fn(), role: vi.fn(), tokenLogin: vi.fn(), otpRequest: vi.fn(), otpVerify: vi.fn() }))
 vi.mock('./lib/local-server', () => ({
   registerLocalPhoneAccount: mocks.login, updateLocalUserProfile: mocks.profile, updateLocalUserRole: mocks.role,
   loginWithInvitationToken: mocks.tokenLogin,
+  requestLocalPhoneOtp: mocks.otpRequest, verifyLocalPhoneOtp: mocks.otpVerify,
   fetchFamilyMembers: vi.fn(async () => ({ members: [] })),
   fetchLocalInterviewRecords: vi.fn(async () => ({ records: [] })),
   fetchLocalMemories: vi.fn(async () => ({ memories: [] })), fetchLocalPhotos: vi.fn(async () => ({ photos: [] })),
@@ -16,6 +17,9 @@ function open(path = '/auth') { render(<MemoryRouter initialEntries={[path]}><Ap
 async function submit(name = '가상 기존 사용자', phone = '010-2222-3333') {
   fireEvent.change(await screen.findByLabelText('등록한 이름'), { target: { value: name } })
   fireEvent.change(screen.getByLabelText('등록한 휴대폰 번호'), { target: { value: phone } })
+  fireEvent.click(screen.getByRole('button', { name: '인증번호 받기' }))
+  if (!/^01[016789]\d{7,8}$/.test(phone.replace(/[^\d]/g, ''))) return
+  fireEvent.change(await screen.findByLabelText('인증번호'), { target: { value: '123456' } })
   fireEvent.click(screen.getByRole('button', { name: '기존 기록 조회 로그인' }))
 }
 describe('existing-account-only login', () => {
@@ -24,13 +28,15 @@ describe('existing-account-only login', () => {
     window.localStorage.clear()
     window.sessionStorage.clear()
     useAuthStore.setState({ role: null, userName: '', userId: null, phoneNumber: '', authToken: null })
+    mocks.otpRequest.mockResolvedValue({ ok: true, expiresInSeconds: 300, resendAfterSeconds: 60 })
+    mocks.otpVerify.mockResolvedValue({ verificationToken: 'fixture-otp-token', expiresInSeconds: 300 })
     mocks.login.mockResolvedValue({ user: { id: 'guardian-1', name: '가상 기존 사용자', role: 'guardian' }, authToken: 'fixture-token' })
   })
   it('uses existing login with strict true and never initializes a new profile', async () => {
     open()
     await submit()
     expect(await screen.findByRole('heading', { name: '기존 기록 조회' })).toBeInTheDocument()
-    expect(mocks.login).toHaveBeenCalledExactlyOnceWith('01022223333', '가상 기존 사용자', true, undefined)
+    expect(mocks.login).toHaveBeenCalledExactlyOnceWith('01022223333', '가상 기존 사용자', true, undefined, 'fixture-otp-token')
     expect(mocks.profile).not.toHaveBeenCalled()
     expect(mocks.role).not.toHaveBeenCalled()
     expect(useAuthStore.getState().authToken).toBe('fixture-token')

@@ -37,10 +37,10 @@ describe('restricted public routes', () => {
     render(<RouteFallback />)
     expect(screen.getByRole('status')).toHaveTextContent('불러오는 중...')
   })
-  it('offers an existing-account login without signup or SMS controls', async () => {
+  it('offers an existing-account login without signup, asking for the code only after it is sent', async () => {
     open('/auth')
     expect(await screen.findByRole('heading', { name: '기존 계정 로그인' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '기존 기록 조회 로그인' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '인증번호 받기' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '회원가입' })).toBeNull()
     expect(screen.queryByLabelText(/인증번호/)).toBeNull()
   })

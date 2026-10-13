@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, Check } from 'lucide-react'
 import Button from '../components/Button'
 import parentAuthMascot from '../assets/figma/parent-auth-mascot.png'
+import { requestLocalPhoneOtp, verifyLocalPhoneOtp } from '../lib/local-server'
 import { useAuthStore } from '../store/authStore'
 
 type Tab = 'login' | 'signup'
 type SignupStep = 'phone' | 'code' | 'details' | 'consent'
+type LoginStep = 'details' | 'code'
 
 const PHONE_ERROR_MESSAGE = '휴대폰 번호를 010-0000-0000 형식으로 입력해 주세요.'
 const BIRTH_DATE_ERROR_MESSAGE = '생년월일을 1999-02-04 형식으로 입력해 주세요.'
@@ -45,25 +47,40 @@ export default function AuthScreen() {
   const { setUserName } = useAuthStore()
   const [tab, setTab] = useState<Tab | null>(null)
   const [signupStep, setSignupStep] = useState<SignupStep>('phone')
+  const [loginStep, setLoginStep] = useState<LoginStep>('details')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [birthDate, setBirthDate] = useState('')
   const [verificationCode, setVerificationCode] = useState('')
+  // 인증번호를 맞힌 뒤 서버가 내주는 한 번짜리 토큰. 가입·로그인 요청에 함께 보낸다.
+  const [verificationToken, setVerificationToken] = useState<string | null>(null)
+  const [otpBusy, setOtpBusy] = useState(false)
+  const [otpNotice, setOtpNotice] = useState<string | null>(null)
   const [termsAgreed, setTermsAgreed] = useState(false)
   const [privacyAgreed, setPrivacyAgreed] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [inviteHint, setInviteHint] = useState(false)
   const verificationInputRef = useRef<HTMLInputElement | null>(null)
 
+  const isCodeStep = (tab === 'signup' && signupStep === 'code') || (tab === 'login' && loginStep === 'code')
+
   useEffect(() => {
-    if (tab === 'signup' && signupStep === 'code') {
+    if (isCodeStep) {
       requestAnimationFrame(() => verificationInputRef.current?.focus())
     }
-  }, [tab, signupStep])
+  }, [isCodeStep])
+
+  const resetVerification = () => {
+    setVerificationCode('')
+    setVerificationToken(null)
+    setOtpNotice(null)
+  }
 
   const startAuthFlow = (t: Tab) => {
     setTab(t)
     setSignupStep(t === 'signup' ? 'phone' : 'details')
+    setLoginStep('details')
+    resetVerification()
     setErrorMsg(null)
     setInviteHint(false)
   }
@@ -75,24 +92,79 @@ export default function AuthScreen() {
     } else {
       setSignupStep('phone')
     }
+    setLoginStep('details')
+    resetVerification()
     setErrorMsg(null)
     setInviteHint(false)
   }
 
-  const handleSignupPhoneSubmit = () => {
+  // 인증번호 문자를 보낸다. 가입이면 새 번호인지, 로그인이면 가입된 번호인지 서버가 먼저 확인한다.
+  const sendVerificationCode = async (purpose: Tab) => {
+    setOtpBusy(true)
+    setErrorMsg(null)
+    try {
+      await requestLocalPhoneOtp(phoneDigits(phone), purpose)
+      return true
+    } catch (e: any) {
+      setErrorMsg(e.message || '인증번호를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.')
+      return false
+    } finally {
+      setOtpBusy(false)
+    }
+  }
+
+  const handleSignupPhoneSubmit = async () => {
     if (!isCompletePhoneNumber(phone)) {
       setErrorMsg(PHONE_ERROR_MESSAGE)
       return
     }
-    setVerificationCode('')
-    setSignupStep('code')
-    setErrorMsg(null)
+    resetVerification()
+    if (await sendVerificationCode('signup')) {
+      setSignupStep('code')
+    }
   }
 
-  const handleVerificationSubmit = () => {
-    if (verificationCode.length !== 6) return
-    setSignupStep('details')
+  const handleLoginRequestCode = async () => {
+    if (!name.trim()) return
+    if (!isCompletePhoneNumber(phone)) {
+      setErrorMsg(PHONE_ERROR_MESSAGE)
+      return
+    }
+    resetVerification()
+    if (await sendVerificationCode('login')) {
+      setLoginStep('code')
+    }
+  }
+
+  const handleResendCode = async () => {
+    if (!tab || otpBusy) return
+    resetVerification()
+    if (await sendVerificationCode(tab)) {
+      setOtpNotice('인증번호를 다시 보냈습니다.')
+    }
+  }
+
+  const handleVerificationSubmit = async () => {
+    if (!tab || verificationCode.length !== 6 || otpBusy) return
+    setOtpBusy(true)
     setErrorMsg(null)
+    setOtpNotice(null)
+    let token: string
+    try {
+      const res = await verifyLocalPhoneOtp(phoneDigits(phone), tab, verificationCode)
+      token = res.verificationToken
+    } catch (e: any) {
+      setErrorMsg(e.message || '인증번호를 확인하지 못했습니다. 다시 시도해 주세요.')
+      setOtpBusy(false)
+      return
+    }
+    setOtpBusy(false)
+    setVerificationToken(token)
+    if (tab === 'signup') {
+      setSignupStep('details')
+      return
+    }
+    await handleSubmit(token)
   }
 
   const handleProfileSubmit = () => {
@@ -105,7 +177,7 @@ export default function AuthScreen() {
     setErrorMsg(null)
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (tokenOverride?: string) => {
     if (!tab || !name.trim() || !phone.trim()) return
     if (tab === 'signup' && (!termsAgreed || !privacyAgreed)) return
     if (!isCompletePhoneNumber(phone)) {
@@ -117,9 +189,14 @@ export default function AuthScreen() {
       setErrorMsg(BIRTH_DATE_ERROR_MESSAGE)
       return
     }
+    const token = tokenOverride ?? verificationToken
+    if (!token) {
+      setErrorMsg('휴대폰 인증을 먼저 마쳐 주세요.')
+      return
+    }
     setErrorMsg(null)
     try {
-      await setUserName(name.trim(), phone.trim(), tab === 'login', tab === 'signup' ? birthDate.trim() : undefined)
+      await setUserName(name.trim(), phone.trim(), tab === 'login', tab === 'signup' ? birthDate.trim() : undefined, token)
       const updatedRole = useAuthStore.getState().role
       if (updatedRole === 'parent') {
         navigate('/parent')
@@ -262,10 +339,10 @@ export default function AuthScreen() {
             <button
               type="button"
               onClick={handleSignupPhoneSubmit}
-              disabled={!phone.trim()}
+              disabled={!phone.trim() || otpBusy}
               className="absolute left-6 top-[716.5px] h-[51px] w-[340px] rounded-[14px] bg-[#2A2830] text-center text-[14px] font-medium leading-[21px] tracking-[0.06em] text-[#F7F5FB] transition-transform active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100"
             >
-              인증번호 받기
+              {otpBusy ? '보내는 중…' : '인증번호 받기'}
             </button>
           </main>
         </div>
@@ -273,7 +350,7 @@ export default function AuthScreen() {
     )
   }
 
-  if (tab === 'signup' && signupStep === 'code') {
+  if (isCodeStep) {
     return (
       <div className="h-[100dvh] min-h-[100dvh] overflow-y-auto bg-[#F8F6F9] text-[#2A2830]">
         <div className="mx-auto flex min-h-[844px] w-full max-w-[388px] flex-col bg-[#F8F6F9]">
@@ -282,8 +359,9 @@ export default function AuthScreen() {
               <button
                 type="button"
                 onClick={() => {
-                  setSignupStep('phone')
-                  setVerificationCode('')
+                  if (tab === 'signup') setSignupStep('phone')
+                  else setLoginStep('details')
+                  resetVerification()
                   setErrorMsg(null)
                 }}
                 className="-ml-1 flex h-10 w-10 items-center justify-start text-[#7A767F] transition active:opacity-70"
@@ -294,7 +372,7 @@ export default function AuthScreen() {
             </div>
 
             <p className="absolute left-6 top-16 w-[340px] text-[10px] font-medium uppercase leading-[15px] tracking-[2.2px] text-[#7A767F]">
-              회원가입
+              {tab === 'login' ? '로그인' : '회원가입'}
             </p>
             <h1 className="absolute left-6 top-[91px] font-serif text-[26px] font-normal leading-[35.1px] text-[#2A2830]">
               인증번호를
@@ -335,16 +413,40 @@ export default function AuthScreen() {
             </label>
 
             <p className="absolute left-6 top-[319.69px] w-[340px] text-[11px] font-normal leading-[16.5px] text-[#7A767F]">
-              인증번호가 오지 않으면 휴대폰 번호를 다시 확인해주세요.
+              인증번호는 3분 동안 쓸 수 있어요.
             </p>
 
             <button
               type="button"
+              onClick={handleResendCode}
+              disabled={otpBusy}
+              className="absolute left-6 top-[352px] text-[12px] font-medium leading-[18px] text-[#7A767F] underline underline-offset-2 disabled:opacity-40"
+            >
+              인증번호 다시 받기
+            </button>
+
+            {otpNotice && !errorMsg && (
+              <p role="status" className="absolute left-6 top-[392px] w-[340px] text-[12px] font-medium leading-[18px] text-[#9485BE]">
+                {otpNotice}
+              </p>
+            )}
+
+            {errorMsg && (
+              <div role="alert" className="absolute left-6 top-[392px] flex w-[340px] items-start gap-3 rounded-[14px] border border-[#FF3B30]/20 bg-[#FF3B30]/10 p-4">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#FF3B30]" aria-hidden="true" />
+                <p className="text-[13px] font-medium leading-relaxed text-[#FF3B30]">
+                  {errorMsg}
+                </p>
+              </div>
+            )}
+
+            <button
+              type="button"
               onClick={handleVerificationSubmit}
-              disabled={verificationCode.length !== 6}
+              disabled={verificationCode.length !== 6 || otpBusy}
               className="absolute left-6 top-[716.5px] h-[51px] w-[340px] rounded-[14px] bg-[#2A2830] text-center text-[14px] font-medium leading-[21px] tracking-[0.06em] text-[#F7F5FB] transition-transform active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100"
             >
-              인증하기
+              {otpBusy ? '확인 중…' : '인증하기'}
             </button>
           </main>
         </div>
@@ -361,7 +463,8 @@ export default function AuthScreen() {
               <button
                 type="button"
                 onClick={() => {
-                  setSignupStep('code')
+                  setSignupStep('phone')
+                  resetVerification()
                   setErrorMsg(null)
                 }}
                 className="-ml-1 flex h-10 w-10 items-center justify-start text-[#7A767F] transition active:opacity-70"
@@ -546,7 +649,7 @@ export default function AuthScreen() {
 
             <button
               type="button"
-              onClick={handleSubmit}
+              onClick={() => handleSubmit()}
               disabled={isConsentSubmitDisabled}
               className="absolute left-6 top-[716.5px] flex h-[51px] w-[340px] items-center justify-center gap-3 rounded-[14px] bg-[#2A2830] text-center text-[14px] font-medium leading-[21px] tracking-[0.06em] text-[#F7F5FB] transition-transform active:scale-[0.99] disabled:opacity-40 disabled:active:scale-100"
             >
@@ -655,8 +758,8 @@ export default function AuthScreen() {
       )}
 
       <div className="mt-auto flex flex-col gap-3 pb-10 pt-8">
-        <Button fullWidth disabled={isSubmitDisabled} onClick={handleSubmit}>
-          {activeTab === 'login' ? '로그인' : '가입하기'}
+        <Button fullWidth disabled={isSubmitDisabled || otpBusy} onClick={handleLoginRequestCode}>
+          {otpBusy ? '보내는 중…' : '인증번호 받기'}
         </Button>
         {activeTab === 'signup' && (
           <Button fullWidth variant="secondary" onClick={() => handleTabChange('login')}>

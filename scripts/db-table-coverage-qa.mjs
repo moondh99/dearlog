@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dbPath = path.join(rootDir, 'server/data/dearlog.db');
 const API_URL = process.env.DB_COVERAGE_API_URL || process.env.PILOT_QA_API_URL || 'http://localhost:8787';
+const SMS_OUTBOX_PATH = process.env.SMS_DEV_OUTBOX_PATH || path.join(rootDir, 'server/data/sms-outbox.jsonl');
 
 const targetTables = [
   'CoverDesign',
@@ -55,6 +57,29 @@ async function api(pathname, options = {}) {
   return body;
 }
 
+// 가입·로그인에는 휴대폰 인증이 필요하다. QA 는 서버를 SMS_PROVIDER=dev 로 띄워 두고,
+// 개발용 발송이 남긴 파일에서 인증번호를 읽어 인증을 마친다. 실제 문자 업체를 쓰는
+// 운영 서버에는 이 방법으로 가입할 수 없다(그래야 한다).
+async function verifyPhoneWithDevOutbox(phoneNumber, purpose) {
+  try {
+    await api('/api/auth/otp/request', {
+      method: 'POST',
+      body: JSON.stringify({ phoneNumber, purpose }),
+    });
+  } catch (error) {
+    throw new Error(`인증번호 요청 실패. QA 서버를 SMS_PROVIDER=dev 로 띄웠는지 확인하세요. (${error.message})`);
+  }
+  const lines = fs.existsSync(SMS_OUTBOX_PATH) ? fs.readFileSync(SMS_OUTBOX_PATH, 'utf8').split('\n').filter(Boolean) : [];
+  const entry = lines.reverse().map((line) => JSON.parse(line)).find((sent) => sent.to === phoneNumber);
+  const code = /(\d{6})/.exec(entry?.text ?? '')?.[1];
+  assert(code, `개발용 발송 파일에서 ${phoneNumber} 의 인증번호를 찾지 못했습니다: ${SMS_OUTBOX_PATH}`);
+  const verified = await api('/api/auth/otp/verify', {
+    method: 'POST',
+    body: JSON.stringify({ phoneNumber, purpose, code }),
+  });
+  return verified.verificationToken;
+}
+
 function authHeaders(authToken) {
   return { Authorization: `Bearer ${authToken}` };
 }
@@ -92,6 +117,7 @@ async function main() {
       name: guardianName,
       isLogin: false,
       birthDate: '1990-01-02',
+      verificationToken: await verifyPhoneWithDevOutbox(guardianPhone, 'signup'),
     }),
   });
   const guardian = signup.user;
@@ -238,11 +264,11 @@ async function main() {
     }),
   });
 
+  // 금고는 부모님만 연다(서버가 보호자 호출을 거절한다).
   await api('/api/legacy/vault', {
     method: 'POST',
-    headers: guardianAuth,
+    headers: seniorAuth,
     body: JSON.stringify({
-      seniorId: senior.id,
       encryptedMemories: JSON.stringify({ runId, memoryId }),
       encryptedAutobiography: JSON.stringify({ title: 'DB QA 자서전' }),
       serverShare: JSON.stringify({ x: 2, y: `server-${runId}` }),
@@ -254,6 +280,28 @@ async function main() {
     headers: guardianAuth,
     body: JSON.stringify({ seniorId: senior.id }),
   });
+
+  // 사망 신고는 유예(LEGACY_DEATH_REVIEW_HOURS, 기본 72시간)가 지나야 승인된다. 이 QA가
+  // 사흘을 기다릴 수는 없고, 서버의 유예를 0으로 낮추면 같은 서버의 실제 가족 보호도 함께
+  // 사라진다. 그래서 서버 설정은 그대로 두고, 이번 실행이 만든 QA 부모님의 금고 행에 한해
+  // 신고 시각을 유예보다 앞으로 옮긴다. 연결된 보호자가 한 명뿐이라 신고한 보호자가
+  // 유예 뒤에 직접 승인할 수 있다(두 명 이상이면 다른 보호자가 승인해야 한다).
+  const pending = await api(`/api/legacy/vault?seniorId=${encodeURIComponent(senior.id)}`, {
+    headers: guardianAuth,
+  });
+  assert(
+    pending.vault?.deathVerificationStatus === 'pending_verification',
+    `death report did not start a review: ${pending.vault?.deathVerificationStatus}`,
+  );
+  const remainingMs = Number(pending.vault.deathReviewRemainingMs ?? 0);
+  if (remainingMs > 0) {
+    // Prisma 는 SQLite DateTime 을 epoch 밀리초 정수로 저장한다.
+    const triggeredMs = new Date(pending.vault.deathTriggeredAt).getTime();
+    assert(Number.isFinite(triggeredMs), `death report has no trigger time: ${pending.vault.deathTriggeredAt}`);
+    const backdatedMs = triggeredMs - remainingMs - 60_000;
+    sqlite(`UPDATE "LegacyVault" SET deathTriggeredAt = ${backdatedMs} WHERE seniorId = ${sqlString(senior.id)};`);
+  }
+
   await api('/api/legacy/approve-death', {
     method: 'POST',
     headers: guardianAuth,

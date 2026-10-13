@@ -5,7 +5,7 @@ import { isServiceRequestAllowed, SERVICE_RESTRICTION_CODE, SERVICE_RESTRICTION_
 // keep their own role, family, consent and file-token checks.
 export const restrictIntake: RequestHandler = (req, res, next) => {
   // Old find-or-create and invitation login must not grant new sessions.
-  if (isServiceRequestAllowed(req.method, `/api${req.path}`, req.body?.isLogin)) {
+  if (isServiceRequestAllowed(req.method, `/api${req.path}`, req.body)) {
     next();
     return;
   }

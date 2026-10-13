@@ -11,7 +11,22 @@ let initLocalDatabase: typeof import('./prisma/init').initLocalDatabase;
 let storageDir: typeof import('./storage').storageDir;
 let resetAIClientsForTests: typeof import('./ai-clients').resetAIClientsForTests;
 let createApp: typeof import('./app').createApp;
+let resetPhoneVerificationForTests: typeof import('./phone-verification').resetPhoneVerificationForTests;
+let lastTestSmsTo: typeof import('./sms').lastTestSmsTo;
+let clearTestSmsOutbox: typeof import('./sms').clearTestSmsOutbox;
 let app: any;
+
+// 로그인·가입 전에 휴대폰 인증을 마친다. 테스트용 발송(SMS_PROVIDER=test)이 모아 둔 문자에서
+// 인증번호를 읽어 확인하고, 가입·로그인에 쓰는 한 번짜리 토큰을 돌려준다.
+async function verifyPhone(phoneNumber: string, purpose: 'login' | 'signup') {
+  const sent = await request(app).post('/api/auth/otp/request').send({ phoneNumber, purpose });
+  expect(sent.status).toBe(200);
+  const code = /(\d{6})/.exec(lastTestSmsTo(phoneNumber) ?? '')?.[1];
+  expect(code).toMatch(/^\d{6}$/);
+  const verified = await request(app).post('/api/auth/otp/verify').send({ phoneNumber, purpose, code });
+  expect(verified.status).toBe(200);
+  return verified.body.verificationToken as string;
+}
 
 beforeAll(async () => {
   process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), `dearlog-legacy-${Date.now()}.db`)}`;
@@ -43,6 +58,8 @@ beforeAll(async () => {
   ({ storageDir } = await import('./storage'));
   ({ resetAIClientsForTests } = await import('./ai-clients'));
   ({ createApp } = await import('./app'));
+  ({ resetPhoneVerificationForTests } = await import('./phone-verification'));
+  ({ lastTestSmsTo, clearTestSmsOutbox } = await import('./sms'));
   await initLocalDatabase();
   app = createApp({ sampleInquiryOnly: false });
 });
@@ -53,6 +70,13 @@ afterAll(async () => {
 
 beforeEach(async () => {
   process.env.ALLOW_DEV_AUTH_HEADERS = 'true';
+  process.env.SMS_PROVIDER = 'test';
+  // 발송 횟수 제한은 메모리 카운터라 테스트 사이에 쌓인다. 여기서는 넉넉히 두고,
+  // 제한 자체는 'limits how many codes one number can request' 에서 따로 본다.
+  process.env.AUTH_OTP_SEND_LIMIT_PER_PHONE = '1000';
+  process.env.AUTH_OTP_SEND_LIMIT_PER_IP = '1000';
+  resetPhoneVerificationForTests();
+  clearTestSmsOutbox();
   process.env.FACTCHAT_API_KEY = '';
   process.env.FACTCHAT_BASE_URL = 'https://factchat-cloud.mindlogic.ai/v1/gateway';
   process.env.FACTCHAT_CHAT_MODEL = 'gpt-5-mini';
@@ -162,6 +186,44 @@ describe('Digital Legacy Vault API', () => {
     expect(dbVault).toBeDefined();
     expect(dbVault?.encryptedMemories).toBe(mockVaultData.encryptedMemories);
     expect(dbVault?.serverShare).toBe(mockVaultData.serverShare);
+  });
+
+  // 금고는 부모님만 연다. 연결된 보호자라도 대신 열거나 덮어쓸 수 없다.
+  it('POST /api/legacy/vault refuses a linked guardian creating the senior vault', async () => {
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send(mockVaultData);
+
+    expect(res.status).toBe(403);
+    expect(await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } })).toBeNull();
+  });
+
+  it('POST /api/legacy/vault refuses a linked guardian overwriting an existing vault', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        encryptedMemories: '{"data":"original"}',
+        serverShare: '{"share":"original_server"}',
+        institutionShare: '{"share":"original_institution"}',
+        deathVerificationStatus: 'pending_verification',
+        deathTriggeredById: 'test_guardian',
+        deathTriggeredAt: new Date(),
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/legacy/vault')
+      .set('x-user-id', 'test_guardian')
+      .set('x-user-role', 'guardian')
+      .send({ ...mockVaultData, serverShare: '{"share":"attacker"}' });
+
+    expect(res.status).toBe(403);
+    const vault = await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } });
+    expect(vault?.serverShare).toBe('{"share":"original_server"}');
+    expect(vault?.deathVerificationStatus).toBe('pending_verification');
   });
 
   it('GET /api/legacy/vault returns vault config once created', async () => {
@@ -637,6 +699,46 @@ describe('Digital Legacy Vault API', () => {
     }
   });
 
+  // 금고가 잠긴 동안 가족에게는 본문이 가려진다. 보호자가 해지할 수 있으면 금고를 지워
+  // 그 잠금을 스스로 풀 수 있으므로, 해지도 부모님만 한다.
+  it('POST /api/legacy/reset refuses a linked guardian and keeps the vault locked', async () => {
+    await prisma.legacyVault.create({
+      data: {
+        seniorId: 'test_senior',
+        isVaultSetup: true,
+        deathVerificationStatus: 'alive'
+      }
+    });
+    await prisma.interviewRecord.create({
+      data: {
+        id: 'rec_vaulted',
+        userId: 'test_senior',
+        chapterId: 'childhood',
+        audioFileKey: 'audio/vaulted.raw',
+        transcriptText: '금고에 넣어 둔 이야기',
+      }
+    });
+    const guardian = { 'x-user-id': 'test_guardian', 'x-user-role': 'guardian' };
+
+    const res = await request(app)
+      .post('/api/legacy/reset')
+      .set(guardian)
+      .send({ seniorId: 'test_senior' });
+
+    expect(res.status).toBe(403);
+    expect(await prisma.legacyVault.findUnique({ where: { seniorId: 'test_senior' } })).not.toBeNull();
+
+    // 해지가 막혔으니 보호자에게는 여전히 가려진 문구가 간다.
+    const records = await request(app)
+      .get('/api/interview-records')
+      .query({ seniorId: 'test_senior' })
+      .set(guardian);
+    expect(records.status).toBe(200);
+    expect(records.body.records).toHaveLength(1);
+    expect(records.body.records[0].transcriptText)
+      .toBe('[유산 암호화 설정으로 잠겨 있습니다. 사후 전수 시에만 해독할 수 있습니다.]');
+  });
+
   it('POST /api/legacy/reset deletes vault config', async () => {
     await prisma.legacyVault.create({
       data: {
@@ -663,9 +765,10 @@ describe('Digital Legacy Vault API', () => {
 
   describe('POST /api/auth/phone validation', () => {
     it('succeeds in signup when phone is new', async () => {
+      const verificationToken = await verifyPhone('01055554444', 'signup');
       const res = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01055554444', name: '홍길동', isLogin: false, birthDate: '1997-07-04' });
+        .send({ phoneNumber: '01055554444', name: '홍길동', isLogin: false, birthDate: '1997-07-04', verificationToken });
 
       expect(res.status).toBe(201);
       expect(res.body.user.name).toBe('홍길동');
@@ -694,9 +797,10 @@ describe('Digital Legacy Vault API', () => {
         data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
       });
 
+      const verificationToken = await verifyPhone('01033334444', 'login');
       const res = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: true });
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: true, verificationToken });
 
       expect(res.status).toBe(200);
       expect(res.body.user.name).toBe('김유신');
@@ -709,9 +813,10 @@ describe('Digital Legacy Vault API', () => {
         data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
       });
 
+      const verificationToken = await verifyPhone('01033334444', 'login');
       const res = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01033334444', name: '이순신', isLogin: true });
+        .send({ phoneNumber: '01033334444', name: '이순신', isLogin: true, verificationToken });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('이름이 일치하지 않습니다');
@@ -726,28 +831,162 @@ describe('Digital Legacy Vault API', () => {
       expect(res.body.error).toContain('가입되지 않은 휴대폰 번호입니다');
     });
 
-    it('falls back to find-or-create when isLogin is undefined for legacy clients', async () => {
-      // Existing
+    // 예전에는 isLogin 을 빼면 번호만으로 기존 계정의 토큰을 내줬다.
+    it('does not issue a token for an existing number when isLogin is missing', async () => {
       await prisma.user.create({
         data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
       });
 
-      const resExisting = await request(app)
+      const res = await request(app)
         .post('/api/auth/phone')
         .send({ phoneNumber: '01033334444' }); // no name, no isLogin
 
-      expect(resExisting.status).toBe(200);
-      expect(resExisting.body.user.name).toBe('김유신');
-      expect(resExisting.body.authToken).toEqual(expect.any(String));
+      expect(res.status).toBe(400);
+      expect(res.body.authToken).toBeUndefined();
+      expect(res.body.user).toBeUndefined();
+    });
 
-      // New
-      const resNew = await request(app)
+    it('does not create an account when isLogin is missing', async () => {
+      const res = await request(app)
         .post('/api/auth/phone')
         .send({ phoneNumber: '01077778888', name: '신규자' }); // no isLogin
 
-      expect(resNew.status).toBe(201);
-      expect(resNew.body.user.name).toBe('신규자');
-      expect(resNew.body.authToken).toEqual(expect.any(String));
+      expect(res.status).toBe(400);
+      expect(await prisma.user.findUnique({ where: { phoneNumber: '01077778888' } })).toBeNull();
+    });
+
+    it('rejects a non-boolean isLogin instead of guessing', async () => {
+      await prisma.user.create({
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+      });
+
+      // 문자열 'false' 를 참으로 읽으면 로그인 분기로, 거짓으로 읽으면 가입 분기로 간다.
+      // 어느 쪽으로도 추측하지 않는다.
+      const res = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: 'true' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.authToken).toBeUndefined();
+    });
+  });
+
+  describe('phone OTP', () => {
+    beforeEach(async () => {
+      await prisma.user.create({
+        data: { name: '김유신', role: 'guardian', phoneNumber: '01033334444' }
+      });
+    });
+
+    it('refuses to send codes or log in when no SMS provider is configured', async () => {
+      delete process.env.SMS_PROVIDER;
+
+      const sent = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
+
+      expect(sent.status).toBe(503);
+      expect(lastTestSmsTo('01033334444')).toBeNull();
+    });
+
+    it('does not log in with the right name but no verification', async () => {
+      const res = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: true });
+
+      expect(res.status).toBe(401);
+      expect(res.body.authToken).toBeUndefined();
+    });
+
+    // 인증 전에 이름이 맞는지 알려 주면, 번호만 아는 사람이 이름을 대입해 확인할 수 있다.
+    it('does not reveal a name mismatch before verification', async () => {
+      const res = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '이순신', isLogin: true });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).not.toContain('이름');
+    });
+
+    it('rejects a wrong code and burns the code after five misses', async () => {
+      await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
+      const code = /(\d{6})/.exec(lastTestSmsTo('01033334444') ?? '')![1];
+      const wrong = code === '000000' ? '111111' : '000000';
+
+      for (let i = 1; i <= 4; i += 1) {
+        const res = await request(app).post('/api/auth/otp/verify').send({ phoneNumber: '01033334444', purpose: 'login', code: wrong });
+        expect(res.status).toBe(400);
+        expect(res.body.reason).toBe('mismatch');
+      }
+      const fifth = await request(app).post('/api/auth/otp/verify').send({ phoneNumber: '01033334444', purpose: 'login', code: wrong });
+      expect(fifth.body.reason).toBe('too_many');
+
+      // 다 틀린 뒤에는 맞는 번호도 받지 않는다.
+      const late = await request(app).post('/api/auth/otp/verify').send({ phoneNumber: '01033334444', purpose: 'login', code });
+      expect(late.status).toBe(400);
+      expect(late.body.verificationToken).toBeUndefined();
+    });
+
+    it('uses a verification token only once', async () => {
+      const verificationToken = await verifyPhone('01033334444', 'login');
+      const first = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: true, verificationToken });
+      const second = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01033334444', name: '김유신', isLogin: true, verificationToken });
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(401);
+    });
+
+    it('binds a verification token to its phone number and purpose', async () => {
+      const verificationToken = await verifyPhone('01033334444', 'login');
+      await prisma.user.create({
+        data: { name: '강감찬', role: 'guardian', phoneNumber: '01011112222' }
+      });
+
+      const otherPhone = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01011112222', name: '강감찬', isLogin: true, verificationToken });
+      expect(otherPhone.status).toBe(401);
+
+      const signupToken = await verifyPhone('01077778888', 'signup');
+      const wrongPurpose = await request(app)
+        .post('/api/auth/phone')
+        .send({ phoneNumber: '01077778888', name: '신규자', isLogin: true, verificationToken: signupToken });
+      // 가입용으로 인증한 번호로는 로그인 토큰이 나오지 않는다(이 번호는 아직 가입 전이라 404).
+      expect(wrongPurpose.body.authToken).toBeUndefined();
+    });
+
+    it('does not text unregistered numbers for login or registered numbers for signup', async () => {
+      const loginUnknown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01099999999', purpose: 'login' });
+      const signupKnown = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'signup' });
+
+      expect(loginUnknown.status).toBe(404);
+      expect(signupKnown.status).toBe(400);
+      expect(lastTestSmsTo('01099999999')).toBeNull();
+      expect(lastTestSmsTo('01033334444')).toBeNull();
+    });
+
+    it('limits how many codes one number can request', async () => {
+      process.env.AUTH_OTP_SEND_LIMIT_PER_PHONE = '2';
+      await prisma.user.create({ data: { name: '제한', role: 'guardian', phoneNumber: '01066667777' } });
+      const statuses: number[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        // 재발송 간격(1분)에 걸리지 않도록 매번 진행 중인 번호를 지운다.
+        resetPhoneVerificationForTests();
+        const res = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01066667777', purpose: 'login' });
+        statuses.push(res.status);
+      }
+      expect(statuses).toEqual([200, 200, 429]);
+    });
+
+    it('makes the user wait before sending another code', async () => {
+      const first = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
+      const again = await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01033334444', purpose: 'login' });
+
+      expect(first.status).toBe(200);
+      expect(again.status).toBe(429);
+      expect(again.headers['retry-after']).toBeDefined();
     });
   });
 
@@ -757,7 +996,7 @@ describe('Digital Legacy Vault API', () => {
 
       const login = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01055553333', name: '토큰사용자', isLogin: false });
+        .send({ phoneNumber: '01055553333', name: '토큰사용자', isLogin: false, verificationToken: await verifyPhone('01055553333', 'signup') });
 
       expect(login.status).toBe(201);
       expect(login.body.authToken).toEqual(expect.any(String));
@@ -784,7 +1023,7 @@ describe('Digital Legacy Vault API', () => {
     it('requires self-authentication before profile mutations', async () => {
       const login = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01055552222', name: '자기계정', isLogin: false });
+        .send({ phoneNumber: '01055552222', name: '자기계정', isLogin: false, verificationToken: await verifyPhone('01055552222', 'signup') });
 
       const otherUser = await prisma.user.create({
         data: { name: '다른 계정', role: 'guardian', phoneNumber: '01055550000' }
@@ -806,7 +1045,7 @@ describe('Digital Legacy Vault API', () => {
     it('allows self-authenticated role and profile updates with refreshed tokens', async () => {
       const login = await request(app)
         .post('/api/auth/phone')
-        .send({ phoneNumber: '01055556666', name: '역할변경', isLogin: false });
+        .send({ phoneNumber: '01055556666', name: '역할변경', isLogin: false, verificationToken: await verifyPhone('01055556666', 'signup') });
 
       const roleRes = await request(app)
         .patch(`/api/auth/users/${login.body.user.id}/role`)

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { config } from './config';
 import { resolveLocalFileKey } from './storage';
@@ -1277,8 +1278,42 @@ function chromePathCandidates() {
   ].filter((candidate): candidate is string => Boolean(candidate));
 }
 
+function defaultPlaywrightBrowserRoots() {
+  const roots = [path.join(os.homedir(), '.cache', 'ms-playwright')];
+  const configured = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  // '0'은 Playwright가 브라우저를 node_modules 안에 두라는 뜻이라 폴더 경로가 아니다.
+  if (configured && configured !== '0') roots.unshift(configured);
+  return roots;
+}
+
+// 시스템 Chrome은 없고 Playwright가 받아 둔 Chromium만 있는 리눅스 환경(클라우드 개발
+// 컨테이너, CI)에서도 CHROME_PATH 없이 PDF를 만들 수 있게 한다. 폴더 이름이
+// chromium-<리비전>이라 경로를 고정할 수 없으므로 목록을 읽어 최신 리비전부터 시도한다.
+export async function playwrightChromiumCandidates(roots = defaultPlaywrightBrowserRoots()) {
+  const candidates: string[] = [];
+  for (const root of roots) {
+    let entries: string[];
+    try {
+      entries = await fs.readdir(root);
+    } catch {
+      continue;
+    }
+    const revisions = entries
+      .map((name) => /^chromium-(\d+)$/.exec(name))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .sort((a, b) => Number(b[1]) - Number(a[1]));
+    for (const [dir] of revisions) {
+      candidates.push(
+        path.join(root, dir, 'chrome-linux', 'chrome'),
+        path.join(root, dir, 'chrome-linux64', 'chrome'),
+      );
+    }
+  }
+  return candidates;
+}
+
 async function resolveChromePath() {
-  for (const candidate of chromePathCandidates()) {
+  for (const candidate of [...chromePathCandidates(), ...(await playwrightChromiumCandidates())]) {
     try {
       await fs.access(candidate);
       return candidate;
@@ -1287,7 +1322,7 @@ async function resolveChromePath() {
     }
   }
 
-  throw new Error('HTML/CSS PDF 생성을 위한 Chrome 실행 파일을 찾을 수 없습니다. CHROME_PATH를 설정하세요.');
+  throw new Error('HTML/CSS PDF 생성을 위한 Chrome 실행 파일을 찾을 수 없습니다. CHROME_PATH를 설정하거나 Playwright Chromium을 설치하세요.');
 }
 
 type RenderBrowser = Awaited<ReturnType<typeof import('puppeteer-core').default.launch>>;

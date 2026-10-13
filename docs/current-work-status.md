@@ -1,6 +1,104 @@
 # Current Work Status
 
-Last checked: 2026-07-31
+Last checked: 2026-09-29
+
+Sections dated 2026-07-30/31 below are kept as a historical log. Where they disagree with
+`Changes Since 2026-07-31`, the newer section wins.
+
+## Changes Since 2026-07-31 (reconciled 2026-09-29)
+
+The last code commit is `d393118` (2026-08-05). Merged PRs #2–#16 changed several things this
+document and `README.md` still described as missing. Reconciled against `src/App.tsx`,
+`server/app.ts`, and the commit messages:
+
+| Area | Change | Commits |
+| --- | --- | --- |
+| Dead code | `/twilio/voice`, `/twilio/status`, `/twilio/recording`, the `/twilio/media` WebSocket, `server/phone.ts`, `server/realtime-bridge.ts`, and unused deps (`twilio`, `date-fns`, `motion`, `autoprefixer`, `@capacitor/camera`) removed. Phone interviews had already been replaced by the in-app call (`server/app-call.ts`) | `b45bd7f` (#3) |
+| Route count | `server/app.ts` now registers 71 `/api/*` routes plus the SPA catch-all, and no `/twilio/*` routes | — |
+| Auth | `AUTH_TOKEN_SECRET` is required in every environment (empty → login 503, no public fallback secret). Login attempts are rate-limited per phone number (default 10) and per IP (default 100) in a 10-minute window. `/settings` is registered only in dev or when built with `VITE_ENABLE_DEMO_SETTINGS=true`; `/calendar` now requires login | `c5a5bc9` (#2), `fce203e` (#4) |
+| Consent | All five purposes moved onto `InterviewRecord` columns (photos carry four; no `chatbot`) and are enforced at consumers: `publish` (publication input, cover), `chatbot` (twin chunks), `familyRead` (guardian-facing masking), `sensitive` (publication, cover, twin, draft), `posthumous` (masked even after vault release). See `docs/consent-enforcement-design.md` | `4094743`, `79671aa` (#7, #8) |
+| Retroactive consent | `publish`/`sensitive` revocation and deleting a book-eligible photo block previously generated PDFs and preview jobs for family (409). Consent toggles that do not affect the book no longer block it. Chatbot revocation deletes older chat sessions from browser storage | `ccf903b`, `2e2322b`, `fdc8740`, `0012b17`, `5eea731` (#10, #11) |
+| Publication | Failures end in `failed` instead of staying `generating`; recoverable preview errors are capped at 6 attempts. Chrome is launched once per process and reused | `3cdbf41` (#9), `5412715` (#6) |
+| Chapters | Chapter titles come only from `server/domain/constants.ts` `FIXED_CHAPTERS`; screens derive from `src/lib/chapters.ts`. The old app-side labels (e.g. `hobbies` = '일과 삶') are gone | `ac67fae` (#12) |
+| Web Push | My Page push toggle reflects the real browser subscription, registers `public/push-sw.js`, and unsubscribes (new `DELETE /api/push-subscriptions`). Notifications are readable in a My Page inbox even without VAPID keys | `0454795` (#13) |
+| Digital legacy vault | `/parent/vault` (senior: create, show/save family share, revoke, cancel a death report) and `/child/legacy` (guardian: report, approve, cancel, open records after release). 3-of-3 Shamir split with `crypto.getRandomValues`. The reporter cannot approve their own report (single-guardian families fall back to the review window), approval waits `LEGACY_DEATH_REVIEW_HOURS` (default 72), and every linked guardian plus the senior is notified. `POST /api/legacy/cancel-death` added | `d668551`, `a7a9cc1`, `d393118` (#14–#16) |
+
+### This pass (2026-09-29)
+
+- `server/publication-html.ts` now falls back to a Playwright-downloaded Chromium
+  (`$PLAYWRIGHT_BROWSERS_PATH/chromium-<rev>/chrome-linux/chrome`, then
+  `~/.cache/ms-playwright`, newest revision first) after `CHROME_PATH`,
+  `PUPPETEER_EXECUTABLE_PATH`, and the system Chrome/Chromium paths. Without it, the six PDF
+  tests in `server/app.test.ts` and `server/publication-html.browser.test.ts` failed in Linux
+  containers that have no system Chrome. Covered by `server/chrome-path.test.ts`.
+- `README.md` and `PRD_Dearlog.md` updated to match the table above. `docs/technical-architecture.md`
+  followed in a separate change: removed files (`SelectModeScreen.tsx`, `server/phone.ts`,
+  `server/realtime-bridge.ts`) and Twilio config dropped; consent, retroactive gating, vault,
+  push, chapters, and publication failure handling rewritten against the code; the chatbot section now
+  says transcript chunks come from `InterviewRecord` and are relabeled `UNVERIFIED` → `ESTIMATED`
+  (the old text only described the demo-only `Memory` path).
+- `POST /api/auth/phone` no longer has the legacy find-or-create branch. Omitting `isLogin`
+  used to return an existing account's token from the phone number alone, with no name check.
+  `isLogin` must now be a boolean or the request gets 400. The app and QA scripts already send it.
+  Covered by three tests in `server/legacy-api.test.ts`, which fail against the old code.
+- `POST /api/legacy/vault` is now `requireRole('senior')`. A linked guardian could previously open the
+  senior's vault (holding the key shares) or overwrite an existing one, replacing the shares and resetting
+  a pending death review to `alive`. `scripts/db-table-coverage-qa.mjs` now creates the vault with the
+  senior token. Two tests in `server/legacy-api.test.ts` fail against the old code.
+- `POST /api/legacy/reset` is now `requireRole('senior')` as well. A linked guardian could delete the
+  senior's vault and so lift the lock that hides vaulted records from family. The only app caller is the
+  senior-only `/parent/vault` screen. One test in `server/legacy-api.test.ts` fails against the old code.
+- `scripts/db-table-coverage-qa.mjs` had been failing at `approve-death` since #15 (403: the review window
+  had not elapsed). It now reads the pending review from `GET /api/legacy/vault` and, only for the QA senior
+  it created in that run, moves `deathTriggeredAt` back past the window before approving, so the server's
+  `LEGACY_DEATH_REVIEW_HOURS` stays untouched for real families. Reproduced the 403 against a local server
+  with the default 72 h window, then ran the fixed script end to end: all 13 table deltas and
+  `released|1|1` passed. (The container has no `sqlite3` CLI; the run used a `node:sqlite` stand-in with
+  the same list-mode output.) The script expects a seeded DB (`npm run db:seed`) for chapter rows.
+- Phone OTP for login and signup. `POST /api/auth/otp/request` sends a 6-digit code (`crypto.randomInt`,
+  hashed in memory, 3 min, 60 s resend gap, per-phone 5 / per-IP 50 sends per window); `POST /api/auth/otp/verify`
+  allows 5 tries per code and returns a single-use 10-minute token bound to phone + purpose;
+  `POST /api/auth/phone` requires that token and only reveals a name mismatch after it. SMS delivery is
+  pluggable (`server/sms.ts`): unset `SMS_PROVIDER` means no codes and login/signup return 503 (fail-closed,
+  not keyed on `NODE_ENV`, same as the auth settings); `SMS_PROVIDER=dev` writes codes to the server log and
+  `server/data/sms-outbox.jsonl` (gitignored) for local dev and QA. No real SMS vendor is wired yet, so the
+  pilot cannot log in until one is. The signup screen's code step used to accept any 6 digits; it now calls
+  the server, and login gained a code step with resend. The unreachable `/auth/verify` page (also accepted any
+  code) was removed. Both QA scripts read the code from the dev outbox.
+- Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
+  - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
+    `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).
+  - Transitive, within existing ranges: `@xmldom/xmldom` 0.9.12, `browserslist` 4.29.2,
+    `baseline-browser-mapping` 2.11.26, `nanoid` 3.3.19, `undici` 7.30.0.
+  - `prisma` 6.19.3 is the newest 6.x and pins `deepmerge-ts` 7.1.5 (fixed in 8.0.0). Prisma 7 is a
+    breaking migration, so `package.json` `overrides` pins `@prisma/config` → `deepmerge-ts` ^8.0.2 instead.
+    `@prisma/config` only calls `deepmerge()` as the c12 merger when loading a `prisma.config.*` file;
+    8.0's breaking changes are in `deepmergeInto`, type names, and Map merging. Verified by loading a
+    temporary `prisma.config.ts` with `prisma validate --config`. Drop the override once Prisma ships
+    `deepmerge-ts` 8.
+  - `@types/react` is now an explicit devDependency. It was only installed as an optional peer of
+    `zustand` / `@testing-library/react`; npm 11 prunes optional peers and `npm run lint` then fails with
+    JSX `key` errors.
+  - npm 10.9.7 crashes (`Cannot read properties of null (reading 'edgesOut')`) in `npm audit fix` and
+    when upgrading `vitest`. The `vitest`, `@types/react`, transitive, and override steps were run with
+    `npx npm@11`; the resulting lockfile (v3) installs cleanly with npm 10 `npm ci`.
+
+### Verification (2026-09-29, Linux cloud container, Node v22.22.2)
+
+| Command | Result |
+| --- | --- |
+| `npm ci` | Passed |
+| `npm run lint` | Passed |
+| `npm test` before the Chrome fallback | 37 files passed, 2 failed (6 tests): `Chrome 실행 파일을 찾을 수 없습니다` |
+| `npm test` with `CHROME_PATH` set, before the fallback | Passed: 39 files / 333 tests |
+| `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
+| `npm test` after the login fix | Passed: 40 files / 337 tests |
+| `npm test` after phone OTP | Passed: 41 files / 358 tests. Forcing the token check to pass fails 4 of the new OTP tests |
+| Phone OTP against real servers | `SMS_PROVIDER=dev`: `db-table-coverage-qa.mjs` passed end to end; Chromium (390 px) completed signup and login through the code step, and a wrong code showed "4번 더 입력할 수 있습니다". Unset `SMS_PROVIDER`: `otp/request` 503, `auth/phone` without a token 401 |
+| `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
+| `npm audit` | 15 findings (1 low, 7 moderate, 7 high) before the dependency pass below |
+| `npm audit` after the dependency pass | 0 vulnerabilities; `npm ci` from a clean `node_modules` with npm 10.9.7 also reports 0 |
+| After the dependency pass | `npm run lint` passed, `npm test` 40 files / 337 tests passed, `npm run build` passed, `npm run db:generate` and `npm run db:migrate` passed, `npm run server:dev` served `/api/health` |
 
 ## Codebase Consolidation (2026-07-30)
 
@@ -195,14 +293,15 @@ Notes:
 | --- | --- | --- |
 | Test configuration drift | Resolved; current tests are included and the full suite passes | Keep the excludes limited to vendor/generated/reference-project paths |
 | Server AI proxy operations | Browser API key exposure removed; proxy calls rate-limited, audited, summarized in the guardian My Page dashboard, threshold-checked, routed to operators, pruned by retention | Set real production operator IDs, keep `AI_PROXY_DASHBOARD_TOKEN` in the team secret store, review thresholds after live traffic |
+| SMS vendor for OTP | Login and signup now require a phone code, but only the dev sender exists. With `SMS_PROVIDER` unset the pilot returns 503 for login and signup | Pick a vendor (Solapi, NCP SENS, …), register the sender number, implement `SmsSender` in `server/sms.ts`, then set `SMS_PROVIDER` on the pilot |
 | Auth token operations | Signed Bearer tokens preferred and dev headers blocked outside allowed environments; no refresh/revocation storage yet | Set a strong production `AUTH_TOKEN_SECRET`, add refresh/revocation policy, keep `ALLOW_DEV_AUTH_HEADERS` off in production |
-| Digital legacy vault | Server API and model work, but no live UI calls them and the client crypto modules (`shamir.ts`, `encryption.ts`) have no importers; release policy is simulated | Treat as demo-only until UI, key management, legal, and audit review are done |
-| Memory-level data sovereignty | Five purposes and reversible stop-use are now live; three downstream purposes are not fully enforced and complete deletion scope/policy is unresolved | Enforce every purpose at consumers, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |
+| Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. Creating (`POST /api/legacy/vault`) and revoking (`POST /api/legacy/reset`) the vault are senior-only on the server too | Treat as demo-only until key management, legal, and audit review are done |
+| Memory-level data sovereignty | All five purposes are enforced at consumers and revocation/deletion is retroactive for generated books. `Memory`/`MemoryConsentSettings`/`MemoryVectorEntry` are demo-seed only, and `GET /api/memories` still returns `Memory` bodies when its chatbot consent is revoked. Complete deletion scope/policy is unresolved | Decide the `Memory` table cleanup, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |
 | PDF implementation duplication | Resolved; unused client component and both unused PDF dependencies were removed | Keep server publication rendering as the single supported PDF path |
 | Weekly family quiz | Documented as a planned feature with no implementation | Design and implement, or drop it from product materials |
 | Presentation assets | Existing `artifacts/capstone-demo/` files are preserved snapshots, but there is no regeneration command | Capture new assets from live routes if a new presentation package is needed |
 | Public tunnel | Local `/api/health` is healthy, but `https://dear-log.com/api/health` returned Cloudflare error 1033 during the 2026-07-30 pass | Restart the named `dearlog` tunnel only when public access is intentionally required |
-| Dependency advisories | Reduced from 15 to 3: 2 high React Router RSC-only entries and 1 low Windows `tsx → esbuild` dev-server entry. The current published React Router line has no audit-clean upgrade, and this SPA does not use RSC | Keep the documented exception narrow, monitor for a patched Router release and a `tsx` update, and never downgrade to 7.11.0 or use `npm audit fix --force` |
+| Dependency advisories | 2026-09-29: 0. It had climbed back to 15 after new advisories; fixed by in-range upgrades plus one `overrides` entry for `deepmerge-ts` under `@prisma/config` (see `This pass`) | Remove the `deepmerge-ts` override when Prisma updates it; re-run `npm audit` periodically; do not use `npm audit fix --force` |
 
 ## Recommended Next Steps
 
@@ -215,7 +314,13 @@ Notes:
 3. Run a signed-in, non-demo browser pass against the intended API target before a real family pilot.
 4. Define complete-delete semantics: references, publication/cache copies, `LegacyVault`, backups,
    retention period, guardian authority, and reauthentication.
-5. Enforce `familyRead`, `posthumous`, and `sensitive` at all downstream consumers.
-6. Monitor React Router and `tsx` for patched releases; keep the current three audit findings documented.
+5. ~~Enforce `familyRead`, `posthumous`, and `sensitive` at all downstream consumers.~~ Done
+   (#7, #8); see `docs/consent-enforcement-design.md`.
+6. ~~Triage the 15 `npm audit` findings.~~ Done 2026-09-29 (0 remaining). Remove the `deepmerge-ts`
+   override once Prisma ships `deepmerge-ts` 8.
 7. When public access is wanted, restart the Cloudflare named tunnel and run `npm run pilot:public:check`.
-8. Complete UI, key-management, legal, and audit review before treating the digital legacy vault as production-ready.
+8. Complete key-management, legal, and audit review before treating the digital legacy vault as
+   production-ready. The UI is wired (#14–#16).
+9. Decide whether to drop the unused `Memory` table family and how `GET /api/memories` should
+   treat revoked chatbot consent.
+10. Handle the `/?callSessionId=...` link that in-app call notifications carry; nothing reads it yet.

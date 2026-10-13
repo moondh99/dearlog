@@ -10,6 +10,7 @@ let app: Express;
 let prisma: typeof import('./db').prisma;
 let createApp: typeof import('./app').createApp;
 let issueAuthToken: typeof import('./auth').issueAuthToken;
+let lastTestSmsTo: typeof import('./sms').lastTestSmsTo;
 let fixtureDir: string;
 let storageRoot: string;
 let guardianToken: string;
@@ -20,6 +21,15 @@ const GUARDIAN = 'restricted_fixture_guardian';
 const STRANGER = 'restricted_fixture_stranger';
 const INVITE = 'synthetic-existing-invitation-token';
 const fakeAudio = Buffer.from('synthetic fixture bytes; never uploaded to production');
+
+// 기존 계정 로그인도 휴대폰 인증을 거친다. 인증은 메모리 상태라 DB 스냅샷에는 남지 않는다.
+async function verifyLogin(phoneNumber: string) {
+  expect((await request(app).post('/api/auth/otp/request').send({ phoneNumber, purpose: 'login' })).status).toBe(200);
+  const code = /(\d{6})/.exec(lastTestSmsTo(phoneNumber) ?? '')?.[1];
+  const verified = await request(app).post('/api/auth/otp/verify').send({ phoneNumber, purpose: 'login', code });
+  expect(verified.status).toBe(200);
+  return verified.body.verificationToken as string;
+}
 
 async function snapshot() {
   const tables = await prisma.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
@@ -42,11 +52,13 @@ beforeAll(async () => {
   process.env.ALLOW_DEV_AUTH_HEADERS = 'false';
   process.env.OPENAI_API_KEY = '';
   process.env.FACTCHAT_API_KEY = '';
+  process.env.SMS_PROVIDER = 'test';
   const { config } = await import('./config');
   storageRoot = path.join(fixtureDir, 'storage');
   config.storageDir = storageRoot;
   config.dataDir = path.join(fixtureDir, 'data');
   ({ prisma } = await import('./db'));
+  ({ lastTestSmsTo } = await import('./sms'));
   const { initLocalDatabase } = await import('./prisma/init');
   await initLocalDatabase();
   await prisma.user.createMany({ data: [
@@ -138,13 +150,15 @@ describe('sample and inquiry restriction', () => {
 
   it('retains explicit existing login and its original name check without creating accounts', async () => {
     const before = await snapshot();
-    const login = await request(app).post('/api/auth/phone').send({ phoneNumber: '01000001002', name: '합성 가족', isLogin: true });
+    const login = await request(app).post('/api/auth/phone').send({ phoneNumber: '01000001002', name: '합성 가족', isLogin: true, verificationToken: await verifyLogin('01000001002') });
     expect(login.status).toBe(200);
     expect(login.body.user.id).toBe(GUARDIAN);
     expect(login.body.isNew).toBe(false);
     expect(login.body.authToken).toBeTruthy();
-    expect((await request(app).post('/api/auth/phone').send({ phoneNumber: '01000001002', name: '다른 이름', isLogin: true })).status).toBe(400);
-    expect((await request(app).post('/api/auth/phone').send({ phoneNumber: '01000001999', name: '합성 신규', isLogin: true })).status).toBe(404);
+    expect((await request(app).post('/api/auth/phone').send({ phoneNumber: '01000001002', name: '다른 이름', isLogin: true, verificationToken: await verifyLogin('01000001002') })).status).toBe(400);
+    // 가입되지 않은 번호는 인증번호 단계에서 막힌다. 문자도 나가지 않고 계정도 만들어지지 않는다.
+    expect((await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01000001999', purpose: 'login' })).status).toBe(404);
+    expect((await request(app).post('/api/auth/otp/request').send({ phoneNumber: '01000001999', purpose: 'signup' })).status).toBe(403);
     expect(await snapshot()).toBe(before);
   });
 
