@@ -9,20 +9,48 @@ import { config } from './config';
 import { prisma } from './db';
 import { COMMON_QUESTIONS, FIXED_CHAPTERS, MIN_ANSWERS_PER_CHAPTER } from './domain/constants';
 import { initLocalDatabase } from './prisma/init';
-import { ensureLocalStorage } from './storage';
+import { ensureLocalStorage, storageDir } from './storage';
 
 export const DEMO_SENIOR_ID = 'demo_senior';
 export const DEMO_GUARDIAN_ID = 'demo_guardian';
 
-// 모두 설명을 위해 지어낸 가상의 이야기다.
+// 모두 설명을 위해 지어낸 가상의 이야기다. 책으로 엮일 때 문단이 되므로 한 답이 세 문장쯤 되게 쓴다.
 const DEMO_RECORDS: Array<[chapterId: string, answer: string, summary: string]> = [
-  ['childhood', '어릴 때는 강가 마을에서 자랐어. 여름이면 동네 아이들이랑 물장구를 치다가 해 질 무렵에야 집에 들어갔지.', '강가 마을에서 보낸 여름날의 기억'],
-  ['childhood', '할머니가 아궁이에 구워 주시던 고구마 냄새가 아직도 나. 겨울 아침이면 그게 제일 큰 선물이었어.', '할머니의 구운 고구마'],
-  ['youth', '처음 일을 시작한 날은 긴장해서 점심도 못 먹었어. 첫 월급을 받던 날 집에 가는 길에 빵을 샀지. 가족하고 나눠 먹고 싶었거든.', '첫 월급과 빵'],
-  ['family_home', '네 아빠를 만난 건 시장 골목이었어. 비가 오는데 우산을 같이 쓰자고 하더라. 그렇게 시작됐지.', '시장 골목에서의 첫 만남'],
-  ['hobbies', '쉬는 날에는 화분에 물 주는 게 낙이야. 꽃이 피면 하루가 다 환해져.', '화분과 꽃'],
-  ['messages', '너희가 건강하고 서로 아끼면서 살면 나는 바랄 게 없단다. 밥 거르지 말고.', '자녀에게 전하는 말'],
+  ['childhood', '어릴 때는 강가 마을에서 자랐어. 여름이면 동네 아이들이랑 물장구를 치다가 해 질 무렵에야 집에 들어갔지. 어머니가 저녁 먹으라고 부르던 소리가 아직도 귀에 남아 있어.', '강가 마을에서 보낸 여름날의 기억'],
+  ['childhood', '겨울 아침이면 할머니가 아궁이에 고구마를 구워 주셨어. 손이 시려서 호호 불면서 먹으면 그게 세상에서 제일 맛있었단다. 지금도 군고구마 냄새만 나면 그 부엌이 떠올라.', '할머니의 구운 고구마'],
+  ['adolescence', '학교 가는 길에 작은 다리가 하나 있었어. 비 온 다음 날에는 물이 불어서 친구들하고 손을 잡고 건넜지. 그때 같이 건너던 순이라는 친구는 지금도 가끔 생각나.', '비 온 날 다리를 건너던 길'],
+  ['youth', '처음 일을 시작한 날은 긴장해서 점심도 못 먹었어. 선배들이 어색해하지 말라고 따뜻한 차를 한 잔 건네 주더라. 그 차 맛이 아직도 기억나.', '첫 출근의 긴장과 따뜻한 차'],
+  ['youth', '첫 월급을 받던 날은 집에 가는 길에 빵을 샀어. 봉투를 꼭 쥐고 걸으면서 가족하고 나눠 먹을 생각에 발걸음이 가벼웠지. 어머니가 빵을 반으로 쪼개 우리 셋이 나눠 먹던 게 생각나.', '첫 월급과 빵'],
+  ['family_home', '네 아빠를 만난 건 시장 골목이었어. 비가 오는데 우산이 하나뿐이라 같이 쓰자고 하더라. 그렇게 걷다 보니 어느새 집 앞까지 와 있었지.', '시장 골목에서의 첫 만남'],
+  ['hobbies', '쉬는 날에는 화분에 물 주는 게 낙이야. 베란다에 제라늄이랑 고무나무가 있는데 꽃이 피면 하루가 다 환해져. 아침마다 잎을 닦아 주면 마음도 같이 맑아지는 것 같아.', '화분과 꽃'],
+  ['messages', '너희가 건강하고 서로 아끼면서 살면 나는 바랄 게 없단다. 바쁘더라도 밥은 거르지 말고, 힘들면 언제든 전화해. 엄마는 늘 여기서 기다리고 있을게.', '자녀에게 전하는 말'],
 ];
+
+// public/demo-photos 는 AI 로 만든 가상 사진이다. 데모 저장소로 복사하고 사진 기록을 만든다.
+const DEMO_PHOTOS: Array<[file: string, description: string]> = [
+  ['bujeon-market.png', '시장 골목에서 어머니와 장을 보고 돌아오는 사진'],
+  ['family-studio.png', '가족이 함께 찍은 스튜디오 사진'],
+  ['kimjang-day.png', '온 가족이 모여 김장을 하는 날'],
+];
+
+async function seedDemoPhotos() {
+  if (await prisma.photo.count({ where: { userId: DEMO_SENIOR_ID } })) return;
+  const sourceDir = path.join(config.serverDir, '..', 'public', 'demo-photos');
+  for (const [file, description] of DEMO_PHOTOS) {
+    const fileName = `demo-${file}`;
+    await fs.promises.copyFile(path.join(sourceDir, file), path.join(storageDir('photos'), fileName));
+    await prisma.photo.create({
+      data: {
+        id: `demo_photo_${file.replace(/\.png$/, '')}`,
+        userId: DEMO_SENIOR_ID,
+        fileKey: `photos/${fileName}`,
+        fileName: file,
+        mimeType: 'image/png',
+        analysisJson: JSON.stringify({ description }),
+      },
+    });
+  }
+}
 
 async function seedDemoFamily() {
   for (const chapter of FIXED_CHAPTERS) {
@@ -62,6 +90,7 @@ async function seedDemoFamily() {
     update: {},
     create: { guardianId: DEMO_GUARDIAN_ID, seniorId: DEMO_SENIOR_ID, relationship: '딸' },
   });
+  await seedDemoPhotos();
   if (await prisma.interviewRecord.count({ where: { userId: DEMO_SENIOR_ID } })) return;
   // 답변은 같은 챕터의 아직 안 쓴 공통 질문에 붙인다. 안 그러면 챕터별 진행도가 어긋난다.
   const free = COMMON_QUESTIONS.map(([chapterId], i) => ({ chapterId, id: `common_${String(i + 1).padStart(2, '0')}` }));
