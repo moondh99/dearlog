@@ -14,6 +14,7 @@
     "build": "vite build",
     "demo:build": "VITE_DEMO_MODE=true VITE_ENABLE_DEMO_SETTINGS=true VITE_LOCAL_API_URL= vite build --outDir dist-demo",
     "demo:server": "tsx server/demo.ts",
+    "demo:prewarm": "node scripts/demo-prewarm.mjs",
     "company:video": "node scripts/company-video.mjs",
     "demo": "npm run demo:build && npm run demo:server",
     "preview": "vite preview",

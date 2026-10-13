@@ -44,10 +44,30 @@ describe('demo server', () => {
     const auth = { Authorization: `Bearer ${authToken}` };
     const records = await request(demo).get('/api/interview-records?seniorId=demo_senior').set(auth);
     expect(records.status).toBe(200);
-    expect(records.body.records.length).toBeGreaterThanOrEqual(6);
+    expect(records.body.records.length).toBeGreaterThanOrEqual(8);
     const write = await request(demo).post('/api/questions').set(auth)
       .send({ seniorId: 'demo_senior', text: '가장 좋아하는 계절은 언제인가요?', chapterId: 'hobbies' });
     expect(write.status).toBeLessThan(300);
+  });
+
+  it('seeds three fictional photos that the guardian can open', async () => {
+    const { authToken } = (await request(demo).post('/api/demo/session').send({ role: 'child' })).body;
+    const auth = { Authorization: `Bearer ${authToken}` };
+    const { body } = await request(demo).get('/api/photos?seniorId=demo_senior').set(auth);
+    expect(body.photos).toHaveLength(3);
+    const file = await request(demo).get(`/api/files/${body.photos[0].fileKey ?? body.photos[0].url.replace(/^.*\/api\/files\//, '').split('?')[0]}`).set(auth);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-type']).toContain('image/png');
+  });
+
+  it('answers bad input and missing files with 400/404 instead of a server error', async () => {
+    const { authToken } = (await request(demo).post('/api/demo/session').send({ role: 'child' })).body;
+    const auth = { Authorization: `Bearer ${authToken}` };
+    const noChapter = await request(demo).post('/api/interview-records').set(auth)
+      .send({ userId: 'demo_senior', transcriptText: '챕터 없이 보낸 답변' });
+    expect(noChapter.status).toBe(400);
+    const gone = await request(demo).get('/api/files/audio/demo-record-1.txt').set(auth);
+    expect(gone.status).toBe(404);
   });
 
   it('does not loosen the restricted production app, and its tokens do not cross over', async () => {
