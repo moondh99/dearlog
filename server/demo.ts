@@ -6,7 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const demoDir = path.join(root, 'server', 'demo-data');
+// DEMO_DIR 로 다른 폴더를 쓸 수 있다(예: 영상 녹화용 임시 서버). 이름에 demo 가 들어 있어야 한다.
+const demoDir = process.env.DEMO_DIR ? path.resolve(process.env.DEMO_DIR) : path.join(root, 'server', 'demo-data');
+if (!/demo/.test(path.basename(demoDir))) throw new Error('DEMO_DIR 폴더 이름에는 demo 가 들어 있어야 합니다.');
 const port = Number(process.env.DEMO_PORT ?? 8790);
 
 if (process.argv.includes('--reset')) fs.rmSync(demoDir, { recursive: true, force: true });
