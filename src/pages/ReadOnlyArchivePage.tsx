@@ -97,7 +97,7 @@ export default function ReadOnlyArchivePage() {
     <header className="readonly-bar"><Link to="/company">디어로그 소개</Link><p className="readonly-eyebrow">{userName}님의 기존 계정</p><h1>기존 기록 조회</h1><p>{SERVICE_RESTRICTION_MESSAGE}</p><p className="readonly-note">서버에서 이 계정에 허용한 기록만 읽습니다. 새 기록, 녹음, 초대, 수정, AI 생성 기능은 사용할 수 없습니다.</p><nav aria-label="기록 조회 메뉴"><a href="mailto:hello@dear-log.com">이용 문의</a><button type="button" onClick={() => navigate('/logout', { replace: true })}>로그아웃</button></nav></header>
     {memberLoading && <p role="status">허용된 기록 공간을 확인하는 중…</p>}
     {memberError && <p role="alert">{memberError}</p>}
-    {!memberLoading && !memberError && members.length === 0 && <p className="readonly-empty">조회할 수 있는 기존 기록 공간이 없습니다. 현재 새 연결과 초대는 중단되어 있습니다.</p>}
+    {!memberLoading && !memberError && members.length === 0 && <p className="readonly-empty">조회할 수 있는 기존 기록 공간이 없습니다. 현재 새 연결과 초대는 받지 않습니다.</p>}
     {role === 'child' && members.length > 0 && <div><label htmlFor="archive-space">연결된 기존 기록 공간</label><select id="archive-space" value={seniorId ?? ''} onChange={event => { const id = event.target.value; if (members.some(member => member.id === id)) { setArchive(emptyArchive()); setSeniorId(id) } }}>{members.map(member => <option key={member.id} value={member.id}>{member.isMe ? '내 계정의 기존 기록' : member.recordSpaceName || `${member.name}님의 기록`}</option>)}</select></div>}
     {selectedMember && <p className="readonly-note">{selectedMember.isMe ? '내 계정의 기존 기록' : selectedMember.recordSpaceName || `${selectedMember.name}님의 기록`}</p>}
     {loading && <p role="status">기존 기록을 불러오는 중…</p>}

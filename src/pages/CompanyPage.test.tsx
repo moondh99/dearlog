@@ -32,6 +32,31 @@ describe('Company introduction review', () => {
     vi.unstubAllGlobals()
   })
 
+  it('offers a captioned-by-text usage video that is silent, fictional and not autoplaying', () => {
+    renderCompany()
+    const section = screen.getByRole('region', { name: '질문 하나가 기록이 되는 과정' })
+    const video = section.querySelector('video')!
+    expect(video).toHaveAttribute('controls')
+    expect(video).toHaveAttribute('poster', '/company/service-demo-poster.jpg')
+    expect(video).not.toHaveAttribute('autoplay')
+    expect(video.querySelector('source')).toHaveAttribute('src', '/company/service-demo.mp4')
+    expect(video).toHaveAccessibleDescription(/부모님이 질문에 편하게 답합니다.*가족이 원문과 정리본을 함께 확인합니다.*한 권의 기록집으로 엮습니다/)
+    expect(within(section).getByText(/영상 속 가족과 이야기는 모두 가상/)).toBeInTheDocument()
+  })
+
+  it('states the sign-up policy: closed, with an email route, in the FAQ and under the hero', () => {
+    renderCompany()
+    const faq = screen.getByRole('region', { name: /자주 묻는 질문/ })
+    expect(within(faq).getByText('지금 가입해서 쓸 수 있나요?')).toBeInTheDocument()
+    expect(within(faq).getAllByText(/현재는 신규 가입을 받지 않습니다/).length).toBeGreaterThan(0)
+    expect(document.body.textContent).not.toMatch(/중단/)
+  })
+
+  it('does not describe the company as preparing to commercialize', () => {
+    renderCompany()
+    expect(document.body.textContent).not.toMatch(/사업화/)
+  })
+
   it('offers an explicitly fictional, read-only sample without account or API work', () => {
     renderCompany()
     const sample = screen.getByRole('region', { name: '한 질문이 한 장의 이야기로' })
@@ -44,7 +69,7 @@ describe('Company introduction review', () => {
     }
     expect(screen.getByRole('link', { name: '이메일로 문의하기' })).toHaveAttribute('href', 'mailto:hello@dear-log.com')
     expect(document.querySelector('.company-page a[href="/auth"]')).toBeNull()
-    expect(screen.getByText('현재 예시 체험과 문의를 받고 있습니다.')).toBeInTheDocument()
+    expect(screen.getByText('현재 예시 체험과 문의를 받고 있습니다. 신규 가입은 받지 않습니다.')).toBeInTheDocument()
     expect(screen.getByText(/운영 주체는 디어로그 팀이며, 담당자는 문대한입니다/)).toBeInTheDocument()
     expect(screen.getByText(/앞으로 음성 원본을 계속 보관/)).toHaveTextContent('구체적인 보관 기간과 운영 기준은 정비 중입니다.')
     expect(fetch).not.toHaveBeenCalled()
