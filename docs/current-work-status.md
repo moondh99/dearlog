@@ -65,6 +65,14 @@ document and `README.md` still described as missing. Reconciled against `src/App
   pilot cannot log in until one is. The signup screen's code step used to accept any 6 digits; it now calls
   the server, and login gained a code step with resend. The unreachable `/auth/verify` page (also accepted any
   code) was removed. Both QA scripts read the code from the dev outbox.
+- OTP delivery moved from SMS to email (user decision: no SMS vendor yet). Accounts are still keyed by phone
+  number; the code goes to `User.email` (new nullable column). Signup takes an email, and the verification
+  token carries the address that received the code, so signup stores that address rather than any `email`
+  in the final request. Login always sends to the stored email (a body `email` is ignored) and returns only a
+  masked address; accounts without an email get 409. `server/sms.ts` became `server/otp-sender.ts` with
+  `OTP_PROVIDER` = `gmail` (Gmail SMTP via `nodemailer`, app password, 10 s connect / 20 s socket timeouts)
+  or `dev` (log + `server/data/otp-outbox.jsonl`); `SMS_PROVIDER` is gone. `npm run user:set-email` fills
+  emails for accounts created before this change.
 - Dependency pass: `npm audit` 15 → 0 without `--force` and without a major upgrade.
   - Direct: `multer` ^2.4.0, `express` ^4.22.3 (pulls `qs` 6.16 / `body-parser` 1.20.8), `vitest` ^4.1.11,
     `tsx` ^4.23.15 (pulls `esbuild` 0.28.2).
@@ -94,7 +102,9 @@ document and `README.md` still described as missing. Reconciled against `src/App
 | `npm test` after the fallback, no `CHROME_PATH` | Passed: 40 files / 335 tests |
 | `npm test` after the login fix | Passed: 40 files / 337 tests |
 | `npm test` after phone OTP | Passed: 41 files / 358 tests. Forcing the token check to pass fails 4 of the new OTP tests |
-| Phone OTP against real servers | `SMS_PROVIDER=dev`: `db-table-coverage-qa.mjs` passed end to end; Chromium (390 px) completed signup and login through the code step, and a wrong code showed "4번 더 입력할 수 있습니다". Unset `SMS_PROVIDER`: `otp/request` 503, `auth/phone` without a token 401 |
+| Phone OTP against real servers (SMS era, superseded by the email rows below) | `SMS_PROVIDER=dev`: `db-table-coverage-qa.mjs` passed end to end; Chromium (390 px) completed signup and login through the code step, and a wrong code showed "4번 더 입력할 수 있습니다". Unset `SMS_PROVIDER`: `otp/request` 503, `auth/phone` without a token 401 |
+| `npm test` after email OTP | Passed: 42 files / 368 tests. Sending login codes to a body `email`, or storing the body `email` on signup, fails 2 of the new tests |
+| Email OTP against real servers | Old-shape DB (no `email` column) with an existing account: `db:migrate` added the column and kept the row; `user:set-email` filled it and rejected unknown numbers and bad addresses. `OTP_PROVIDER=dev`: no-email account 409, login code went only to the stored address (body address ignored), token login succeeded, `db-table-coverage-qa.mjs` passed, Chromium signup with email and login both reached `/child`. `OTP_PROVIDER=gmail` with an empty app password: 503; with a fake one: 502 after the 10 s connect timeout and an immediate retry was allowed (code discarded). Real delivery to Gmail not verified here |
 | `npm run build` | Passed; entry chunk `index-*.js` 286.00 kB (gzip 91.77 kB) |
 | `npm audit` | 15 findings (1 low, 7 moderate, 7 high) before the dependency pass below |
 | `npm audit` after the dependency pass | 0 vulnerabilities; `npm ci` from a clean `node_modules` with npm 10.9.7 also reports 0 |
@@ -293,7 +303,7 @@ Notes:
 | --- | --- | --- |
 | Test configuration drift | Resolved; current tests are included and the full suite passes | Keep the excludes limited to vendor/generated/reference-project paths |
 | Server AI proxy operations | Browser API key exposure removed; proxy calls rate-limited, audited, summarized in the guardian My Page dashboard, threshold-checked, routed to operators, pruned by retention | Set real production operator IDs, keep `AI_PROXY_DASHBOARD_TOKEN` in the team secret store, review thresholds after live traffic |
-| SMS vendor for OTP | Login and signup now require a phone code, but only the dev sender exists. With `SMS_PROVIDER` unset the pilot returns 503 for login and signup | Pick a vendor (Solapi, NCP SENS, …), register the sender number, implement `SmsSender` in `server/sms.ts`, then set `SMS_PROVIDER` on the pilot |
+| OTP delivery | Codes go to the account's email via personal Gmail SMTP. With `OTP_PROVIDER` unset the pilot returns 503 for login and signup; accounts created before the email column get 409 until an operator fills their email. Real Gmail delivery was not verified from the cloud container (outbound SMTP to smtp.gmail.com:465 times out there) | Set `OTP_PROVIDER=gmail`, `GMAIL_USER`, `GMAIL_APP_PASSWORD` on the pilot and send one test code; run `npm run user:set-email` for existing accounts; move to a transactional mail service or SMS before launch (Gmail ~500/day, spam risk) |
 | Auth token operations | Signed Bearer tokens preferred and dev headers blocked outside allowed environments; no refresh/revocation storage yet | Set a strong production `AUTH_TOKEN_SECRET`, add refresh/revocation policy, keep `ALLOW_DEV_AUTH_HEADERS` off in production |
 | Digital legacy vault | UI is wired (`/parent/vault`, `/child/legacy`) with a 3-of-3 split and two-person death review. Creating (`POST /api/legacy/vault`) and revoking (`POST /api/legacy/reset`) the vault are senior-only on the server too | Treat as demo-only until key management, legal, and audit review are done |
 | Memory-level data sovereignty | All five purposes are enforced at consumers and revocation/deletion is retroactive for generated books. `Memory`/`MemoryConsentSettings`/`MemoryVectorEntry` are demo-seed only, and `GET /api/memories` still returns `Memory` bodies when its chatbot consent is revoked. Complete deletion scope/policy is unresolved | Decide the `Memory` table cleanup, define retention/backup/derived-copy deletion, then add reauthenticated deletion with an explicit guardian policy |

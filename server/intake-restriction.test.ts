@@ -10,7 +10,7 @@ let app: Express;
 let prisma: typeof import('./db').prisma;
 let createApp: typeof import('./app').createApp;
 let issueAuthToken: typeof import('./auth').issueAuthToken;
-let lastTestSmsTo: typeof import('./sms').lastTestSmsTo;
+let lastTestOtpTo: typeof import('./otp-sender').lastTestOtpTo;
 let fixtureDir: string;
 let storageRoot: string;
 let guardianToken: string;
@@ -25,7 +25,7 @@ const fakeAudio = Buffer.from('synthetic fixture bytes; never uploaded to produc
 // 기존 계정 로그인도 휴대폰 인증을 거친다. 인증은 메모리 상태라 DB 스냅샷에는 남지 않는다.
 async function verifyLogin(phoneNumber: string) {
   expect((await request(app).post('/api/auth/otp/request').send({ phoneNumber, purpose: 'login' })).status).toBe(200);
-  const code = /(\d{6})/.exec(lastTestSmsTo(phoneNumber) ?? '')?.[1];
+  const code = lastTestOtpTo(`${phoneNumber}@example.com`);
   const verified = await request(app).post('/api/auth/otp/verify').send({ phoneNumber, purpose: 'login', code });
   expect(verified.status).toBe(200);
   return verified.body.verificationToken as string;
@@ -52,18 +52,18 @@ beforeAll(async () => {
   process.env.ALLOW_DEV_AUTH_HEADERS = 'false';
   process.env.OPENAI_API_KEY = '';
   process.env.FACTCHAT_API_KEY = '';
-  process.env.SMS_PROVIDER = 'test';
+  process.env.OTP_PROVIDER = 'test';
   const { config } = await import('./config');
   storageRoot = path.join(fixtureDir, 'storage');
   config.storageDir = storageRoot;
   config.dataDir = path.join(fixtureDir, 'data');
   ({ prisma } = await import('./db'));
-  ({ lastTestSmsTo } = await import('./sms'));
+  ({ lastTestOtpTo } = await import('./otp-sender'));
   const { initLocalDatabase } = await import('./prisma/init');
   await initLocalDatabase();
   await prisma.user.createMany({ data: [
     { id: SENIOR, role: 'senior', name: '합성 부모', phoneNumber: '01000001001' },
-    { id: GUARDIAN, role: 'guardian', name: '합성 가족', phoneNumber: '01000001002' },
+    { id: GUARDIAN, role: 'guardian', name: '합성 가족', phoneNumber: '01000001002', email: '01000001002@example.com' },
     { id: STRANGER, role: 'guardian', name: '다른 합성 가족', phoneNumber: '01000001003' },
   ] });
   await prisma.guardianSeniorLink.create({ data: { guardianId: GUARDIAN, seniorId: SENIOR } });

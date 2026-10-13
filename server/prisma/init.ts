@@ -6,6 +6,7 @@ const statements = [
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "phoneNumber" TEXT,
+    "email" TEXT,
     "role" TEXT NOT NULL,
     "birthDate" TEXT,
     "birthDecade" TEXT,
@@ -418,6 +419,11 @@ export async function initLocalDatabase() {
   }
   if (!columnNames.has('chatbotConsentUpdatedAt')) {
     await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "chatbotConsentUpdatedAt" DATETIME');
+  }
+  // 로그인 인증번호를 받는 이메일. 기존 계정은 NULL 이고, 운영자가 채우기 전까지는
+  // 인증번호를 받을 곳이 없어 로그인할 수 없다(scripts/set-user-email.ts).
+  if (!columnNames.has('email')) {
+    await prisma.$executeRawUnsafe('ALTER TABLE "User" ADD COLUMN "email" TEXT');
   }
 
   const linkColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("GuardianSeniorLink")');
