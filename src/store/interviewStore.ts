@@ -132,6 +132,8 @@ export const useInterviewStore = create<InterviewState>()(
           await get().fetchChaptersAndQuestions()
         } catch (e) {
           console.error('addTranscript API error:', e)
+          // 화면이 "저장됨"으로 넘어가지 않도록 호출한 쪽에 알린다.
+          throw e
         }
       },
 

@@ -1377,6 +1377,7 @@ function DoneView({
   const { transcripts, addTranscript } = useInterviewStore()
   const [visible, setVisible] = useState(false)
   const [showToast, setShowToast] = useState(false)
+  const [saveError, setSaveError] = useState(false)
   const [conflicts, setConflicts] = useState<Conflict[]>([])
   const [showConflict, setShowConflict] = useState(false)
 
@@ -1393,6 +1394,7 @@ function DoneView({
       .map((t: Transcript) => ({ ...t.chunk!, chunkId: t.id }))
 
     const run = async () => {
+      try {
       const allConflicts: Conflict[] = []
       for (const item of answeredItems) {
         const archiveResult = await archiveTranscript(item.rawText, item.questionText, item.chapterId)
@@ -1427,6 +1429,10 @@ function DoneView({
         setShowToast(true)
         setTimeout(() => setShowToast(false), 1500)
       }
+      } catch (error) {
+        console.error('interview archive error:', error)
+        setSaveError(true)
+      }
     }
     run()
   }, [])
@@ -1453,6 +1459,15 @@ function DoneView({
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-[#F8F6F9] text-[#2A2830]">
       {/* Toast */}
+      {saveError && (
+        <div
+          role="alert"
+          className="fixed left-1/2 top-16 z-50 w-[320px] -translate-x-1/2 rounded-[14px] bg-[#FF3B30] px-5 py-3 text-center text-[14px] font-medium text-white"
+        >
+          저장하지 못했어요. 잠시 후 다시 시도해 주세요.
+        </div>
+      )}
+
       {showToast && (
         <div
           className="fixed left-1/2 top-16 z-50 -translate-x-1/2 rounded-full px-5 py-2.5 text-[14px] font-medium text-white"

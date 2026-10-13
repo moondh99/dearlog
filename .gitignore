@@ -63,3 +63,7 @@ ios/App/Pods/
 ios/App/build/
 ios/DerivedData/
 ios/.build/
+
+# Demo build and demo-only DB/storage (server/demo.ts)
+dist-demo/
+server/demo-data/

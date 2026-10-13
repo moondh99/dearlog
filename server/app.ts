@@ -2909,6 +2909,10 @@ export function createApp({ sampleInquiryOnly = SAMPLE_INQUIRY_ONLY }: { sampleI
       const userId = req.user!.role === 'senior'
         ? req.user!.id
         : await resolveSeniorId(req.user!.id, req.body.userId ? String(req.body.userId) : undefined);
+      if (typeof req.body.chapterId !== 'string' || !req.body.chapterId) {
+        res.status(400).json({ error: '챕터를 정해 주세요.' });
+        return;
+      }
       const question = req.body.questionId
         ? await assertCurrentUserCanAccessQuestion(req.user!, String(req.body.questionId))
         : null;
@@ -4397,7 +4401,11 @@ export function createApp({ sampleInquiryOnly = SAMPLE_INQUIRY_ONLY }: { sampleI
       }
 
       const filePath = resolveLocalFileKey(fileKey);
-      await fs.access(filePath);
+      // 기록은 있는데 파일이 없을 수 있다(예: 녹음 없이 글로만 남긴 기록). 서버 오류가 아니라 없는 파일이다.
+      if (!(await fs.access(filePath).then(() => true, () => false))) {
+        res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
+        return;
+      }
       res.header('Cache-Control', 'private, max-age=300');
       // 사진의 mimeType은 업로드 당시 클라이언트가 보낸 값이라 그대로 신뢰하지 않습니다.
       // 예전 데이터에 text/html 같은 값이 남아 있어도 같은 오리진에서 실행되지 않도록 막습니다.

@@ -8,8 +8,11 @@ const ExistingLoginPage = lazy(() => import('./pages/ExistingLoginPage'))
 const ReadOnlyArchivePage = lazy(() => import('./pages/ReadOnlyArchivePage'))
 const RestrictedAccessPage = lazy(() => import('./pages/RestrictedAccessPage'))
 const CompanyPage = lazy(() => import('./pages/CompanyPage'))
+// 시연 빌드(VITE_DEMO_MODE=true)에서만 전체 화면 경로를 연다. 운영 빌드의 라우트는 그대로다.
+const DEMO_BUILD = import.meta.env.VITE_DEMO_MODE === 'true'
+const DemoApp = lazy(() => import('./DemoApp'))
 
-function MyPageRedirect() {
+export function MyPageRedirect() {
   const { role, userId, authToken } = useAuthStore()
   if (!role || !userId || !authToken) return <Navigate to="/auth" replace />
   return <Navigate to={ROLE_HOME[role]} replace />
@@ -26,7 +29,7 @@ function LogoutRedirect() {
   return <Navigate to="/company" replace />
 }
 
-function RoleGuard({ allowedRole, children }: { allowedRole: UserRole; children: ReactNode }) {
+export function RoleGuard({ allowedRole, children }: { allowedRole: UserRole; children: ReactNode }) {
   const { role, userId, authToken } = useAuthStore()
 
   if (!role || !userId || !authToken) {
@@ -41,7 +44,7 @@ function RoleGuard({ allowedRole, children }: { allowedRole: UserRole; children:
 }
 
 // 역할은 가리지 않고 로그인 여부만 확인합니다. 보호자와 부모가 모두 들어오는 화면용입니다.
-function AuthGuard({ children }: { children: ReactNode }) {
+export function AuthGuard({ children }: { children: ReactNode }) {
   const { role, userId, authToken } = useAuthStore()
 
   if (!role || !userId || !authToken) {
@@ -83,6 +86,7 @@ function ServiceRoutes() {
 }
 
 export function AppRoutes() {
+  if (DEMO_BUILD) return <Suspense fallback={<RouteFallback />}><DemoApp /></Suspense>
   return (
     <Routes>
       <Route path="/company" element={<ErrorBoundary><Suspense fallback={<RouteFallback />}><CompanyPage /></Suspense></ErrorBoundary>} />

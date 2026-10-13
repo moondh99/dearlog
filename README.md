@@ -244,6 +244,38 @@ Web Push를 실제로 보내려면 `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAP
 
 ## 발표 시연 방법
 
+### 가장 쉬운 방법: 데모 서버 (접수 제한과 분리)
+운영은 지금 "예시 체험과 문의만" 받는 제한 모드(`shared/service-access.ts`)라서 인터뷰·사진·자서전·금고 화면은 운영 주소에서 닫혀 있습니다. 전체 기능 시연은 운영과 따로 뜨는 데모 서버로 합니다.
+
+```bash
+npm run demo          # 데모 화면 빌드(dist-demo) + 데모 서버 시작
+# 열기: http://localhost:8790/demo  → "부모님으로 시작" 또는 "보호자로 시작"
+npm run demo:server -- --reset   # 데모 데이터를 처음 상태로 되돌리고 시작
+```
+
+- 가상의 가족(김영자 어르신, 딸 이지은)과 가상 답변 6건이 미리 들어 있습니다.
+- DB·저장소는 `server/demo-data/`에만 생기고 운영 DB(`server/data/dearlog.db`)는 건드리지 않습니다. 이 폴더를 지우면 데모가 초기화됩니다.
+- 접수 제한은 이 서버에서만 풀립니다. 운영 서버(`npm run server:dev`)는 그대로 제한 모드이고, 두 서버의 로그인 토큰은 서로 통하지 않습니다.
+- 데모 화면은 `VITE_DEMO_MODE=true`로 빌드할 때만 전체 경로가 열립니다. 일반 `npm run build`는 변하지 않습니다.
+- 데모 DB 경로가 아니거나 `NODE_ENV=production`이면 데모 서버가 스스로 시작을 거부합니다.
+- **발표 전 준비:** 데모 서버를 켠 뒤 다른 터미널에서 `npm run demo:prewarm`을 한 번 돌려 자서전 미리보기와 PDF를 미리 만듭니다(약 4~5분, 실제 AI 호출). 발표 중에 새로 만들면 몇 분 걸리거나 실패할 수 있습니다. 기록을 추가·수정하면 미리보기 캐시가 사라지니 마지막 변경 뒤에 다시 돌리세요.
+- 발표 중에는 `자서전 생성하기`, 새 PDF 생성을 누르지 않고, 미리 넣은 기록의 재생 버튼도 누르지 않습니다(녹음 파일이 없습니다).
+
+### 회사 페이지의 사용 영상 다시 만들기
+`/company`의 "영상으로 보기"(`public/company/service-demo.mp4`, 포스터 `service-demo-poster.jpg`)는 데모 화면을 녹화해 만든 약 40초의 무음 영상이고, 속의 가족과 이야기는 모두 가상입니다. 화면이 바뀌어 다시 찍어야 하면:
+
+```bash
+npm run demo:build && npm run demo:server   # 한 터미널에서
+# 책 미리보기 캐시가 있어야 합니다. 없으면 먼저 npm run demo:prewarm (몇 분 걸립니다).
+npm run company:video                       # 다른 터미널에서 영상 재생성(약 2분, 답변 저장 장면에서 AI 를 한 번 부른다)
+```
+
+녹화는 데모 DB 를 임시 폴더로 복사한 별도 서버(8791)에서 하므로 8790 데모와 그 데이터는 바뀌지 않습니다. `ffmpeg` 없이 Chrome 으로 인코딩합니다(macOS 의 Google Chrome 필요, 다른 경로는 `CHROME_PATH`). 장면은 `scripts/company-video.mjs` 의 `scenes` 에 있습니다.
+
+### 브라우저 안에서만 도는 오프라인 시연 (기존 방식)
+
+> 접수 제한(#24) 이후 일반 빌드와 `npm run dev`에는 `/settings`가 열리지 않습니다. 아래 절차는 `npm run demo:build`로 만든 데모 화면(`dist-demo`)에서만 그대로 동작합니다.
+
 `/settings`(`src/pages/DemoSettingsScreen.tsx`)에 시연 준비와 순서가 모두 들어 있습니다. 탭 없이 한 화면에 섹션으로 구성돼 있습니다.
 
 이 화면은 로그인 없이 역할을 바꿀 수 있어서 기본적으로 막혀 있습니다. 개발 서버(`npm run dev`)에서는 자동으로 열리고, 빌드한 앱으로 시연하려면 `VITE_ENABLE_DEMO_SETTINGS=true`로 빌드합니다.
