@@ -30,6 +30,8 @@ let buildPublicationSourceRecords: typeof import('./publication').buildPublicati
 let startLocalPublicationPreviewJob: typeof import('./publication').startLocalPublicationPreviewJob;
 let resolveLocalFileKey: typeof import('./storage').resolveLocalFileKey;
 
+let testStorageRoot: string;
+
 beforeAll(async () => {
   process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), `dearlog-${Date.now()}.db`)}`;
   process.env.FACTCHAT_API_KEY = '';
@@ -40,6 +42,11 @@ beforeAll(async () => {
   process.env.TWILIO_ACCOUNT_SID = '';
   process.env.TWILIO_AUTH_TOKEN = '';
   process.env.TWILIO_FROM_NUMBER = '';
+  // 테스트가 실제 server/storage 에 파일을 남기지 않도록 저장소도 임시 폴더로 돌린다.
+  const { config } = await import('./config');
+  testStorageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dearlog-test-storage-'));
+  config.storageDir = path.join(testStorageRoot, 'storage');
+  config.dataDir = path.join(testStorageRoot, 'data');
 
   ({ prisma } = await import('./db'));
   ({ initLocalDatabase } = await import('./prisma/init'));
@@ -68,6 +75,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await fs.rm(testStorageRoot, { recursive: true, force: true });
   // 브라우저를 프로세스당 한 번만 띄우므로 여기서 닫지 않으면 Chrome이 남는다.
   await closeRenderBrowser();
   await prisma.$disconnect();

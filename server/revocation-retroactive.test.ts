@@ -82,10 +82,17 @@ function downloadAsSenior(fileKey: string) {
   return request(app).get(`/api/files/${fileKey}`).set('x-user-id', SENIOR).set('x-user-role', 'senior');
 }
 
+let testStorageRoot: string;
+
 beforeAll(async () => {
   process.env.DATABASE_URL = `file:${path.join(os.tmpdir(), `dearlog-revocation-${Date.now()}.db`)}`;
   process.env.FACTCHAT_API_KEY = '';
   process.env.OPENAI_API_KEY = '';
+  // 테스트가 실제 server/storage 에 파일을 남기지 않도록 저장소도 임시 폴더로 돌린다.
+  const { config } = await import('./config');
+  testStorageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dearlog-test-storage-'));
+  config.storageDir = path.join(testStorageRoot, 'storage');
+  config.dataDir = path.join(testStorageRoot, 'data');
 
   ({ prisma } = await import('./db'));
   ({ initLocalDatabase } = await import('./prisma/init'));
@@ -104,6 +111,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await fs.rm(testStorageRoot, { recursive: true, force: true });
   await prisma.$disconnect();
 });
 
