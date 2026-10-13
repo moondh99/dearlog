@@ -1,0 +1,32 @@
+@font-face { font-family: 'Dearlog Readonly'; src: url('/company/fonts/PretendardVariable.woff2') format('woff2'); font-weight: 100 900; font-display: swap; }
+.readonly-service { font-family: 'Dearlog Readonly', sans-serif; color: #302e29; background: #f7f4ed; min-height: 100dvh; padding: 28px 20px 44px; font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
+.readonly-service *, .readonly-service *::before, .readonly-service *::after { box-sizing: border-box; }
+.readonly-service :is(h1,h2,h3,p,figure,dl,dd) { margin: 0; }
+.readonly-service h1 { font-size: 27px; line-height: 1.5; letter-spacing: -.035em; margin-bottom: 20px; word-break: keep-all; }
+.readonly-service h2 { font-size: 22px; margin-bottom: 16px; }
+.readonly-service h3 { font-size: 18px; margin-bottom: 12px; }
+.readonly-service p { margin-block: 14px; }
+.readonly-service a { color: #42583c; text-decoration: underline; text-underline-offset: 4px; display: inline-flex; align-items: center; min-height: 44px; }
+.readonly-service :is(a,button,input,select,summary):focus-visible { outline: 3px solid #52654b; outline-offset: 3px; }
+.readonly-service :is(button,input,select) { font: inherit; max-width: 100%; }
+.readonly-service button { min-height: 44px; padding: 10px 16px; border: 1px solid #52654b; border-radius: 4px; background: #52654b; color: #fffcf7; cursor: pointer; }
+.readonly-service button:disabled { opacity: .65; cursor: wait; }
+.readonly-service form { margin-block: 28px; display: grid; gap: 10px; }
+.readonly-service input, .readonly-service select { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #8c877c; border-radius: 3px; background: #fffcf7; color: #302e29; }
+.readonly-service form button { margin-top: 12px; }
+.readonly-service [role='alert'] { color: #8d3729; }
+.readonly-service .readonly-eyebrow { font-size: 13px; color: #52654b; margin-block: 24px 12px; }
+.readonly-service .readonly-note { font-size: 14px; color: #656258; }
+.readonly-service nav { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-block: 20px; }
+.readonly-service .readonly-bar { border-bottom: 1px solid #ded9cd; padding-bottom: 18px; margin-bottom: 24px; }
+.readonly-service .readonly-bar button { background: transparent; color: #42583c; }
+.readonly-service section { margin-top: 36px; }
+.readonly-service article, .readonly-service figure { background: #fffcf7; border: 1px solid #ded9cd; padding: 20px 16px; margin-block: 16px; border-radius: 3px; }
+.readonly-service details { border-top: 1px solid #ded9cd; padding-block: 14px; }
+.readonly-service summary { min-height: 44px; cursor: pointer; font-weight: 600; }
+.readonly-service .readonly-record-text { white-space: pre-wrap; }
+.readonly-service audio, .readonly-service img { width: 100%; height: auto; display: block; }
+.readonly-service audio { margin-top: 16px; }
+.readonly-service .readonly-empty { color: #656258; font-size: 15px; }
+.readonly-service .readonly-tabs { border-bottom: 1px solid #ded9cd; }
+@media (max-width: 350px) { .readonly-service { padding-inline: 16px; } .readonly-service h1 { font-size: 24px; } }

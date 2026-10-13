@@ -62,7 +62,7 @@ beforeAll(async () => {
   ({ resetPhoneVerificationForTests } = await import('./phone-verification'));
   ({ lastTestOtpTo, clearTestOtpOutbox } = await import('./otp-sender'));
   await initLocalDatabase();
-  app = createApp();
+  app = createApp({ sampleInquiryOnly: false });
 });
 
 afterAll(async () => {

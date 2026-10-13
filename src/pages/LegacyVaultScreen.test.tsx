@@ -5,6 +5,12 @@ import LegacyVaultScreen from './LegacyVaultScreen'
 import { combineShares, type Share } from '../lib/security/shamir'
 import { decryptText } from '../lib/security/encryption'
 
+// Legacy full-service component regression only; public AppRoutes keep the default restriction.
+vi.mock('../../shared/service-access', async importActual => ({
+  ...await importActual<typeof import('../../shared/service-access')>(),
+  SAMPLE_INQUIRY_ONLY: false,
+}))
+
 // 금고 화면이 실제로 금고를 여는지 확인한다.
 // 서버 라우트는 처음부터 있었지만 이 화면이 없어서 isVaultSetup 이 true 가 될 길이 없었고,
 // 동의 설정의 "사후 공개" 토글도 아무 일도 하지 않았다.
