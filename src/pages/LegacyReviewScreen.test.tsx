@@ -6,6 +6,12 @@ import { splitSecret } from '../lib/security/shamir'
 import { encryptText } from '../lib/security/encryption'
 import { useAuthStore } from '../store/authStore'
 
+// Legacy full-service component regression only; public AppRoutes keep the default restriction.
+vi.mock('../../shared/service-access', async importActual => ({
+  ...await importActual<typeof import('../../shared/service-access')>(),
+  SAMPLE_INQUIRY_ONLY: false,
+}))
+
 // 보호자 사망 심사 화면이 서버 절차를 실제로 부르는지 확인한다.
 //
 // local-server 를 통째로 대신 세우지 않고 fetch 만 세워 둔다. 컴포넌트 안의

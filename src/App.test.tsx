@@ -1,256 +1,85 @@
-import { render, screen } from '@testing-library/react';
-import { act } from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppRoutes, RouteFallback } from './App';
-import SplashScreen from './pages/SplashScreen';
-import { useAuthStore } from './store/authStore';
-import { useChildStore } from './store/childStore';
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { AppRoutes, RouteFallback } from './App'
+import { useAuthStore } from './store/authStore'
 
 vi.mock('./lib/local-server', () => ({
-  registerLocalPhoneAccount: vi.fn(),
-  updateLocalUserRole: vi.fn(),
-  updateLocalUserProfile: vi.fn(),
-  updateLocalInterviewRecordReview: vi.fn(async () => ({ record: {} })),
-  synthesizeLocalQuestionSpeech: vi.fn(async () => new Blob(['audio'], { type: 'audio/mpeg' })),
+  registerLocalPhoneAccount: vi.fn(), updateLocalUserRole: vi.fn(), updateLocalUserProfile: vi.fn(),
   fetchFamilyMembers: vi.fn(async () => ({ members: [] })),
-  fetchLocalCalendarEvents: vi.fn(async () => ({ events: [] })),
-  fetchLocalChapters: vi.fn(async () => ({ chapters: [] })),
-  fetchLocalFamilyQuestions: vi.fn(async () => ({ questions: [] })),
   fetchLocalInterviewRecords: vi.fn(async () => ({ records: [] })),
+  fetchLocalMemories: vi.fn(async () => ({ memories: [] })),
   fetchLocalPhotos: vi.fn(async () => ({ photos: [] })),
-  fetchLocalQuestions: vi.fn(async () => ({ questions: [] })),
-  uploadLocalPhoto: vi.fn(async () => ({ photo: {}, questions: [] })),
-  fetchLocalAIProxyAuditSummary: vi.fn(async () => ({
-    window: { from: '2026-05-31T00:00:00.000Z', to: '2026-05-31T01:00:00.000Z', minutes: 60 },
-    totals: {
-      requests: 3,
-      success: 2,
-      invalidRequest: 0,
-      rateLimited: 1,
-      configError: 0,
-      providerError: 0,
-      estimatedUnits: 120,
-      avgLatencyMs: 90,
-      errorRatePercent: 0,
-    },
-    byEndpoint: [{
-      endpoint: 'chat_completions',
-      requests: 3,
-      success: 2,
-      errors: 0,
-      rateLimited: 1,
-      estimatedUnits: 120,
-      avgLatencyMs: 90,
-    }],
-    byUser: [],
-    recentErrors: [],
-    alerts: [],
-    alertThresholds: { errorRatePercent: 25, rateLimitedCount: 10, minRequests: 5 },
-    retention: { days: 30, cutoff: '2026-05-01T00:00:00.000Z', deletedOldLogs: 0 },
-  })),
-}));
-
-function resetAuthStore() {
-  window.localStorage.clear();
-  window.sessionStorage.clear();
-  useAuthStore.setState({
-    role: null,
-    userName: '',
-    userId: null,
-    phoneNumber: '',
-    authToken: null,
-  });
-  useChildStore.setState({
-    questions: [],
-    photos: [],
-    activeSeniorId: null,
-  });
+  fetchLocalAutobiographyDraft: vi.fn(async () => ({ draft: null })),
+}))
+function open(path: string) { render(<MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>) }
+function login(role: 'parent' | 'child', token: string | null = 'test-token') {
+  useAuthStore.setState({ role, userName: '가상 기존 사용자', userId: role === 'parent' ? 'senior-1' : 'guardian-1', phoneNumber: '', authToken: token })
 }
-
-describe('App routing', () => {
+describe('restricted public routes', () => {
   beforeEach(() => {
-    resetAuthStore();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it('renders a shared loading state for lazy routes', () => {
-    render(<RouteFallback />);
-
-    expect(screen.getByRole('status')).toHaveTextContent('불러오는 중...');
-  });
-
-  it('redirects the root route to the splash screen', async () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText('DEARLOG')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument();
-  });
-
-  it('automatically moves from splash to intro after a short delay', async () => {
-    vi.useFakeTimers();
-
-    render(
-      <MemoryRouter initialEntries={['/splash']}>
-        <Routes>
-          <Route path="/splash" element={<SplashScreen />} />
-          <Route path="/intro" element={<div>intro-ready</div>} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(screen.getByText('DEARLOG')).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(2500);
-    });
-
-    expect(screen.getByText('intro-ready')).toBeInTheDocument();
-  });
-
-  it('loads the auth route through the lazy route boundary', async () => {
-    render(
-      <MemoryRouter initialEntries={['/auth']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByRole('heading', { name: 'Dearlog' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '로그인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '회원가입' })).toBeInTheDocument();
-  });
-
-  it('redirects the shared mypage route by selected role', async () => {
-    useAuthStore.setState({
-      role: 'parent',
-      userName: '김영자',
-      userId: 'senior-1',
-      phoneNumber: '01012345678',
-      authToken: 'token',
-    });
-
-    render(
-      <MemoryRouter initialEntries={['/mypage']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByRole('heading', { name: '마이페이지' })).toBeInTheDocument();
-    expect(screen.getByText('김영자')).toBeInTheDocument();
-  });
-
-  it('redirects parent users away from child routes', async () => {
-    useAuthStore.setState({
-      role: 'parent',
-      userName: '김영자',
-      userId: 'senior-1',
-      phoneNumber: '01012345678',
-      authToken: 'token',
-    });
-
-    render(
-      <MemoryRouter initialEntries={['/child/questions']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText(/가족이 이야기를/)).toBeInTheDocument();
-    expect(screen.getByText('지금 시작하기')).toBeInTheDocument();
-  });
-
-  it('redirects child users away from parent routes', async () => {
-    useAuthStore.setState({
-      role: 'child',
-      userName: '김보호',
-      userId: 'guardian-1',
-      phoneNumber: '01012345678',
-      authToken: 'token',
-    });
-
-    render(
-      <MemoryRouter initialEntries={['/parent/interview']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText('기록 공간 선택하기')).toBeInTheDocument();
-    expect(screen.getByText('안녕하세요, 김보호님')).toBeInTheDocument();
-  });
-
-  it('redirects unauthenticated protected routes to auth', async () => {
-    render(
-      <MemoryRouter initialEntries={['/parent/interview']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByRole('heading', { name: 'Dearlog' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '로그인' })).toBeInTheDocument();
-  });
-
-  it('shows the AI proxy operations panel for guardian mypage', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const body = url.includes('/api/ai/audit-summary')
-        ? {
-            window: { from: '2026-05-31T00:00:00.000Z', to: '2026-05-31T01:00:00.000Z', minutes: 60 },
-            totals: {
-              requests: 3,
-              success: 2,
-              invalidRequest: 0,
-              rateLimited: 1,
-              configError: 0,
-              providerError: 0,
-              estimatedUnits: 120,
-              avgLatencyMs: 90,
-              errorRatePercent: 0,
-            },
-            byEndpoint: [{
-              endpoint: 'chat_completions',
-              requests: 3,
-              success: 2,
-              errors: 0,
-              rateLimited: 1,
-              estimatedUnits: 120,
-              avgLatencyMs: 90,
-            }],
-            byUser: [],
-            recentErrors: [],
-            alerts: [],
-            alertThresholds: { errorRatePercent: 25, rateLimitedCount: 10, minRequests: 5 },
-            retention: { days: 30, cutoff: '2026-05-01T00:00:00.000Z', deletedOldLogs: 0 },
-          }
-        : { members: [] };
-      return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }));
-
-    useAuthStore.setState({
-      role: 'child',
-      userName: '김보호',
-      userId: 'guardian-1',
-      phoneNumber: '01012345678',
-      authToken: 'token',
-    });
-
-    render(
-      <MemoryRouter initialEntries={['/child/mypage']}>
-        <AppRoutes />
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText('AI 운영 점검')).toBeInTheDocument();
-    expect(await screen.findByText('대화 생성')).toBeInTheDocument();
-    expect(screen.getByText('현재 임계값을 넘은 항목이 없습니다.')).toBeInTheDocument();
-  });
-});
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+    useAuthStore.setState({ role: null, userName: '', userId: null, phoneNumber: '', authToken: null })
+  })
+  it.each(['/', '/splash', '/intro', '/company', '/company/'])('shows the public company page at %s', async path => {
+    open(path)
+    const heading = await screen.findByRole('heading', { level: 1, name: /부모님의 목소리를/ })
+    expect(heading.closest('.company-page')).toBeInTheDocument()
+    expect(heading.closest('[class*="max-w-"]')).toBeNull()
+    expect(screen.getByRole('link', { name: 'hello@dear-log.com' })).toHaveAttribute('href', 'mailto:hello@dear-log.com')
+    expect(screen.getAllByRole('link', { name: /가상 자서전 읽어보기/ })).toHaveLength(2)
+    expect(document.querySelector('.company-page form')).toBeNull()
+    expect(document.querySelector('.company-page a[href="/auth"]')).toBeNull()
+    expect(screen.getAllByRole('img')).toHaveLength(3)
+  })
+  it('renders the shared lazy loading state', () => {
+    render(<RouteFallback />)
+    expect(screen.getByRole('status')).toHaveTextContent('불러오는 중...')
+  })
+  it('offers an existing-account login without signup, asking for the code only after it is sent', async () => {
+    open('/auth')
+    expect(await screen.findByRole('heading', { name: '기존 계정 로그인' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '인증번호 받기' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '회원가입' })).toBeNull()
+    expect(screen.queryByLabelText(/인증번호/)).toBeNull()
+  })
+  it.each(['/auth/verify', '/parent/autologin?token=unused', '/settings', '/unknown'])('blocks public mutation or demo entry %s', async path => {
+    open(path)
+    expect(await screen.findByRole('heading', { name: '지금은 예시와 문의를 받습니다' })).toBeInTheDocument()
+  })
+  it.each(['/parent', '/parent/interview', '/child', '/child/record-space/new', '/calendar'])('requires an existing authenticated session at %s', async path => {
+    open(path)
+    expect(await screen.findByRole('heading', { name: '기존 계정 로그인' })).toBeInTheDocument()
+  })
+  it('does not treat a demo role without a token as an authenticated account', async () => {
+    login('parent', null)
+    open('/parent')
+    expect(await screen.findByRole('heading', { name: '기존 계정 로그인' })).toBeInTheDocument()
+  })
+  it.each(['/parent', '/parent/transcript', '/parent/autobiography/preview', '/parent/mypage', '/mypage'])('retains parent record reading at %s', async path => {
+    login('parent')
+    open(path)
+    expect(await screen.findByRole('heading', { name: '기존 기록 조회' })).toBeInTheDocument()
+  })
+  it.each(['/child', '/child/photos', '/child/autobiography', '/child/mypage'])('retains guardian record reading at %s', async path => {
+    login('child')
+    open(path)
+    expect(await screen.findByRole('heading', { name: '기존 기록 조회' })).toBeInTheDocument()
+  })
+  it.each(['/parent/interview', '/parent/welcome', '/parent/vault', '/parent/consent-settings'])('blocks parent input controls at %s', async path => {
+    login('parent')
+    open(path)
+    expect(await screen.findByRole('heading', { name: '지금은 예시와 문의를 받습니다' })).toBeInTheDocument()
+  })
+  it.each(['/child/questions', '/child/record-space/new', '/child/chatbot', '/child/legacy', '/child/consent-settings'])('blocks guardian input controls at %s', async path => {
+    login('child')
+    open(path)
+    expect(await screen.findByRole('heading', { name: '지금은 예시와 문의를 받습니다' })).toBeInTheDocument()
+  })
+  it.each([['parent', '/child/questions'], ['child', '/parent/interview']] as const)('keeps the role guard for %s at %s', async (role, path) => {
+    login(role)
+    open(path)
+    expect(await screen.findByRole('heading', { name: '기존 기록 조회' })).toBeInTheDocument()
+  })
+})

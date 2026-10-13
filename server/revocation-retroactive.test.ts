@@ -100,7 +100,7 @@ beforeAll(async () => {
       create: { ...chapter, minAnswerCount: MIN_ANSWERS_PER_CHAPTER },
     });
   }
-  app = createApp();
+  app = createApp({ sampleInquiryOnly: false });
 });
 
 afterAll(async () => {

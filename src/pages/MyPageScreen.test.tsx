@@ -6,6 +6,12 @@ import { useAuthStore } from '../store/authStore'
 import { useConsentStore } from '../store/consentStore'
 import { useInterviewStore } from '../store/interviewStore'
 
+// Legacy full-service component regression only; public AppRoutes keep the default restriction.
+vi.mock('../../shared/service-access', async importActual => ({
+  ...await importActual<typeof import('../../shared/service-access')>(),
+  SAMPLE_INQUIRY_ONLY: false,
+}))
+
 // 알림의 "받는 쪽"을 확인한다.
 // 예전에는 푸시 알림 토글이 useState(true) 로 고정돼 있어서, 구독이 하나도 없어도 켜졌다고
 // 보여 줬다. 서버는 sendWebPush 로 알림을 계속 만들고 있었지만 그걸 읽는 화면도 없었다.

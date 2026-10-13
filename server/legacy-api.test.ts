@@ -61,7 +61,7 @@ beforeAll(async () => {
   ({ resetPhoneVerificationForTests } = await import('./phone-verification'));
   ({ lastTestSmsTo, clearTestSmsOutbox } = await import('./sms'));
   await initLocalDatabase();
-  app = createApp();
+  app = createApp({ sampleInquiryOnly: false });
 });
 
 afterAll(async () => {
