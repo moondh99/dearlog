@@ -89,7 +89,6 @@
 .company-preview-dialog > p { color: var(--company-muted); font-size: 12px; margin-block: 10px 20px; }
 .company-preview-dialog > img { display: block; width: min(390px, 100%); height: auto; margin-inline: auto; border: 1px solid #d1cbd9; border-radius: 8px; }
 .company-team { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; padding-block: 98px; scroll-margin-top: 24px; }
-.company-stage { display: inline-block; color: var(--company-olive); border-top: 1px solid var(--company-line); padding-top: 16px; margin-top: 28px; font-size: 14px; }
 .company-team-copy p { margin-bottom: 24px; color: var(--company-muted); line-height: 1.9; }
 .company-team-copy dl { margin-top: 34px; }
 .company-team-copy dl > div { border-top: 1px solid var(--company-line); padding-block: 18px; }
@@ -155,7 +154,6 @@
   .company-preview-heading h2 { font-size: 21px; }
   .company-team { grid-template-columns: 1fr; gap: 28px; padding-block: 48px; }
   .company-team-copy p { font-size: 17px; }
-  .company-stage { margin-top: 20px; font-size: 13px; }
   .company-contact { padding-block: 44px; }
   .company-contact-inner { flex-direction: column; align-items: stretch; gap: 24px; }
   .company-contact p:not(.company-kicker) { font-size: 17px; }

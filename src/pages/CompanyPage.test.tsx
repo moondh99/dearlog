@@ -32,6 +32,11 @@ describe('Company introduction review', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not describe the company as preparing to commercialize', () => {
+    renderCompany()
+    expect(document.body.textContent).not.toMatch(/사업화/)
+  })
+
   it('offers an explicitly fictional, read-only sample without account or API work', () => {
     renderCompany()
     const sample = screen.getByRole('region', { name: '한 질문이 한 장의 이야기로' })

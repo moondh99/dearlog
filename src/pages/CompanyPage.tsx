@@ -190,8 +190,8 @@ export default function CompanyPage() {
         </section>
 
         <section id="company-team" className="company-team company-container" aria-labelledby="company-team-title">
-          <div><p className="company-kicker">우리가 만드는 것</p><h2 id="company-team-title">안녕하세요,<br />디어로그 팀입니다.</h2><span className="company-stage">현재 사업화를 준비하고 있습니다</span></div>
-          <div className="company-team-copy"><p>우리는 부모님의 이야기가 가족 안에서 오래 읽히기를 바랍니다. 질문, 목소리 인터뷰 경험, 가족이 함께 확인하는 과정, 챕터별 기록 화면을 만들고 있습니다.</p><p>지금은 서비스를 다듬으며 사업화를 준비하고 있습니다. 당분간 가상 자서전 예시 체험과 이메일 문의를 받고 있습니다. 운영 주체는 디어로그 팀이며, 담당자는 문대한입니다.</p><p>앞으로 음성 원본을 계속 보관하며 가족이 다시 듣고 기록을 이어갈 수 있는 서비스를 만들고자 합니다. 구체적인 보관 기간과 운영 기준은 정비 중입니다.</p><h3>우리가 다듬는 세 가지 영역</h3><dl><div><dt>제품과 질문 설계</dt><dd>가족이 궁금했던 이야기를 질문으로 건넬 수 있게 합니다.</dd></div><div><dt>음성 인터뷰와 기록</dt><dd>부모님이 목소리로 답하고, 이야기를 글로 살펴보는 경험을 만듭니다.</dd></div><div><dt>가족 확인과 읽기</dt><dd>원문과 정리본을 함께 확인하고 챕터별 기록을 읽는 화면을 다듬습니다.</dd></div></dl></div>
+          <div><p className="company-kicker">우리가 만드는 것</p><h2 id="company-team-title">안녕하세요,<br />디어로그 팀입니다.</h2></div>
+          <div className="company-team-copy"><p>우리는 부모님의 이야기가 가족 안에서 오래 읽히기를 바랍니다. 질문, 목소리 인터뷰 경험, 가족이 함께 확인하는 과정, 챕터별 기록 화면을 만들고 있습니다.</p><p>현재는 가상 자서전 예시 체험과 이메일 문의를 받고 있습니다. 운영 주체는 디어로그 팀이며, 담당자는 문대한입니다.</p><p>앞으로 음성 원본을 계속 보관하며 가족이 다시 듣고 기록을 이어갈 수 있는 서비스를 만들고자 합니다. 구체적인 보관 기간과 운영 기준은 정비 중입니다.</p><h3>우리가 다듬는 세 가지 영역</h3><dl><div><dt>제품과 질문 설계</dt><dd>가족이 궁금했던 이야기를 질문으로 건넬 수 있게 합니다.</dd></div><div><dt>음성 인터뷰와 기록</dt><dd>부모님이 목소리로 답하고, 이야기를 글로 살펴보는 경험을 만듭니다.</dd></div><div><dt>가족 확인과 읽기</dt><dd>원문과 정리본을 함께 확인하고 챕터별 기록을 읽는 화면을 다듬습니다.</dd></div></dl></div>
         </section>
 
         <section className="company-faq company-container" aria-labelledby="company-faq-title"><div className="company-section-heading"><div><p className="company-kicker">디어로그가 궁금하다면</p><h2 id="company-faq-title">자주 묻는 질문</h2></div></div><div className="company-faq-list">{faqs.map(faq => <details key={faq.question}><summary>{faq.question}</summary><p>{faq.answer}</p></details>)}</div></section>
